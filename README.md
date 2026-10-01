@@ -1,32 +1,38 @@
-# React + TypeScript + Vite
+# Office Agents
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+A local web app that shows your running Claude Code agents and subagents as people in an isometric office.
 
-Currently, two official plugins are available:
+Run it with `vp dev` and open the page. Every Claude Code session appears as a character sitting at a computer. Agents of the same project wear the same shirt color, and each gets a random name and gender.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Working:** the character types at the desk, and the screen glows.
+- **Subagents:** they walk in and hand paper to and from the parent agent.
+- **Waiting for subagents:** the character takes a coffee break.
+- **Needs you:** the character waves and a speech bubble appears. A chip in the top bar and a tab title count `(N)` show who is waiting.
+- **Done:** the character walks out of the office.
 
-## React Compiler
+The feed reads the transcripts Claude Code already writes in `~/.claude/projects`. It runs inside the Vite dev server and only serves on localhost.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md). Deferred ideas: [TODOS.md](TODOS.md).
 
-## Expanding the Oxlint configuration
+## Roadmap
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+- [x] Design doc, engineering review and design review
+- [ ] Check the CC0 sprite pack for poses and a clean shirt color band
+- [ ] Event types and transcript normalizer
+- [ ] Feed plugin: tail transcripts and stream to the browser
+- [ ] State machine and seeded identity (name, gender, project color)
+- [ ] Office scene: desks, characters, top bar, status banner
+- [ ] Subagent walk-in and paper handoff
+- [ ] Wave, speech bubble and tab title count
+- [ ] Reduced motion, keyboard and screen reader support
+- [ ] End-to-end test with a fixture transcript
+- [ ] Hooks adapter for exact attention signals
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
+### Roadmap rules
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- Tick a checkbox when the work is done.
+- Add a new checkbox when we get a new idea.
+
+## Development
+
+This project uses Vite+. Run `vp install`, then `vp dev`. Run `vp check` and `vp test` before committing.
