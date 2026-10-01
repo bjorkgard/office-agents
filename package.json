@@ -1,6 +1,6 @@
 {
   "name": "office-agents",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
