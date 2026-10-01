@@ -2,6 +2,8 @@
 
 A local web app that shows your running Claude Code agents and subagents as people in an isometric office.
 
+> **Status: early development.** The design is done and the app is not built yet. Everything below describes the planned behavior; progress is tracked in the roadmap.
+
 Run it with `vp dev` and open the page. Every Claude Code session appears as a character sitting at a computer. Agents of the same project wear the same shirt color, and each gets a random name and gender.
 
 - **Working:** the character types at the desk, and the screen glows.
