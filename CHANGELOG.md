@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.3.0] - 2026-10-01
+
+### Added
+
+- Every office character and prop is now drawn: isometric pixel people with eight shirt colors (plain and striped), five hairstyles, three skin tones and headphones, in six poses (typing, idle, raised hand, walking, carrying a paper, coffee break), plus desks, a coffee station and six other props.
+- A style gate sheet at `/?art` (development only) that shows every frame and prop at once, flags weak color contrast, and has a grayscale check. It is left out of the production build.
+- Each agent gets a stable look from its id, so the same agent always sits as the same person.
+- Tests that keep the palette in step with `DESIGN.md` and check contrast, the poses, the looks and the sprite data.
+
+### Changed
+
+- `DESIGN.md` now holds the art rules: the palette with checked contrast, the look of each agent state, outline and shading rules, floor ring and hit area sizes, layer order and reduced-motion behavior.
+- The roadmap, build checklist and art plan now describe hand-drawn pixel sprites instead of a vector character, and split the art gate into two steps.
+
 ## [0.0.2.0] - 2026-10-01
 
 ### Added

@@ -63,14 +63,19 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
 
 ## Phase 4: Office UI (needs Phase 0, 2.2, 3.x)
 
-- [ ] **4.0 Draw the art (Phase 0 route).** Draw, in one consistent flat style at 4 isometric facings: characters with poses sit, type, wave, walk, carry paper, coffee and idle; props desk, monitor, chair, door, coffee station, plants and paper. Design doc rows 4A and 4B already reflect this route (amended 2026-10-01). Draw at a size that stays readable at the 50% scale floor.
+- [x] **4.0a Style gate (Phase 0 route).** Draw, in one consistent flat style, three poses (seated typing, raised hand, walking with paper) and one full desk, shown in the room at 100% and 50% beside `docs/designs/mockup-room-variant-a.jpg` and variant B, with a basic `?art` sheet (dev only). Record the "Character geometry" table in `DESIGN.md` as the exit criterion. Design doc rows 4A and 4B already reflect this route (amended 2026-10-01). Draw at a size that stays readable at the 50% scale floor.
+  - Verify: you approve the side-by-side; else fall back to hand-drawn pixel frames. Geometry table committed before 4.0b.
+  - Done 2026-10-01: iso pixel sprites replaced the vector rig; user approved.
+- [x] **4.0b Rest of the rig.** Remaining poses (sit, wave, carry paper, coffee, idle) in 2 authored views mirrored for the other facings; props desk, monitor, chair, door, coffee station, plants and paper; seeded appearance variants; full `?art` sheet (dev only).
   - Verify: contact sheet of all poses at 100% and 50%; 12 characters side by side at 50% stay distinguishable.
+  - Done 2026-10-01: poses, props, appearance seeds and the full `?art` sheet.
 - [ ] **4.1 Iso projection and layout (DT8 / 2A / 6D).** Depth = x+y, 4 desks per row, rows added when full, scale to fit with a 50% floor, minimum 800x500 with "Make this window wider".
   - Files: `src/office/iso.ts`
 - [ ] **4.2 SSE hook (T6).** `useOffice` connects, applies the snapshot, then deltas, runs the machine, handles reconnect.
   - Files: `src/office/useOffice.ts`
-- [ ] **4.3 Recolor (DT3 / 4B, amended: Phase 0 chose all-drawn art).** Recolor by variable or fill on drawn characters instead of a pixel key-color swap (decision 4B already says so). Cache the recolored result per project, built once on first sight.
-  - Files: `src/office/recolor.ts`
+- [x] **4.3 Recolor (DT3 / 4B, amended: Phase 0 chose all-drawn art).** Recolor by CSS variable on drawn characters (decision 4B already says so): `shirtVars(index, stripe)` sets `--shirt` and `--shirt-stripe`; the stripe is palette cells filled with `var(--shirt-stripe)`. Gray fallback and a dev warning for an out-of-range index.
+  - Files: `src/office/poses.ts`
+  - Done 2026-10-01: `shirtVars` and `--shirt`/`--shirt-stripe` on pixel cells.
 - [ ] **4.4 Scene and Character (T6 / T11).** Scaled sprite layer plus unscaled overlay for tags, bubbles and focus rings. Character exposes `data-state` and `data-shirt`. Desk, typing, glowing screen only while working.
   - Files: `src/office/Scene.tsx`, `src/office/Character.tsx`
   - Verify: `vp dev` with a live session shows a seated agent with `data-state`.
@@ -97,7 +102,7 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
   - Files: `package.json`, `e2e/fixtures/*`
 - [ ] **5.2 Core E2E.** Asserts `data-state` per agent, plus refused-host and empty-fixture banner cases.
   - Files: `e2e/office.spec.ts`
-- [ ] **5.3 Extended E2E (T13).** Reduced motion, recolor pixel probe plus `data-shirt`, tab title and chip order, keyboard order and tag on focus.
+- [ ] **5.3 Extended E2E (T13).** Reduced motion, recolor check of `data-shirt` plus the computed shirt fill, tab title and chip order, keyboard order and tag on focus.
   - Verify: all E2E cases pass.
 
 ## Phase 6: Finish

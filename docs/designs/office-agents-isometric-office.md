@@ -606,7 +606,7 @@ Hard rejections triggered: none (no hero, card grid or carousel). Litmus: brand 
 
 - [ ] **DT1 (P1, human: ~2h / CC: ~15min)** — DESIGN.md and tokens — write DESIGN.md and `:root` variables per 5A (Surfaced by: Pass 5). Files: `DESIGN.md`, `src/index.css`. Verify: tokens used everywhere, no hard-coded colors.
 - [ ] **DT2 (P1, human: ~1h / CC: ~15min)** — art — pose and shirt-band check of candidate CC0 packs, vector fallback per 7B (Pass 4, 7B). Files: notes in `docs/designs/`. Verify: pose list satisfied or fallback chosen.
-- [ ] **DT3 (P1, human: ~3h / CC: ~25min)** — recolor — canvas key-color swap, 8-color palette with stripe, collision avoidance (4B, 6A). Files: `src/office/recolor.ts` plus palette tokens. Verify: unit test of palette uniqueness for 16 projects.
+- [ ] **DT3 (P1, human: ~3h / CC: ~25min)** — recolor — `--shirt` and `--shirt-stripe` variables on the drawn character, 8-color palette with stripe, collision avoidance (4B, 6A). Files: `src/office/palette.ts`, `src/office/poses.ts` (`shirtVars`). Verify: unit test of palette uniqueness for 16 projects.
 - [ ] **DT4 (P2, human: ~2h / CC: ~15min)** — top bar — status banner plus waiting chips, tab title (1B, 3A). Files: `src/office/Scene.tsx`. Verify: E2E shows chips and `(N)` title.
 - [ ] **DT5 (P2, human: ~2h / CC: ~15min)** — character — tags on hover or focus or waving, bubble copy (1A, 2B). Files: `src/office/Character.tsx`.
 - [ ] **DT6 (P2, human: ~2h / CC: ~15min)** — motion — reduced-motion render path (6B). Files: `src/office/Character.tsx`, CSS. Verify: both modes in E2E.
@@ -760,7 +760,7 @@ NEW CODE PATHS / USER FLOWS                                   TEST
   └── [GAP] one announce per episode, none on timer flap        unit
 [+] e2e/office.spec.ts additions                              [->E2E]
   ├── [GAP] reduced motion: emulateMedia reducedMotion=reduce, fade instead of walk, static raised hand
-  ├── [GAP] recolor proof: `data-shirt` palette index and one canvas pixel probe of the shirt color
+  ├── [GAP] recolor proof: `data-shirt` palette index and the computed shirt fill
   ├── [GAP] tab title "(N) Agent Office" and chip order longest wait first
   └── [GAP] keyboard: Tab order waiting agents first; focus shows tag
 COVERAGE additions: 0/9 tested (greenfield), all 9 planned
@@ -783,12 +783,12 @@ Value cards for the new E2E and unit cases are in the saved test plan file (`~/.
 
 ## Re-review failure modes
 
-| Path              | Realistic failure                                 | Test             | Handling                             | User sees                                                     |
-| ----------------- | ------------------------------------------------- | ---------------- | ------------------------------------ | ------------------------------------------------------------- |
-| recolor           | pack has no clean shirt band, zero pixels swapped | E2E pixel probe  | console warning, render pack default | all shirts same color (caught in test, silent to an end user) |
-| seat table        | dev server restarts                               | feed-plugin.test | re-seat once                         | desks change once                                             |
-| font              | font file fails to load                           | none             | system fallback in font stack        | slightly different text                                       |
-| aria-live         | timer flaps                                       | machine.test     | episode id                           | one announcement                                              |
+| Path              | Realistic failure                            | Test                               | Handling                       | User sees                                                     |
+| ----------------- | -------------------------------------------- | ---------------------------------- | ------------------------------ | ------------------------------------------------------------- |
+| recolor           | palette index out of range, no `--shirt` set | E2E `data-shirt` and computed fill | console warning, gray fallback | all shirts same color (caught in test, silent to an end user) |
+| seat table        | dev server restarts                          | feed-plugin.test                   | re-seat once                   | desks change once                                             |
+| font              | font file fails to load                      | none                               | system fallback in font stack  | slightly different text                                       |
+| aria-live         | timer flaps                                  | machine.test                       | episode id                     | one announcement                                              |
 | Critical gaps: 0. |
 
 ## Re-review tasks
@@ -797,7 +797,7 @@ Value cards for the new E2E and unit cases are in the saved test plan file (`~/.
 - [ ] **T10 (P2, human: ~2h / CC: ~15min)** — server — seat table in feed plugin (R8). Files: `server/feed-plugin.ts`, `server/feed-plugin.test.ts`. Verify: `vp test` seat cases.
 - [ ] **T11 (P2, human: ~3h / CC: ~20min)** — render — scaled sprite layer plus unscaled overlay (Architecture 4). Files: `src/office/Scene.tsx`, `iso.ts`.
 - [ ] **T12 (P2, human: ~2h / CC: ~15min)** — state — `waitingSince` and attention episode id (Architecture 5, Code quality 2). Files: `shared/events.ts`, `src/office/machine.ts`.
-- [ ] **T13 (P2, human: ~1 day / CC: ~45min)** — e2e — add reduced motion, recolor probe, title and chips, keyboard cases. Files: `e2e/office.spec.ts`.
+- [ ] **T13 (P2, human: ~1 day / CC: ~45min)** — e2e — add reduced motion, recolor check (`data-shirt` plus computed shirt fill), title and chips, keyboard cases. Files: `e2e/office.spec.ts`.
 - [ ] **T14 (P3, human: ~30min / CC: ~5min)** — deps — `@fontsource/ibm-plex-sans`, `NOTICE`, `DESIGN.md` font note (R9, Architecture 6). Files: `package.json`, `NOTICE`, `DESIGN.md`.
 
 # Design Re-review (/plan-design-review, 2026-10-01, text only)
