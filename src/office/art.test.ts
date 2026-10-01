@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import design from "../../DESIGN.md?raw";
+import { cells, hexes, sectionRows, tokenRows } from "../design-md";
 import appearanceSrc from "./appearance.ts?raw";
 import { appearanceFor, HAIR, SKIN } from "./appearance";
 import ArtSheet from "./ArtSheet";
@@ -42,21 +43,6 @@ afterEach(() => {
 });
 
 const rows = design.split("\n").filter((line) => line.startsWith("|"));
-const HEX = /`(#[0-9a-f]{6})`/g;
-
-function hexes(row: string): string[] {
-  return [...row.matchAll(HEX)].map((m) => m[1]);
-}
-
-function tokenRows(): Map<string, string> {
-  const map = new Map<string, string>();
-  for (const row of rows) {
-    const token = /^\|\s*`(--[a-z0-9-]+)`\s*\|/.exec(row);
-    const [value] = hexes(row);
-    if (token && value) map.set(token[1], value);
-  }
-  return map;
-}
 
 function luminance(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((i) => {
@@ -69,25 +55,6 @@ function luminance(hex: string): number {
 function contrast(a: string, b: string): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
-}
-
-function cells(row: string): string[] {
-  return row
-    .split("|")
-    .slice(1, -1)
-    .map((c) => c.trim());
-}
-
-// Table rows between two headings; a renamed heading fails with its name, not an empty table.
-function sectionRows(source: string, from: string, to: string): string[] {
-  const start = source.indexOf(from);
-  if (start < 0) throw new Error(`DESIGN.md heading not found: "${from}"`);
-  const end = source.indexOf(to, start);
-  if (end < 0) throw new Error(`DESIGN.md heading not found after "${from}": "${to}"`);
-  return source
-    .slice(start, end)
-    .split("\n")
-    .filter((line) => line.startsWith("|"));
 }
 
 const artRows = sectionRows(design, "## Art palette", "## Character art rules");
@@ -119,7 +86,7 @@ function indexedRows(pattern: RegExp): string[][] {
   return out;
 }
 
-const tokens = tokenRows();
+const tokens = tokenRows(design);
 const designArt = artTokens();
 const BG = tokens.get("--bg")!;
 
