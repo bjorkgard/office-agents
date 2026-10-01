@@ -1,8 +1,15 @@
 Third-party assets and licences
 
-Status (2026-10-01): no third-party artwork is used or committed. The art is drawn in this repository. The packs below were inspected in Phase 0 and are listed only so their provenance is not lost; none is shipped. Add real entries here, with licence text, when something third-party is added (for example the IBM Plex Sans font, OFL-1.1, task 1.2).
+Status (2026-10-01): no third-party artwork is used in the product, and no third-party sheet is committed. Two review images in docs/designs/ are derived from a CC0 sprite (see below). The product art is drawn in this repository. The packs below were inspected in Phase 0 and are listed only so their provenance is not lost; none is shipped. Add real entries here, with licence text, when something third-party is added (for example the IBM Plex Sans font, OFL-1.1, task 1.2).
 
-Inspected, not used:
+Committed derivative images (review evidence only, not shipped in the app):
+   docs/designs/phase-0-recolor-sheet.png and docs/designs/phase-0-scale-50.png are
+   recolored, enlarged or shrunk copies of one frame of the Hormelz sprite below (CC0 1.0,
+   so no attribution is required; recorded here for provenance).
+   docs/designs/mockup-room-variant-a.jpg is an AI-generated mockup made for this project,
+   not derived from any third-party artwork.
+
+Inspected, not used in the product:
 
 1. Hormelz, "8 Directional 2D Businessman Character"
    https://hormelz.itch.io/8-directional-2d-businessman-character

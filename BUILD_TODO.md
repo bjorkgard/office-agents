@@ -87,7 +87,7 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
   - Verify: distinguishable in grayscale and against all 8 shirt colors.
 - [ ] **4.12 Subagent slots (design review 8C, DT12).** Two standing slots per desk, overflow queue near the door, "+N" on the parent's tag.
   - Verify: 3 subagents on one parent show 2 standing and "+1"; no overlap.
-- [x] **4.13 Mockups (DT13).** Done: variant A approved (see `DESIGN.md` Open items for the four gaps to resolve while building).
+- [x] **4.13 Mockups (DT13).** Done: variant A approved and committed as `docs/designs/mockup-room-variant-a.jpg` (see `DESIGN.md` Open items for the four gaps to resolve while building).
 - [ ] **4.14 Mockup gaps (DESIGN.md Open items).** Resolve the four gaps seen in approved mockup A: monitors lit only while working, the waving agent's shirt not close to the accent ring, no text posters, and subagents standing in a reserved slot.
   - Verify: each gap is closed in the built scene or in a recorded decision.
 

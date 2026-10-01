@@ -22,7 +22,7 @@ Dark only; there is no light theme (design doc, "NOT in scope").
 | `--bar`         | `#1d2230` | pinned top bar                          | base                      |
 | `--text`        | `#e8ebf2` | tags, bar text                          | 14.57 on bg, 13.29 on bar |
 | `--text-muted`  | `#9aa3b8` | wait times, secondary                   | 6.88 on bg, 6.27 on bar   |
-| `--accent`      | `#ff2e93` | waving ring, focus ring, chip highlight | 5.02 on bg, 4.58 on bar   |
+| `--accent`      | `#b388ff` | waving ring, focus ring, chip highlight | 6.53 on bg, 5.95 on bar   |
 | `--warn`        | `#ffb454` | "Reconnecting" status text              | 9.86 on bg                |
 | `--screen-glow` | `#8fd6ff` | monitor glow while working only         | decorative                |
 
@@ -45,7 +45,7 @@ Seven colors from the Okabe-Ito color-blind-safe set plus light gray (replacing 
 
 Selection is pure and lives in `identity.ts`: hash the project path, avoid collisions among active projects. Phase 0 chose all-drawn art, so recolor is a variable or fill on the drawn shirt, not a pixel key-color swap; decision 4B was amended to this route on 2026-10-01 (design doc, decision table). Expose the index as `data-shirt` for tests.
 
-Accent separation (8B): `--accent` (hot pink) is the hue closest to palette index 6 (purple). They differ in lightness and saturation, and the accent never relies on hue: it appears as a ring on the floor under the agent plus the raised-arm pose and the bubble. Verify in grayscale and against all 8 shirts before ship (task DT11). If the ring is ever confused with index 6, change the accent, not the shirt palette.
+Accent separation (8B): `--accent` (violet, hue about 262°) sits at least 59° away from every shirt hue (nearest: sky and blue at 202°, purple at 327°), so no project shirt matches it. Even so, the accent never relies on hue alone: it appears as a ring on the floor under the agent plus the raised-arm pose and the bubble. Verify in grayscale and against all 8 shirts before ship (task DT11). If the ring is ever confused with a shirt, change the accent, not the shirt palette.
 
 ## Typography
 
@@ -112,7 +112,7 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 ## Open items
 
 - Phase 0 is done: no single CC0 pack covers the needed poses, so characters and props are drawn in one consistent style (notes in `docs/designs/phase-0-sprite-notes.md`). Decisions 4A and 4B in the design doc assumed a sprite pack and were amended to the all-drawn route on 2026-10-01.
-- Approved mockup: variant A of 2026-10-01 (a generated image kept outside the repo, so it cannot be reproduced from a clone). It is the visual reference for the room: regular 2x4 desk grid, door back-left, coffee station back-right, waving agent with bubble, pink floor ring and name tag, a subagent handing a paper beside its parent, chips in the top bar.
-- Gaps seen in the approved mockup (proposals, not decisions): (1) nearly every monitor glows, but the rule is glow only while working; (2) the waving agent's shirt is pink, close to the `--accent` ring; (3) the mockup adds wall posters with text, a window, a clock and an "Online" status that DESIGN.md does not specify; (4) the subagent stands at the back row, not in a reserved slot beside its desk. Resolve each at build time or in a design review.
+- Approved mockup: variant A of 2026-10-01, committed as [docs/designs/mockup-room-variant-a.jpg](docs/designs/mockup-room-variant-a.jpg) (re-encoded as JPEG from the generated 1536x1024 image; it was made with an AI image generator for this project, which is not reproducible). It is the visual reference for the room, with one deliberate difference: the mockup's floor ring and the waving agent's shirt are pink, while the accent token is now violet (`--accent`) so it cannot match a shirt. It shows: regular 2x4 desk grid, door back-left, coffee station back-right, waving agent with bubble, floor ring and name tag, a subagent handing a paper beside its parent, chips in the top bar.
+- Gaps seen in the approved mockup (proposals, not decisions): (1) nearly every monitor glows, but the rule is glow only while working; (2) the waving agent's pink shirt and pink ring: the ring must use the violet accent and the shirt must come from the palette; (3) the mockup adds wall posters with text, a window, a clock and an "Online" status that DESIGN.md does not specify; (4) the subagent stands at the back row, not in a reserved slot beside its desk. Resolve each at build time or in a design review.
 - Slop checks on A, from the picture: no hero, no card grid, no neon; the evening mood and one strong anchor (the room) hold. "Premium without decorative shadows" is not judged here.
 - Brand name "Agent Office" is a placeholder.
