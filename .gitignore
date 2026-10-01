@@ -30,3 +30,6 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# gstack tool state
+.gstack/
