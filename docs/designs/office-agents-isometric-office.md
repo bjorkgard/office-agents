@@ -510,8 +510,8 @@ Target: this document. Mode: EXPERIENCE (the office is the artifact) with an OPE
 | 2A  | Room grows by rows: 4 desks per row, new row when full, view scales to fit; subagents stand beside the parent                                                                                                                                              | D4                          |
 | 2B  | Bubble text: "Asking you" (final message ends with "?") or "Stuck?" (tool-call timer), plus wait time; no transcript text                                                                                                                                  | D5                          |
 | 3A  | Tab title shows `(N) Agent Office` while N agents wait; no sound                                                                                                                                                                                           | D6                          |
-| 4A  | Art: CC0 sprite pack (not hand-built vector)                                                                                                                                                                                                               | D7                          |
-| 4B  | Recolor: canvas key-color swap of the pack's shirt color band, cached per project                                                                                                                                                                          | D8                          |
+| 4A  | Art: all characters and props drawn in one consistent style, no third-party sprites (amended 2026-10-01 by Phase 0; was: CC0 sprite pack)                                                                                                                  | D7                          |
+| 4B  | Recolor: shirt color set by variable or fill on the drawn character, cached per project (amended 2026-10-01; was: canvas key-color swap of a pack's shirt band)                                                                                            | D8                          |
 | 4C  | Light: dim evening office, monitors glow only while working, waving agent gets the brightest accent, no neon, offset shadows                                                                                                                               | D9                          |
 | 5A  | DESIGN.md plus `:root` CSS variables: evening palette, IBM Plex Sans UI text (13px tags, 14px top bar, 4.5:1 contrast minimum), 4px spacing scale, one ease-out curve and 3 durations. The "8-color palette" in the option text is decided by 6A, not here | D10                         |
 | 6A  | 8 curated color-blind-checked shirt colors; from the 9th active project a stripe pattern; unique for up to 16 projects; hash with collision avoidance among active projects                                                                                | D11                         |
@@ -519,7 +519,9 @@ Target: this document. Mode: EXPERIENCE (the office is the artifact) with an OPE
 | 6C  | Characters focusable (waiting agents first, then by desk); hidden `aria-live=polite` announces "Maya, office-agents, asking you"; chips are real buttons; focus ring uses the accent token                                                                 | D13                         |
 | 6D  | Scale to fit, never below 50%; below that the room scrolls and the top bar stays pinned; tags and bubbles keep a fixed 12px; minimum window 800x500, narrower shows "Make this window wider"                                                               | D14                         |
 | 7A  | Stable seat: keep the desk until leaving; new agent takes the first free desk, preferring one beside its project; seat survives reload (from session id and arrival order)                                                                                 | D15                         |
-| 7B  | Before building, check candidate packs against the pose list and shirt color band; if none pass, hand-built flat-vector characters for the missing poses only                                                                                              | D16                         |
+| 7B  | Before building, check candidate packs against the pose list and shirt color band; if none pass, hand-built flat-vector characters for the missing poses only (applied 2026-10-01: none passed, so everything is drawn)                                    | D16                         |
+
+Superseded 2026-10-01 by the Phase 0 pack check (`docs/designs/phase-0-sprite-notes.md`): no CC0 pack has sit, typing and wave poses, so rows 4A and 4B above were amended to the all-drawn route. Stale mentions of a sprite pack elsewhere in this document (DT2, DT3, S0, T9) are history and are superseded by `docs/designs/phase-0-sprite-notes.md`.
 
 ## Screen structure (Pass 1)
 
@@ -798,19 +800,49 @@ Value cards for the new E2E and unit cases are in the saved test plan file (`~/.
 - [ ] **T13 (P2, human: ~1 day / CC: ~45min)** — e2e — add reduced motion, recolor probe, title and chips, keyboard cases. Files: `e2e/office.spec.ts`.
 - [ ] **T14 (P3, human: ~30min / CC: ~5min)** — deps — `@fontsource/ibm-plex-sans`, `NOTICE`, `DESIGN.md` font note (R9, Architecture 6). Files: `package.json`, `NOTICE`, `DESIGN.md`.
 
+# Design Re-review (/plan-design-review, 2026-10-01, text only)
+
+Target: this document. Mode: EXPERIENCE with an OPERATE strip. Scope answer D1: mockups first, then passes 4, 5, 7; approved decisions 1A-7B are not re-asked. Initial rating 7/10.
+
+**Mockups: 0 generated.** `variants` and `generate` both failed with HTTP 429 and the body `insufficient_quota` ("You have no credits remaining", OpenAI key in `~/.gstack/openai.json`). This corrects the earlier note above that called it a rate limit: waiting will not fix it, adding credits will. Scope answer D2: continue text-only. The slop checks (premium without decorative shadows, one visual anchor) stay unverified by sight. Outside design voices: not run, not offered.
+
+## Decisions made in this re-review (each individually approved)
+
+| #   | Decision                                                                                                                                                                                                                 | Answer |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| 8A  | Door on the back wall at the left, coffee station on the back wall at the right, both outside the desk grid; new desk rows grow toward the viewer. This resolves the open "coffee station and door placement" item.      | D3: A  |
+| 8B  | Attention is not color only: waving agent gets the raised-arm pose, the bubble, and an accent ring under it. The accent hue is also kept away from the nearest shirt palette colors (amends how 4C's accent is applied). | D4: A  |
+| 8C  | Each desk reserves two standing slots beside it for subagents; extra subagents wait in a short queue near the door and enter as slots free, with a small "+N" on the parent's tag. Refines 2A and 7A.                    | D5: A  |
+
+Pass notes: Pass 1-3 and 6 settled by 1A-2B and 6A-6D (no new gaps found). Pass 5: no `DESIGN.md` yet; decision 5A and task DT1 already approve writing it, so no new question. 8A, 8B and 8C are recorded in `DESIGN.md`.
+
+## Re-review scores
+
+| Pass            | Before | After | Remaining gap                                   |
+| --------------- | ------ | ----- | ----------------------------------------------- |
+| 4 AI slop       | 7      | 8     | still unseen: no mockup (quota)                 |
+| 5 Design system | 8      | 8     | DESIGN.md not written (DT1)                     |
+| 7 Decisions     | 7      | 9     | none open; chip overflow wording tuned at build |
+| Overall         | 7      | 8     | mockups when credits exist                      |
+
+## Design re-review tasks
+
+- [ ] **DT10 (P1, human: ~30min / CC: ~5min)** — layout — back wall door (left) and coffee (right), rows grow toward viewer (8A). Files: `src/office/iso.ts`, `Scene.tsx`. Verify: adding a row does not move the door or coffee station.
+- [ ] **DT11 (P2, human: ~1h / CC: ~10min)** — attention cue — raised-arm pose, bubble and accent ring, accent kept off nearest shirt colors (8B). Files: `src/office/Character.tsx`, `DESIGN.md`. Verify: waving agent is distinguishable in grayscale and with every one of the 8 shirt colors.
+- [ ] **DT12 (P2, human: ~2h / CC: ~15min)** — subagent slots — two standing slots per desk, queue near the door, "+N" on the parent tag (8C). Files: `src/office/Scene.tsx`, `iso.ts`, `machine.ts`. Verify: 3 subagents on one parent show 2 standing and "+1"; no overlap with neighbors.
+- [x] **DT13 (P3, human: ~1h / CC: ~15min)** — mockups — regenerate once OpenAI credits exist, compare board, check slop and premium-without-shadows. Done 2026-10-01: 3 variants generated after credits were added; variant A approved. Gaps seen are listed in `DESIGN.md` Open items.
+
 ## GSTACK REVIEW REPORT
 
-| Review         | Trigger                   | Why                             | Runs | Status      | Findings                               |
-| -------------- | ------------------------- | ------------------------------- | ---- | ----------- | -------------------------------------- |
-| CEO Review     | `/plan-ceo-review`        | Scope & strategy                | 0    | —           | —                                      |
-| Outside Review | codex, `/plan-eng-review` | Independent 2nd opinion         | 1    | disabled    | not run (codex_reviews disabled)       |
-| Eng Review     | `/plan-eng-review`        | Architecture & tests (required) | 2    | ISSUES OPEN | 12 issues (re-review), 0 critical gaps |
-| Design Review  | `/plan-design-review`     | UI/UX gaps                      | 1    | ISSUES OPEN | score: 1/10 → 7/10, 15 decisions       |
-| DX Review      | `/plan-devex-review`      | Developer experience gaps       | 0    | —           | —                                      |
+| Review         | Trigger                   | Why                             | Runs | Status      | Findings                                            |
+| -------------- | ------------------------- | ------------------------------- | ---- | ----------- | --------------------------------------------------- |
+| CEO Review     | `/plan-ceo-review`        | Scope & strategy                | 0    | —           | —                                                   |
+| Outside Review | codex, `/plan-eng-review` | Independent 2nd opinion         | 1    | disabled    | not run (codex_reviews disabled)                    |
+| Eng Review     | `/plan-eng-review`        | Architecture & tests (required) | 2    | ISSUES OPEN | 12 issues (re-review), 0 critical gaps              |
+| Design Review  | `/plan-design-review`     | UI/UX gaps                      | 2    | ISSUES OPEN | score: 7/10 → 8/10, 18 decisions, no mockup (quota) |
+| DX Review      | `/plan-devex-review`      | Developer experience gaps       | 0    | —           | —                                                   |
 
 - **OUTSIDE COVERAGE:** provider codex, phase plan-review, disabled by config; no findings. Design outside voices were not run (outside reviews disabled). No native replacement was run.
-- **VERDICT:** no review CLEAR; eng review required. Eng re-review: 12 findings resolved or mapped to tasks T9-T14 (first review: 15 findings, T1-T8), 0 unresolved this run. Design: 15 decisions added; 1 unresolved layout decision; no mockup seen.
+- **VERDICT:** no review CLEAR; eng review required. Eng re-review: 12 findings resolved or mapped to tasks T9-T14 (first review: 15 findings, T1-T8), 0 unresolved this run. Design: 15 decisions added, then 3 more in the re-review (8A door and coffee, 8B attention cue, 8C subagent slots); layout decision resolved. Mockups: 3 variants generated after the quota was fixed; variant A approved (DT13 done). Image API had returned `insufficient_quota` earlier, not a rate limit. Outside design voices not run.
 
-**UNRESOLVED DECISIONS:**
-
-- - 1 unresolved from prior reviews (design: coffee station and door placement in the office layout, decide when the layout is built)
+NO UNRESOLVED DECISIONS

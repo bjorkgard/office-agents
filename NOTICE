@@ -1,0 +1,28 @@
+Third-party assets and licences
+
+Status (2026-10-01): no third-party artwork is used in the product, and no third-party sheet is committed. Two review images in docs/designs/ are derived from a CC0 sprite (see below). The product art is drawn in this repository. The packs below were inspected in Phase 0 and are listed only so their provenance is not lost; none is shipped. Add real entries here, with licence text, when something third-party is added (for example the IBM Plex Sans font, OFL-1.1, task 1.2).
+
+Committed derivative images (review evidence only, not shipped in the app):
+   docs/designs/phase-0-recolor-sheet.png and docs/designs/phase-0-scale-50.png are
+   recolored, enlarged or shrunk copies of one frame of the Hormelz sprite below (CC0 1.0,
+   so no attribution is required; recorded here for provenance).
+   docs/designs/mockup-room-variant-a.jpg is an AI-generated mockup made for this project,
+   not derived from any third-party artwork.
+
+Inspected, not used in the product:
+
+1. Hormelz, "8 Directional 2D Businessman Character"
+   https://hormelz.itch.io/8-directional-2d-businessman-character
+   Licence: CC0 1.0, as stated on the itch.io page (no licence file was read).
+   Inspected 2026-10-01 (Walk, Idle, Talking, Carrying).
+
+2. Kenney, "Furniture Kit" 2.0
+   https://kenney.nl/assets/furniture-kit
+   Licence: CC0, from License.txt inside the zip (read).
+   Inspected 2026-10-01.
+
+Considered and rejected: Klimmos "COZY ASSETS Isometric Modular Male Character Kit"
+(https://klimmos.itch.io/cozy-assets-male-isometric-modular-character-kit), checked 2026-10-01.
+It is a paid asset and its page restricts redistribution, so it cannot be committed here.
+
+Design ideas (not code) came from roving-office (Apache-2.0) and pixel-agents (MIT); no code was copied.

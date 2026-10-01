@@ -14,12 +14,13 @@ Run it with `vp dev` and open the page. Every recently active Claude Code sessio
 
 The feed reads the transcripts Claude Code already writes in `~/.claude/projects`. Those can contain file contents and secrets, so the feed runs inside the Vite dev server and is meant to refuse any request when the dev server is not bound to localhost (for example with `vp dev --host`).
 
-Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md). Deferred ideas: [TODOS.md](TODOS.md).
+Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md). Visual rules: [DESIGN.md](DESIGN.md). Build order: [BUILD_TODO.md](BUILD_TODO.md). Phase 0 art check: [docs/designs/phase-0-sprite-notes.md](docs/designs/phase-0-sprite-notes.md). Third-party notices: [NOTICE](NOTICE). Deferred ideas: [TODOS.md](TODOS.md).
 
 ## Roadmap
 
 - [x] Design doc, engineering review and design review
-- [ ] Choose a CC0 sprite pack and check it for poses and a clean shirt color band
+- [x] Check CC0 sprite packs for poses and a clean shirt color band (none fit; characters and props will be drawn)
+- [ ] Draw characters, props and walk cycles in one style, with recolor by variable
 - [ ] Event types and transcript normalizer
 - [ ] Feed plugin: tail transcripts, stream to the browser, refuse non-localhost hosts
 - [ ] State machine and seeded identity (name, gender, project color)
