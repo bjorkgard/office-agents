@@ -2,7 +2,7 @@
 
 Design system for Office Agents: a dim, evening-lit isometric office where Claude Code agents sit at desks. Calm utility UI around a scene that carries the personality. Source decisions are in [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md) (ids like 5A, 4A are from there).
 
-Status: tokens below are the contract. They are not yet in `src/index.css` (task DT1); the first implementer copies them to `:root` and removes the Vite template styles. Contrast ratios were computed with the WCAG 2.x relative-luminance formula, (L1+0.05)/(L2+0.05), against `--bg` unless a column says otherwise; recompute when any token changes. Color-blind safety of the shirt set comes from the published palette, not from a simulation run on this project.
+Status: tokens below are the contract and are now in `src/index.css` `:root` (the Vite template styles are removed). Contrast ratios were computed with the WCAG 2.x relative-luminance formula, (L1+0.05)/(L2+0.05), against `--bg` unless a column says otherwise; recompute when any token changes. Color-blind safety of the shirt set comes from the published palette, not from a simulation run on this project.
 
 ## Principles
 

@@ -24,16 +24,16 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
 
 ## Phase 1: Foundations
 
-- [ ] **1.1 Event types and tsconfig (T1).** Add `shared/events.ts` with `AgentEvent` (`agent_started`, `working`, `waiting_on_subagents`, `needs_attention`, `handoff`, `done`). Include `waitingSince` and an attention episode id (T12). Add `server/` and `shared/` to the tsconfig includes.
+- [x] **1.1 Event types and tsconfig (T1).** Add `shared/events.ts` with `AgentEvent` (`agent_started`, `working`, `waiting_on_subagents`, `needs_attention`, `handoff`, `done`). Carry raw facts only: `tool` (phase, id, isSubagent) on `working`, `endsWithQuestion` on `done`. `needs_attention` (with `waitingSince` and `episodeId`) is for exact adapters; the machine owns the episode id (P1-S1-1, T12). Add `server/` and `shared/` to the tsconfig includes.
   - Files: `shared/events.ts`, `tsconfig.node.json`, `tsconfig.app.json`
   - Verify: `vp check` type-checks `server/` and `shared/`.
-- [ ] **1.2 Font dependency and notice (T14 / R9).** Include the OFL-1.1 licence text in `NOTICE`, not only the package name. Add `@fontsource/ibm-plex-sans`, import weights 400 and 600, system fallback in the font stack.
+- [x] **1.2 Font dependency and notice (T14 / R9).** Include the OFL-1.1 licence text in `NOTICE`, not only the package name. Add `@fontsource/ibm-plex-sans`, import weights 400 and 600, system fallback in the font stack.
   - Files: `package.json`, `NOTICE`
   - Verify: no network font request in the browser.
-- [ ] **1.3 DESIGN.md and tokens (DT1 / 5A).** `DESIGN.md` is written (2026-10-01); still to do: replace the Vite template styles with `:root` variables. DESIGN.md holds: evening palette, 13px tags, 14px top bar, 4.5:1 contrast, 4px spacing scale, one ease-out curve, 3 durations, font package name.
-  - Files: `DESIGN.md`, `src/index.css`, `src/App.css`
+- [x] **1.3 DESIGN.md and tokens (DT1 / 5A).** `DESIGN.md` is written (2026-10-01) and the tokens are in `src/index.css` `:root`; the Vite template styles are removed. DESIGN.md holds: evening palette, 13px tags, 14px top bar, 4.5:1 contrast, 4px spacing scale, one ease-out curve, 3 durations, font package name.
+  - Files: `DESIGN.md`, `src/index.css`, `src/App.css` (deleted)
   - Verify: no hard-coded colors outside tokens.
-- [ ] **1.4 Apply doc amendments (T8).** Reword the Success Criteria line about wave+bubble (design doc, "Success Criteria") to the heuristic-attention wording.
+- [x] **1.4 Apply doc amendments (T8).** Reword the Success Criteria line about wave+bubble (design doc, "Success Criteria") to the heuristic-attention wording.
   - Files: `docs/designs/office-agents-isometric-office.md`
   - Verify: wording matches "Accepted amendments".
 
@@ -54,7 +54,7 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
 
 ## Phase 3: Pure logic (client)
 
-- [ ] **3.1 State machine (T4 / T12).** States: arriving, working, waiting-on-subagents, idle, attention, leaving. Single exported `TUNING` object. Attention episode id so flaps announce once. Add the markers `gstack-shortcut(dec-R1)` at the tool-call timer and `gstack-shortcut(dec-R2)` at the trailing-`?` check.
+- [ ] **3.1 State machine (T4 / T12).** States: arriving, working, waiting-on-subagents, idle, attention, leaving. Single exported `TUNING` object. The machine owns the attention episode id and `waitingSince` so flaps announce once; `needs_attention` is for exact adapters. Add the markers `gstack-shortcut(dec-R1)` at the tool-call timer and `gstack-shortcut(dec-R2)` at the trailing-`?` check.
   - Files: `src/office/machine.ts`, `src/office/machine.test.ts`
   - Verify: `vp test`; markers present; one announce per episode.
 - [ ] **3.2 Identity and palette (T5 / DT3 pure part / 6A).** Seeded name and gender from session id. 8 color-blind-checked shirt colors, stripe from the 9th project, collision avoidance among active projects.

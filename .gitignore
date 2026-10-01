@@ -25,6 +25,7 @@ dist-ssr
 !.vscode/
 !.vscode/settings.json
 !.vscode/extensions.json
+.claude/scratch/
 
 # dotenv environment variable files
 .env

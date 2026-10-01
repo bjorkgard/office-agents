@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0.0] - 2026-10-01
+
+### Added
+
+- A shared definition of the events the office will listen to (agent started, working, waiting on subagents, needs attention, handoff, done), with a checker that rejects malformed or oversized events instead of letting them reach the office.
+- The app now loads IBM Plex Sans from the project itself, so the page makes no font requests to other sites. The font's licence text is included in `NOTICE`.
+- The page now uses the evening palette, spacing, timing and type sizes from `DESIGN.md`, with a visible violet focus ring for keyboard users and shorter animation timings when reduced motion is on.
+- Tests that keep the page styles, the font setup and the licence notice in step with `DESIGN.md`, plus tests for the event checker.
+
+### Changed
+
+- The starter Vite page is replaced by a plain "Agent Office" placeholder, and the browser tab is now titled "Agent Office". The unused starter images and styles are gone.
+- The build checklist and design doc now describe the attention signal as a heuristic and say the office, not the event feed, decides when an attention episode starts and ends.
+
 ## [0.0.3.0] - 2026-10-01
 
 ### Added

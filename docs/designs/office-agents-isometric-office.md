@@ -56,7 +56,7 @@ A. One-hour spike: license, stack, sprite/state system, whether paper handoff an
 
 - `vp dev` shows a live session from an existing transcript within seconds, no config.
 - Spawning a subagent shows a visible walk-in and paper handoff.
-- Wave+bubble fires on a real attention request.
+- Wave+bubble fires on a heuristic attention signal: the final assistant message ends with `?`, or a non-subagent tool call has no result after a timer (R1, R2).
 - Holds up with 12 agents on screen.
 
 ## Distribution Plan
@@ -469,7 +469,7 @@ Synthesized from this review's findings. Each task derives from a specific findi
 - [ ] **T8 (P3, human: ~15min / CC: ~2min)** — docs — apply accepted amendments to Success Criteria
   - Surfaced by: Scope finding 1, R1
   - Files: `docs/designs/office-agents-isometric-office.md`
-  - Verify: line 50 matches the amended wording
+  - Verify: the Success Criteria line matches the amended wording
 
 Effort ratios assumed: scaffolding ~100x, tests ~50x, features ~30x, architecture ~5x.
 
@@ -796,7 +796,7 @@ Value cards for the new E2E and unit cases are in the saved test plan file (`~/.
 - [ ] **T9 (P1, human: ~1h / CC: ~15min)** — art — S0 pose and shirt-band check gates all sprite work (Architecture 3). Files: `docs/designs/`, `NOTICE`. Verify: pose list satisfied or vector fallback chosen.
 - [ ] **T10 (P2, human: ~2h / CC: ~15min)** — server — seat table in feed plugin (R8). Files: `server/feed-plugin.ts`, `server/feed-plugin.test.ts`. Verify: `vp test` seat cases.
 - [ ] **T11 (P2, human: ~3h / CC: ~20min)** — render — scaled sprite layer plus unscaled overlay (Architecture 4). Files: `src/office/Scene.tsx`, `iso.ts`.
-- [ ] **T12 (P2, human: ~2h / CC: ~15min)** — state — `waitingSince` and attention episode id (Architecture 5, Code quality 2). Files: `shared/events.ts`, `src/office/machine.ts`.
+- [ ] **T12 (P2, human: ~2h / CC: ~15min)** — state — `waitingSince` and attention episode id (Architecture 5, Code quality 2). Files: `shared/events.ts`, `src/office/machine.ts`. The machine owns the attention episode id and waitingSince; needs_attention is for exact adapters.
 - [ ] **T13 (P2, human: ~1 day / CC: ~45min)** — e2e — add reduced motion, recolor check (`data-shirt` plus computed shirt fill), title and chips, keyboard cases. Files: `e2e/office.spec.ts`.
 - [ ] **T14 (P3, human: ~30min / CC: ~5min)** — deps — `@fontsource/ibm-plex-sans`, `NOTICE`, `DESIGN.md` font note (R9, Architecture 6). Files: `package.json`, `NOTICE`, `DESIGN.md`.
 
