@@ -20,7 +20,8 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 
 - [x] Design doc, engineering review and design review
 - [x] Check CC0 sprite packs for poses and a clean shirt color band (none fit; characters and props will be drawn)
-- [ ] Draw characters, props and walk cycles in one style, with recolor by variable
+- [x] Draw characters and props as isometric pixel sprites (BUILD_TODO 4.0; scene integration, 4.4, remains)
+- [x] Recolor shirts by project with a CSS variable (BUILD_TODO 4.3; scene integration, 4.4, remains)
 - [ ] Event types and transcript normalizer
 - [ ] Feed plugin: tail transcripts, stream to the browser, refuse non-localhost hosts
 - [ ] State machine and seeded identity (name, gender, project color)
@@ -38,4 +39,4 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 
 ## Development
 
-This project uses [Vite+](https://viteplus.dev/guide/); install its global `vp` CLI first. Then run `vp install` and `vp dev`. Run `vp check` before committing. `vp test` fails until the first test file exists.
+This project uses [Vite+](https://viteplus.dev/guide/); install its global `vp` CLI first. Then run `vp install` and `vp dev`. Run `vp check` before committing. `vp test` runs the Vitest suite. In dev only, open `/?art` to see the character and prop style sheet (poses, desk, appearance variants, a 12-agent row at 50%); the sheet is not part of the production build.
