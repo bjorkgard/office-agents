@@ -16,6 +16,30 @@
 
 ## Office
 
+### Displayed-state hook for characters (M8)
+
+**What:** Add `src/office/Character.tsx`, a hook that swaps the displayed pose only when the current animation loop ends, using `nextDisplayed` from `poses.ts`.
+
+**Why:** Without it, state changes cut poses off mid-motion, and `nextDisplayed` and `poseForState` have no production caller yet.
+
+**Context:** Deferred from plan: docs/designs/character-art-merged-tasks.md (M8). The pure swap logic and its 900ms timeout exist and are tested. Needs the reduced-motion path (new pose at once) and a background-tab return to the current pose.
+
+**Effort:** M (human ~1 day / CC ~30min)
+**Priority:** P1
+**Depends on:** None
+
+### Bubble layout and hit-area spacing (M9)
+
+**What:** Add `src/office/iso.ts` with `placeBubbles` and `iso.test.ts`.
+
+**Why:** Overlapping speech bubbles and 24px hit areas need to hold at 50% scale with 12 agents.
+
+**Context:** Deferred from plan: docs/designs/character-art-merged-tasks.md (M9). Tests needed for 0, 1, 2 and 3 overlapping bubbles, and hit-area centers at least 24px apart at scale 0.5. M10 profiling (12 and 24 agents in Chrome and Safari, Safari 50% hit area) was dropped from the art PR and belongs with scene step 4.4.
+
+**Effort:** M (human ~1 day / CC ~30min)
+**Priority:** P1
+**Depends on:** BUILD_TODO 4.1
+
 ### Paper hover-text with redaction
 
 **What:** Hover or click a handoff paper to read the subagent description and a truncated result summary.
