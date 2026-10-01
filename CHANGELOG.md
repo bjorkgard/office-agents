@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.2.0] - 2026-10-01
+
+### Added
+
+- A written design system (`DESIGN.md`): the evening color palette with checked contrast, eight project shirt colors, type, spacing, motion, and the rules for the door, coffee station, attention cue and subagent slots.
+- A step-by-step build checklist (`BUILD_TODO.md`) that turns the design and review notes into ordered work with a way to check each step.
+- Reviews of the Phase 0 art plan (scope, engineering) and a record of the sprite pack check, including a recolor test and a 12-character legibility check.
+- An approved look for the office room, chosen from three generated mockups.
+- A `NOTICE` file listing the third-party packs that were inspected and why none is used.
+
+### Changed
+
+- The art plan: no free sprite pack has sit, typing and wave poses, so characters and props will be drawn in one consistent style. The roadmap and design notes say so.
+- The design notes now place the door on the back wall at the left, the coffee station at the right, and give each desk two standing slots for subagents.
+- `.gstack/` is ignored so tool state is not committed.
+
 ## [0.0.1.0] - 2026-10-01
 
 ### Added
