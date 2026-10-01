@@ -122,7 +122,7 @@ function fieldOk(spec: FieldSpec, value: unknown): boolean {
 function fieldsOk(fields: Record<string, FieldSpec>, obj: object): boolean {
   const record = obj as Record<string, unknown>;
   for (const [name, spec] of Object.entries(fields)) {
-    const value = record[name];
+    const value = Object.hasOwn(record, name) ? record[name] : undefined;
     if (value === undefined) {
       if (spec.type === "object" && spec.optional) continue;
       return false;
@@ -136,7 +136,7 @@ function fieldsOk(fields: Record<string, FieldSpec>, obj: object): boolean {
 export function isAgentEvent(value: unknown): value is AgentEvent {
   try {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-    const kind = (value as Record<string, unknown>).kind;
+    const kind = Object.hasOwn(value, "kind") ? (value as Record<string, unknown>).kind : undefined;
     if (typeof kind !== "string" || !Object.hasOwn(SPEC, kind)) return false;
     return fieldsOk(SPEC[kind as AgentEventKind], value);
   } catch {

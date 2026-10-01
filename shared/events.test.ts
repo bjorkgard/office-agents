@@ -168,6 +168,39 @@ describe("isAgentEvent", () => {
     expect(isAgentEvent({ ...valid.done, kind })).toBe(false);
   });
 
+  // Value: protects=inherited values never satisfy the guard; fails_when=own-property check becomes plain access; why_new=only own-property objects were tried; seam=none
+  for (const [kind, event] of Object.entries(valid)) {
+    it(`rejects ${kind} built with Object.create(validEvent)`, () => {
+      expect(isAgentEvent(Object.create(event))).toBe(false);
+    });
+  }
+
+  it("rejects a required field present only on the prototype", () => {
+    const copy = { ...valid.done };
+    delete copy.endsWithQuestion;
+    expect(isAgentEvent(Object.assign(Object.create({ endsWithQuestion: false }), copy))).toBe(
+      false,
+    );
+  });
+
+  it("rejects a nullable field present only on the prototype", () => {
+    const copy = { ...valid.done };
+    delete copy.agentId;
+    expect(isAgentEvent(Object.assign(Object.create({ agentId: null }), copy))).toBe(false);
+  });
+
+  it("rejects a tool field present only on the prototype", () => {
+    const tool = Object.create({ id: "t1" });
+    Object.assign(tool, { phase: "start", isSubagent: false });
+    expect(isAgentEvent({ ...valid.working, tool })).toBe(false);
+  });
+
+  it("treats an inherited tool as absent and accepts the event", () => {
+    const copy = { ...base, kind: "working" };
+    const proto = { tool: { phase: "start", id: "t1", isSubagent: false } };
+    expect(isAgentEvent(Object.assign(Object.create(proto), copy))).toBe(true);
+  });
+
   // Value: protects=guard never throws on hostile input; fails_when=try/catch removed; why_new=no hostile object covered; seam=none
   it("returns false for a throwing getter or Proxy", () => {
     const getter = {
