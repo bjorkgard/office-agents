@@ -1,5 +1,5 @@
 import { parseAgentEvent, type AgentEvent } from "../../shared/events";
-import { applyEvents, createOffice, tick, type OfficeState } from "./machine";
+import { applyEvents, createOffice, removeAgent, tick, type OfficeState } from "./machine";
 
 /**
  * Feed client (E3, R4, D12, D15, D16): the connection logic behind `useOffice`, with the
@@ -180,11 +180,21 @@ export function createFeedClient(deps: FeedDeps, onChange: (s: FeedState) => voi
       }
       case "gone": {
         if (typeof frame.sessionId !== "string") return skip("frame", "a malformed gone");
-        if (frame.agentId === null && frame.sessionId in state.seats) {
-          const seats = seatMap(state.seats);
-          delete seats[frame.sessionId];
-          set({ seats });
+        if (frame.agentId !== null && typeof frame.agentId !== "string") {
+          return skip("frame", "a malformed gone");
         }
+        const { sessionId, agentId } = frame;
+        guarded(() => {
+          const patch: Partial<FeedState> = {};
+          const office = removeAgent(state.office, sessionId, agentId);
+          if (office !== state.office) patch.office = office;
+          if (agentId === null && sessionId in state.seats) {
+            const seats = seatMap(state.seats);
+            delete seats[sessionId];
+            patch.seats = seats;
+          }
+          return Object.keys(patch).length > 0 ? patch : null;
+        });
         return;
       }
       default:

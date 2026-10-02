@@ -3,6 +3,10 @@
   margin: 0 auto;
 }
 
+.scene:focus {
+  outline: none;
+}
+
 .scene-scaled {
   position: absolute;
   left: 0;
@@ -231,26 +235,17 @@
   opacity: 1;
 }
 
-/* "+N" for the queued agents past the drawn ones, at the door; it only counts, it does nothing. */
+/* "+N" for the queued agents past the drawn ones, at the door; a status, not a control. */
 .queue-more {
   position: absolute;
   min-width: 24px;
   min-height: 24px;
   padding: var(--space-1) var(--space-2);
-  border: 0;
   border-radius: var(--radius-sm);
   background: var(--bar);
   color: var(--text);
-  font: inherit;
   font-weight: 600;
-  pointer-events: auto;
-  cursor: default;
   transform: translate(-50%, -50%);
-}
-
-.queue-more:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .bubble {

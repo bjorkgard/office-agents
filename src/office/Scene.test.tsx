@@ -102,7 +102,7 @@ describe("Scene", () => {
 
   it("names each hit area with first name, project and state, waiting agents first", () => {
     const html = render([agent("s1", null), waving("s2", 0)], { s1: 0, s2: 1 });
-    const labels = [...html.matchAll(/aria-label="([^"]+)"/g)].map((m) => m[1]);
+    const labels = [...html.matchAll(/class="hit" aria-label="([^"]+)"/g)].map((m) => m[1]);
     expect(labels).toHaveLength(2);
     expect(labels[0]).toMatch(/, atlas, waiting for you$/);
     expect(labels[1]).toMatch(/, atlas, working$/);
@@ -293,13 +293,24 @@ describe("Scene door queue overflow (DR1)", () => {
     expect(queued(QUEUE_VISIBLE)).not.toContain("data-queue-more");
   });
 
-  it("counts the rest in a +N button after every agent button", () => {
+  it("counts the rest in a non-interactive +N status after every agent button", () => {
     const html = queued(QUEUE_VISIBLE + 3);
+    expect(html).not.toMatch(/<button[^>]*data-queue-more/);
     const marker =
-      /<button[^>]*data-queue-more[^>]*aria-label="([^"]+)"[^>]*>([^<]*)<\/button>/.exec(html)!;
+      /<span[^>]*role="status"[^>]*data-queue-more[^>]*aria-label="([^"]+)"[^>]*>([^<]*)<\/span>/.exec(
+        html,
+      )!;
     expect(marker[1]).toBe("and 3 more waiting");
     expect(marker[2]).toBe("+3");
     expect(html.lastIndexOf("data-queue-more")).toBeGreaterThan(html.lastIndexOf('class="hit"'));
     expect(html.match(/class="hit"/g)).toHaveLength(1 + QUEUE_VISIBLE);
+  });
+});
+
+describe("Scene focus container", () => {
+  it("is a programmatic focus target with a label", () => {
+    const html = render([agent("s1", null)], { s1: 0 });
+    expect(html).toMatch(/<div[^>]*data-testid="scene"[^>]*tabindex="-1"/);
+    expect(html).toMatch(/<div[^>]*data-testid="scene"[^>]*aria-label="Office"/);
   });
 });

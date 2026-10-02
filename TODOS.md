@@ -350,7 +350,7 @@
 
 ## Phase 4 review follow-ups
 
-### Client ignores `gone` frames for subagents, and drops the seat on a transcript reset
+### Client ignores `gone` frames for subagents, and drops the seat on a transcript reset (DONE: gone removes the agent in `feed-client.ts`; server resend of `seat` after `onReset` stays open)
 
 **What:** `src/office/feed-client.ts` (`gone` handling, ~179) only deletes the seat of a top-level session. A `gone` frame with an `agentId` is ignored, and a truncated transcript (`onReset`) deletes the client seat while the server keeps it.
 
@@ -386,7 +386,7 @@
 **Priority:** P2
 **Depends on:** None
 
-### Queue overflow button does nothing and waiting agents past it are unreachable
+### Queue overflow button does nothing and waiting agents past it are unreachable (DONE: button now a non-interactive `role="status"`; unreachable waiting agent and stable render order stay open)
 
 **What:** The `+N` button in `src/office/Scene.tsx` (~531) is a focusable button with no handler, and a waiting agent past `QUEUE_VISIBLE` has no `.hit` button, so its top-bar chip does nothing when clicked.
 

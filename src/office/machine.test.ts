@@ -6,6 +6,7 @@ import {
   applyEvent,
   applyEvents,
   createOffice,
+  removeAgent,
   tick,
   TUNING,
   type Agent,
@@ -737,5 +738,27 @@ describe("returned cap", () => {
     expect(keys).toContain(agentKey(S, "c0"));
     expect(keys).toContain(agentKey(S, "c2000"));
     expect(keys).not.toContain(agentKey(S, "c1"));
+  });
+});
+
+describe("removeAgent", () => {
+  it("removes exactly that agent and its returned mark, immutably", () => {
+    let s = applyEvent(createOffice(), started(null), 0);
+    s = applyEvent(s, started("c"), 0);
+    s = applyEvent(s, handoff("c", "back"), 0);
+    const before = structuredClone(s);
+    const next = removeAgent(s, S, "c");
+    expect(Object.keys(next.agents)).toEqual([agentKey(S, null)]);
+    expect(next.returned[agentKey(S, "c")]).toBeUndefined();
+    expect(s).toEqual(before);
+    const top = removeAgent(s, S, null);
+    expect(top.agents[agentKey(S, null)]).toBeUndefined();
+    expect(top.agents[agentKey(S, "c")]).toBeDefined();
+  });
+
+  it("returns the same state when there is nothing to remove", () => {
+    const s = applyEvent(createOffice(), started(null), 0);
+    expect(removeAgent(s, S, "nope")).toBe(s);
+    expect(removeAgent(s, "other", null)).toBe(s);
   });
 });

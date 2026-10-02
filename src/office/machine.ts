@@ -76,6 +76,19 @@ export function agentKey(sessionId: string, agentId: string | null): string {
   return `${sessionId}\u0000${agentId ?? ""}`;
 }
 
+/** Drops one agent and its returned mark (the server says it is gone); `state` itself if absent. */
+export function removeAgent(
+  state: OfficeState,
+  sessionId: string,
+  agentId: string | null,
+): OfficeState {
+  const key = agentKey(sessionId, agentId);
+  if (!(key in state.agents) && !(key in state.returned)) return state;
+  const { [key]: _agent, ...agents } = state.agents;
+  const { [key]: _returned, ...returned } = state.returned;
+  return { ...state, agents, returned };
+}
+
 function stateOf(a: Agent): AgentState {
   if (a.phase === "leaving") return "leaving";
   if (a.attention) return "attention";

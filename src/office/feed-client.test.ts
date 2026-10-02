@@ -424,6 +424,63 @@ describe("snapshot replay (D12)", () => {
   });
 });
 
+describe("gone frames remove the agent (P1)", () => {
+  const top = agentKey("s1", null);
+  const child = agentKey("s1", "c");
+
+  it("top-level gone removes the agent and the seat", () => {
+    const h = harness();
+    live(h, [started(T0 - 1000), working(T0 - 900)], { s1: 0 });
+    h.last().send({ type: "gone", sessionId: "s1", agentId: null });
+    expect(h.state().office.agents[top]).toBeUndefined();
+    expect(h.state().seats).toEqual({});
+  });
+
+  it("subagent gone removes only that subagent", () => {
+    const h = harness();
+    live(h, [started(T0 - 1000), started(T0 - 900, { agentId: "c", parent: null })], { s1: 0 });
+    h.last().send({ type: "gone", sessionId: "s1", agentId: "c" });
+    expect(h.state().office.agents[child]).toBeUndefined();
+    expect(h.state().office.agents[top]).toBeDefined();
+    expect(h.state().seats).toEqual({ s1: 0 });
+  });
+
+  it("an unknown key is a no-op", () => {
+    const h = harness();
+    live(h, [started(T0 - 1000)], { s1: 0 });
+    const before = h.state().office;
+    h.last().send({ type: "gone", sessionId: "s1", agentId: "zzz" });
+    h.last().send({ type: "gone", sessionId: "other", agentId: null });
+    expect(h.state().office).toBe(before);
+    expect(h.state().seats).toEqual({ s1: 0 });
+  });
+
+  it("a malformed gone is still skipped", () => {
+    const h = harness();
+    live(h);
+    h.last().send({ type: "gone", agentId: null });
+    expect(h.state().skipped.frame).toBe(1);
+  });
+
+  it("a reset then replay does not resurrect old state", () => {
+    const h = harness();
+    live(
+      h,
+      [started(T0 - 1000), working(T0 - 900, null, { phase: "start", id: "t", isSubagent: false })],
+      {
+        s1: 0,
+      },
+    );
+    h.setNow(T0 + 20 * 1000);
+    h.advance(0);
+    h.last().send({ type: "gone", sessionId: "s1", agentId: null });
+    h.last().send({ type: "event", event: started(T0 + 20 * 1000 - 500) });
+    const a = h.state().office.agents[top];
+    expect(a.openTools).toEqual({});
+    expect(a.arrivedAt).toBe(T0 + 20 * 1000 - 500);
+  });
+});
+
 describe("seats (S1-1)", () => {
   it("snapshot replaces, seat sets, top-level gone deletes, subagent gone keeps", () => {
     const h = harness();

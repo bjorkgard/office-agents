@@ -153,3 +153,12 @@ export function geometryFor(layout: OfficeLayout): Geometry {
     queueSpot: shell.queueSpot,
   };
 }
+
+/** True when the focused element was removed from the page and focus fell back to the body. */
+export function lostFocus(
+  last: { isConnected: boolean } | null,
+  active: unknown,
+  body: unknown,
+): boolean {
+  return last !== null && !last.isConnected && (active === null || active === body);
+}

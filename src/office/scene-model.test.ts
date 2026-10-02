@@ -13,6 +13,7 @@ import {
   bubbleText,
   geometryFor,
   lookFor,
+  lostFocus,
   planSubagents,
   SLOTS_PER_DESK,
 } from "./scene-model";
@@ -241,5 +242,18 @@ describe("seated agents stay visible behind their desk", () => {
     const d = layout.desks[0];
     for (const i of [0, 1]) expect(Math.abs(g.slot(0, i).x - seat.x)).toBeGreaterThanOrEqual(48);
     expect(g.slot(0, 0).y).toBeGreaterThan(d.y);
+  });
+});
+
+describe("lostFocus", () => {
+  const body = {};
+  const gone = { isConnected: false };
+  const here = { isConnected: true };
+  it("is true only when the focused element was removed and focus fell to the body", () => {
+    expect(lostFocus(gone, body, body)).toBe(true);
+    expect(lostFocus(gone, null, body)).toBe(true);
+    expect(lostFocus(gone, here, body)).toBe(false);
+    expect(lostFocus(here, body, body)).toBe(false);
+    expect(lostFocus(null, body, body)).toBe(false);
   });
 });

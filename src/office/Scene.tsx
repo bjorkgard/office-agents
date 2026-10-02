@@ -4,7 +4,9 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -43,6 +45,7 @@ import {
   bubbleText,
   geometryFor,
   lookFor,
+  lostFocus,
   QUEUE_VISIBLE,
   SEATED_FOOT,
   STANDING_FOOT,
@@ -290,6 +293,16 @@ export function Scene({
       .map((a) => a.sessionId),
   );
 
+  // A focused hit button can leave the page (its agent left): keep focus in the scene.
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const focused = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (lostFocus(focused.current, document.activeElement, document.body)) {
+      focused.current = null;
+      sceneRef.current?.focus();
+    }
+  });
+
   // The overlay of a walker follows its foot point frame by frame (no React render per frame).
   const hit = Math.max(HIT_MIN, 40 * scale);
   useEffect(() => {
@@ -368,6 +381,15 @@ export function Scene({
     <div
       className="scene"
       data-testid="scene"
+      ref={sceneRef}
+      tabIndex={-1}
+      aria-label="Office"
+      onFocus={(e) => {
+        focused.current = e.target;
+      }}
+      onBlur={(e) => {
+        if (e.target.isConnected) focused.current = null;
+      }}
       style={{ width: layout.width * scale, height: layout.scrollHeight }}
     >
       <ThrowFailure failure={failure} />
@@ -528,15 +550,15 @@ export function Scene({
           );
         })}
         {hidden > 0 && (
-          <button
-            type="button"
+          <span
             className="queue-more"
+            role="status"
             data-queue-more
             aria-label={`and ${hidden} more waiting`}
             style={{ left: more.x * scale, top: more.y * scale }}
           >
             +{hidden}
-          </button>
+          </span>
         )}
       </div>
     </div>
