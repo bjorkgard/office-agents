@@ -87,7 +87,10 @@ describe("sync flow", () => {
     const events = run(top(), "sync-flow");
     const kinds = events.map((e) => e.kind);
     expect(kinds).toContain("waiting_on_subagents");
-    expect(handoffs(events)).toEqual([`${hashId("agent-sync")}:back`]);
+    expect(handoffs(events)).toEqual([
+      `${hashId("agent-sync")}:out`,
+      `${hashId("agent-sync")}:back`,
+    ]);
     expect(events.at(-1)).toMatchObject({ kind: "done", endsWithQuestion: false });
   });
 });

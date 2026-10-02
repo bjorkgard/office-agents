@@ -240,6 +240,10 @@ const onUser: Handler = (ctx) => {
       // D7: background launch emits only the out-handoff; the parent keeps working.
       out.push(...handoff(ctx, launched, "out"));
     } else if (result.status === "completed") {
+      // D7: the child id is only known now, so a sync launch emits its out-handoff just before the back.
+      if (launch.sync && !state.completed.has(`${launched}|${id}`)) {
+        out.push(...handoff(ctx, launched, "out"));
+      }
       out.push(...handoff(ctx, launched, "back"));
       if (!tooLong(id)) markCompleted(state, `${launched}|${id}`);
     }

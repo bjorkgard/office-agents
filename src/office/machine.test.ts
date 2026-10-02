@@ -518,7 +518,7 @@ describe("sync flow through the machine (D7, end to end)", () => {
     // user, tool_use (sync), tool_result, end_turn
     const states = walk(syncFlow.split("\n").filter(Boolean));
     expect(states[1]).toBe("waiting-on-subagents");
-    expect(states[2]).toBe("working");
+    expect(states[2]).toBe("working"); // out + back in sequence leave no wait behind
   });
 
   it("a later async launch in the same turn does not send the parent to coffee", () => {
