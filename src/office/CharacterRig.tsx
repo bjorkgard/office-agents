@@ -43,6 +43,8 @@ export type CharacterRigProps = {
   carryPaper?: boolean;
   mirror?: boolean;
   walkFrame?: 0 | 1;
+  // Walking only: draw both walking frames; scene.css alternates them (a step every half stride).
+  stride?: boolean;
   // Index into HAIRSTYLES; any integer seed works, it wraps.
   hairStyle?: number;
   hair?: HairToken;
@@ -117,6 +119,7 @@ export const CharacterRig = memo(function CharacterRig({
   carryPaper = false,
   mirror = false,
   walkFrame = 0,
+  stride = false,
   hairStyle = 0,
   hair: hairProp = "--hair-1",
   skin: skinProp = "--skin-2",
@@ -128,6 +131,7 @@ export const CharacterRig = memo(function CharacterRig({
   const view = FRAME_VIEW[frame];
   const [hx, hy] = HEAD_ANCHOR[frame];
   const style = hairStyleFor(hairStyle);
+  const steps: FrameName[] | null = stride && pose === "walking" ? ["WALK_A", "WALK_B"] : null;
   const rootStyle = useMemo(
     () => ({
       ...STATIC_STYLE,
@@ -154,9 +158,29 @@ export const CharacterRig = memo(function CharacterRig({
         <Cells grid={SHADOW} dx={SHADOW_AT[0]} dy={SHADOW_AT[1]} />
       </g>
       <g transform={mirror ? `translate(${RIG_WIDTH} 0) scale(-1 1)` : undefined}>
-        <Cells grid={FRAMES[frame]} skip={carryPaper ? undefined : PAPER_FILL} />
-        <Cells grid={style[view]} dx={hx} dy={hy} />
-        <Cells grid={HEADPHONES[view]} dx={hx} dy={hy} />
+        {steps ? (
+          steps.map((name, i) => (
+            <g key={name} data-part={i === 0 ? "walk-a" : "walk-b"}>
+              <Cells grid={FRAMES[name]} skip={carryPaper ? undefined : PAPER_FILL} />
+              <Cells
+                grid={style[FRAME_VIEW[name]]}
+                dx={HEAD_ANCHOR[name][0]}
+                dy={HEAD_ANCHOR[name][1]}
+              />
+              <Cells
+                grid={HEADPHONES[FRAME_VIEW[name]]}
+                dx={HEAD_ANCHOR[name][0]}
+                dy={HEAD_ANCHOR[name][1]}
+              />
+            </g>
+          ))
+        ) : (
+          <>
+            <Cells grid={FRAMES[frame]} skip={carryPaper ? undefined : PAPER_FILL} />
+            <Cells grid={style[view]} dx={hx} dy={hy} />
+            <Cells grid={HEADPHONES[view]} dx={hx} dy={hy} />
+          </>
+        )}
       </g>
     </svg>
   );
@@ -177,6 +201,47 @@ export const PixelDesk = memo(function PixelDesk({ lit = true }: { lit?: boolean
       style={STATIC_STYLE}
     >
       <Cells grid={lit ? DESK : DESK_DIM} />
+    </svg>
+  );
+});
+
+const DESK_IDS = { lit: "desk-lit", dim: "desk-dim" } as const;
+
+// Draws each desk variant once. Mount it once per page; every SharedDesk then costs one <use>.
+export const DeskDefs = memo(function DeskDefs() {
+  return (
+    <svg
+      width={0}
+      height={0}
+      style={{ position: "absolute" }}
+      aria-hidden="true"
+      focusable="false"
+      data-part="desk-defs"
+    >
+      <defs>
+        <g id={DESK_IDS.lit}>
+          <Cells grid={DESK} />
+        </g>
+        <g id={DESK_IDS.dim}>
+          <Cells grid={DESK_DIM} />
+        </g>
+      </defs>
+    </svg>
+  );
+});
+
+// Same pixels as PixelDesk, reusing the DeskDefs drawing. The root sets the palette the shared art reads.
+export const SharedDesk = memo(function SharedDesk({ lit = true }: { lit?: boolean }) {
+  return (
+    <svg
+      width={DESK_WIDTH}
+      height={DESK_HEIGHT}
+      viewBox={`0 0 ${DESK_WIDTH} ${DESK_HEIGHT}`}
+      aria-hidden="true"
+      focusable="false"
+      style={STATIC_STYLE}
+    >
+      <use href={`#${lit ? DESK_IDS.lit : DESK_IDS.dim}`} />
     </svg>
   );
 });

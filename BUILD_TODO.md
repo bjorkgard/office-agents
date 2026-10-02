@@ -2,7 +2,7 @@
 
 Step-by-step build order for slice 1, derived from the design doc, eng review, eng re-review and design review in [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md). Work top to bottom. Tick a box when the step is done and its **Verify** line passes. Deferred ideas stay in [TODOS.md](TODOS.md); the high-level roadmap stays in [README.md](README.md).
 
-Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..7B, 8A..8C) are already approved; do not reopen them while building.
+Task ids (T1..T14, DT1..DT13) point to the design doc. Decision ids (R1..R9, 1A..7B, 8A..8C) are already approved; do not reopen them while building.
 
 **Always:** run `vp install` after pulling, `vp check` and `vp test` before each commit. Import tests from `vite-plus/test`. No enums (`erasableSyntaxOnly`); use string-literal unions. `machine.ts` takes `now`, never `setTimeout`.
 
@@ -81,33 +81,33 @@ Amended by the phase 2 and 3 review (`docs/designs/phase-2-3-ceo-review.md`, dec
 - [x] **4.0b Rest of the rig.** Remaining poses (sit, wave, carry paper, coffee, idle) in 2 authored views mirrored for the other facings; props desk, monitor, chair, door, coffee station, plants and paper; seeded appearance variants; full `?art` sheet (dev only).
   - Verify: contact sheet of all poses at 100% and 50%; 12 characters side by side at 50% stay distinguishable.
   - Done 2026-10-01: poses, props, appearance seeds and the full `?art` sheet.
-- [ ] **4.1 Iso projection and layout (DT8 / 2A / 6D).** Depth = x+y, 4 desks per row, rows added when full, scale to fit with a 50% floor, minimum 800x500 with "Make this window wider".
+- [x] **4.1 Iso projection and layout (DT8 / 2A / 6D).** Depth = x+y, 4 desks per row, rows added when full, scale to fit with a 50% floor, minimum 800x500 with "Make this window larger".
   - Files: `src/office/iso.ts`
-- [ ] **4.2 SSE hook (T6).** `useOffice` connects, applies the snapshot, then deltas, runs the machine, handles reconnect.
+- [x] **4.2 SSE hook (T6).** `useOffice` connects, applies the snapshot, then deltas, runs the machine, handles reconnect.
   - Files: `src/office/useOffice.ts`
   - Note (Phase 2-3 review): replay each snapshot event through `applyEvent` with its own `ts` (the machine uses min(ts, now)), and handle `gone` frames by dropping that agent.
-  - Note (Phase 4 replay): when replaying a snapshot, drop expired agents outright instead of letting them walk out (replay mode), and snapshot events older than `STALE_MS` must not create agents.
+  - Note (Phase 4 replay, D12): replay every snapshot event in snapshot order as `applyEvent(state, ev, ev.ts)` (a real `now` per event would expire the start event), then one `tick(now)` so the machine's two-tier expiry decides (30 min / 4 h by `lastEventAt`), then remove `leaving` agents outright (no walk-out). No separate event-age filter. Tests: 1 h old question kept, 1 h old tool call dropped, 1 h old working agent keeps shirt, parent link and `arrivedAt`.
 - [x] **4.3 Recolor (DT3 / 4B, amended: Phase 0 chose all-drawn art).** Recolor by CSS variable on drawn characters (decision 4B already says so): `shirtVars(index, stripe)` sets `--shirt` and `--shirt-stripe`; the stripe is palette cells filled with `var(--shirt-stripe)`. Gray fallback and a dev warning for an out-of-range index.
   - Files: `src/office/poses.ts`
   - Done 2026-10-01: `shirtVars` and `--shirt`/`--shirt-stripe` on pixel cells.
-- [ ] **4.4 Scene and Character (T6 / T11).** Scaled sprite layer plus unscaled overlay for tags, bubbles and focus rings. Character exposes `data-state` and `data-shirt`. Desk, typing, glowing screen only while working.
+- [x] **4.4 Scene and Character (T6 / T11).** Scaled sprite layer plus unscaled overlay for tags, bubbles and focus rings. Character exposes `data-state` and `data-shirt`. Desk, typing, glowing screen only while working.
   - Files: `src/office/Scene.tsx`, `src/office/Character.tsx`
   - Verify: `vp dev` with a live session shows a seated agent with `data-state`.
-- [ ] **4.5 Subagent walk-in and paper handoff.** Subagents stand beside the parent; paper moves out and back. CSS transforms, no per-frame React state.
-- [ ] **4.6 Wave, bubble, tags (DT5 / 1A / 2B).** Tag on hover, focus or waving. Bubble "Asking you" or "Stuck?" plus wait time, no transcript text.
-- [ ] **4.7 Top bar (DT4 / 1B / 3A / R5).** Status banner (refused, reconnecting, no active sessions), waiting chips longest first, chip click pulses the character, tab title `(N) Agent Office`. Wait labels update once per minute.
+- [x] **4.5 Subagent walk-in and paper handoff.** Subagent: door, parent's desk (paper), an empty desk, then back to the parent (paper) and out the door; idle agents take a coffee trip; slots only as the fallback. Walking is an rAF loop (no CSS transitions); reduced motion = no walking, fade/appear.
+- [x] **4.6 Wave, bubble, tags (DT5 / 1A / 2B).** Tag on hover, focus or waving. Bubble "Asking you" or "Stuck?" plus wait time, no transcript text.
+- [x] **4.7 Top bar (DT4 / 1B / 3A / R5).** Status banner (refused, reconnecting, no active sessions), waiting chips longest first, chip click pulses the character, tab title `(N) Agent Office`. Wait labels update once per minute.
   - Files: `src/office/Scene.tsx`
-- [ ] **4.8 Reduced motion (DT6 / 6B).** Fade instead of walk, highlight handoff, no typing or bobbing, static raised hand.
-- [ ] **4.9 Keyboard and screen reader (DT7 / 6C).** Focus order: waiting first, then by desk. Hidden `aria-live=polite` region announces once per episode. Chips are buttons. Focus ring uses the accent token.
+- [x] **4.8 Reduced motion (DT6 / 6B).** Fade instead of walk, highlight handoff, no typing or bobbing, static raised hand.
+- [x] **4.9 Keyboard and screen reader (DT7 / 6C).** Focus order: waiting first, then by desk. Hidden `aria-live=polite` region announces once per episode. Chips are buttons. Focus ring uses the accent token.
   - Verify: keyboard-only walkthrough announces correctly.
-- [ ] **4.10 Layout of door and coffee (design review 8A, DT10).** Door on the back wall at the left, coffee station on the back wall at the right, outside the desk grid; new rows grow toward the viewer.
+- [x] **4.10 Layout of door and coffee (design review 8A, DT10).** Door on the back wall at the left, coffee station on the back wall at the right, outside the desk grid; new rows grow toward the viewer.
   - Verify: adding a row does not move the door or coffee station.
-- [ ] **4.11 Attention cue (design review 8B, DT11).** Raised-arm pose, bubble and an accent ring under the waving agent; keep the accent hue away from the nearest shirt colors.
+- [x] **4.11 Attention cue (design review 8B, DT11).** Raised-arm pose, bubble and an accent ring under the waving agent; keep the accent hue away from the nearest shirt colors.
   - Verify: distinguishable in grayscale and against all 8 shirt colors.
-- [ ] **4.12 Subagent slots (design review 8C, DT12).** Two standing slots per desk, overflow queue near the door, "+N" on the parent's tag.
+- [x] **4.12 Subagent slots (design review 8C, DT12).** Two standing slots per desk, overflow queue near the door, "+N" on the parent's tag.
   - Verify: 3 subagents on one parent show 2 standing and "+1"; no overlap.
 - [x] **4.13 Mockups (DT13).** Done: variant A approved and committed as `docs/designs/mockup-room-variant-a.jpg` (see `DESIGN.md` Open items for the four gaps to resolve while building).
-- [ ] **4.14 Mockup gaps (DESIGN.md Open items).** Resolve the four gaps seen in approved mockup A: monitors lit only while working, the waving agent's shirt not close to the accent ring, no text posters, and subagents standing in a reserved slot.
+- [x] **4.14 Mockup gaps (DESIGN.md Open items).** Resolve the four gaps seen in approved mockup A: monitors lit only while working, the waving agent's shirt not close to the accent ring, no text posters, and subagents standing in a reserved slot.
   - Verify: each gap is closed in the built scene or in a recorded decision.
 
 ## Phase 5: End to end (T7 / T13 / R4)
@@ -116,7 +116,7 @@ Amended by the phase 2 and 3 review (`docs/designs/phase-2-3-ceo-review.md`, dec
   - Files: `package.json`, `e2e/fixtures/*`
 - [ ] **5.2 Core E2E.** Asserts `data-state` per agent, plus refused-host and empty-fixture banner cases.
   - Files: `e2e/office.spec.ts`
-- [ ] **5.3 Extended E2E (T13).** Reduced motion, recolor check of `data-shirt` plus the computed shirt fill, tab title and chip order, keyboard order and tag on focus.
+- [ ] **5.3 Extended E2E (T13).** Reduced motion, recolor check of `data-shirt` plus the computed shirt fill, tab title and chip order, keyboard order and tag on focus, focus after the focused agent leaves, chip scroll-into-view when many chips overflow.
   - Verify: all E2E cases pass.
 
 ## Phase 6: Finish

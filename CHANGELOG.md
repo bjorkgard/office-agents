@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.2.0.0] - 2026-10-02
+
+### Added
+
+- The office now comes alive. Run the app and your Claude Code agents walk in through the door, sit at desks, type while they work, and raise a hand and wave when one needs you. A speech bubble shows how long it has been waiting, and a name tag shows the agent and its project. Subagents appear as small helpers beside their parent.
+- A top bar with a live connection status, a count of agents waiting on you, and a chip for each waiting agent. Clicking a chip focuses that agent and pulses it. The browser tab title shows how many agents need you, and the tab icon gets a dot.
+- The page reads the agent feed over a live connection, replays recent history when it reconnects, and shows a clear message when the feed is unavailable or the window is too small.
+- Keyboard and screen reader support: every agent that needs you is a button, changes are announced politely, and reduced motion turns movement off while keeping every cue visible.
+- A demo office at `/?demo` (development only) so you can see the scene without running real sessions.
+- Ambient life in the room: steam from the coffee station, a ticking wall clock and swaying plants.
+
+### Changed
+
+- The desk row width is now one shared setting used by both the feed server and the page, so seats always match.
+- Idle agents' pose changes wait for the current animation to finish, so characters no longer snap mid-motion.
+- An agent that asked a question stays visible for up to four hours, and old tool calls expire after thirty minutes.
+
+### Fixed
+
+- A project or agent id named like a built-in object member (such as `constructor`) can no longer break the office.
+- A single feed frame with an absurd desk number is skipped instead of freezing the tab.
+- After a fatal feed error the top bar now says the feed is unavailable instead of claiming it is live.
+
 ## [0.1.0.0] - 2026-10-01
 
 ### Added

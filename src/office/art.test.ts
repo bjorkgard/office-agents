@@ -7,7 +7,7 @@ import appearanceSrc from "./appearance.ts?raw";
 import { appearanceFor, HAIR, SKIN } from "./appearance";
 import ArtSheet from "./ArtSheet";
 import artSheetSrc from "./ArtSheet.tsx?raw";
-import { CharacterRig, PixelDesk, PixelProp } from "./CharacterRig";
+import { CharacterRig, DeskDefs, PixelDesk, PixelProp, SharedDesk } from "./CharacterRig";
 import rigSrc from "./CharacterRig.tsx?raw";
 import mainSrc from "../main.tsx?raw";
 import { PROPS, type PropName } from "./props";
@@ -490,6 +490,25 @@ describe("self-contained roots", () => {
     }
   });
 
+  // Value: 12 agents must not re-emit the 1,500-element desk each (phase 4 R5).
+  it("draws each desk variant once and reuses it with one <use> per desk", () => {
+    const defs = renderToStaticMarkup(createElement(DeskDefs));
+    expect(defs.match(/id="desk-lit"/g)).toHaveLength(1);
+    expect(defs.match(/id="desk-dim"/g)).toHaveLength(1);
+    expect(defs).toContain("var(--screen)");
+    const desks = [true, true, false].map((lit) =>
+      renderToStaticMarkup(createElement(SharedDesk, { lit })),
+    );
+    for (const html of desks) {
+      expect(html.match(/<use /g)).toHaveLength(1);
+      expect(html).not.toContain("<rect");
+      expect(html).toMatch(/^<svg[^>]*aria-hidden="true"/);
+      expect(html).toContain("--screen:");
+    }
+    expect(desks[0]).toContain('href="#desk-lit"');
+    expect(desks[2]).toContain('href="#desk-dim"');
+  });
+
   it("declares every palette token on each root", () => {
     const rig = renderToStaticMarkup(
       createElement(CharacterRig, { pose: "standing", shirt: 0, stripe: false }),
@@ -587,6 +606,23 @@ describe("CharacterRig", () => {
     expect(frame({ ...base, pose: "seated-idle" })).toBe("SEATED_IDLE");
     expect(frame({ ...base, pose: "standing" })).toBe("STANDING");
     expect(frame({ ...base, pose: "standing-mug" })).toBe("STANDING_MUG");
+  });
+
+  it("draws both walking frames under a stride when walking, and only one at rest", () => {
+    const base = { shirt: 0, stripe: false } as const;
+    const walking = render({ ...base, pose: "walking", stride: true });
+    expect(walking).toContain('data-part="walk-a"');
+    expect(walking).toContain('data-part="walk-b"');
+    for (const pose of ["standing", "standing-mug", "seated-idle", "seated-typing"] as const) {
+      const still = render({ ...base, pose, stride: true });
+      expect(still, pose).not.toContain('data-part="walk-');
+    }
+    expect(render({ ...base, pose: "walking" })).not.toContain('data-part="walk-');
+  });
+
+  it("gives the two walking frames different legs", () => {
+    const legs = (g: readonly string[]) => g.slice(32).join("|");
+    expect(legs(FRAMES.WALK_A)).not.toBe(legs(FRAMES.WALK_B));
   });
 
   it("renders the standing and coffee frames with the shirt variables", () => {

@@ -112,16 +112,16 @@ Loudest first: waving pose with the violet floor ring, then monitor glow while w
 
 Facing is the authored view toward the named target (two views authored, two mirrored).
 
-| State                  | Location                           | Pose                 | Facing              | Held prop | Monitor | Bubble | Floor ring      |
-| ---------------------- | ---------------------------------- | -------------------- | ------------------- | --------- | ------- | ------ | --------------- |
-| `arriving`             | walks in from the door to the desk | `walking`            | direction of travel | none      | dim     | no     | no              |
-| `working`              | at its desk, seated                | `seated-typing`      | monitor             | none      | lit     | no     | no              |
-| `waiting-on-subagents` | standing at the coffee station     | `standing-mug`       | coffee station      | mug       | dim     | no     | no              |
-| `idle`                 | at its desk, seated                | `seated-idle`        | monitor             | none      | dim     | no     | no              |
-| `attention`            | at its desk, seated                | `seated-raised-hand` | monitor             | none      | dim     | yes    | yes, `--accent` |
-| `leaving`              | walks from the desk to the door    | `walking`            | direction of travel | none      | dim     | no     | no              |
+| State                  | Location                                                                                                 | Pose                                          | Facing              | Held prop                 | Monitor | Bubble | Floor ring      |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------- | ------------------------- | ------- | ------ | --------------- |
+| `arriving`             | walks in from the door to the desk                                                                       | `walking`                                     | direction of travel | none                      | dim     | no     | no              |
+| `working`              | at its desk, seated                                                                                      | `seated-typing`                               | monitor             | none                      | lit     | no     | no              |
+| `waiting-on-subagents` | standing at the coffee station                                                                           | `standing-mug`                                | coffee station      | mug                       | dim     | no     | no              |
+| `idle`                 | at its desk, seated; after 2 s a coffee trip (walks to the coffee station, 8 s with the mug, walks back) | `seated-idle` (`standing-mug` at the station) | monitor             | none (mug at the station) | dim     | no     | no              |
+| `attention`            | at its desk, seated                                                                                      | `seated-raised-hand`                          | monitor             | none                      | dim     | yes    | yes, `--accent` |
+| `leaving`              | walks from the desk to the door                                                                          | `walking`                                     | direction of travel | none                      | dim     | no     | no              |
 
-Idle means hands off the keyboard. A subagent is not a state: it stands in a reserved slot beside its parent's desk (8C); during a handoff it carries a paper (`walking` with paper) and the paper highlights at both desks. Its pose is a plain standing pose with arms down.
+Idle means hands off the keyboard. A subagent is not a state: it enters through the door, walks to its PARENT's desk and receives the paper (`walking` with paper), then walks to an EMPTY desk and sits and works there. When it is done it walks back to the parent's desk, hands the paper over, and walks out through the door. Every row draws all four desks, so a lone session always has empty desks to give. Only when no desk is empty does it stand in one of the two reserved slots beside its parent's desk (8C, a plain standing pose with arms down). A subagent keeps its desk until a session takes it; then it walks on to another empty desk or a slot, never jumping.
 
 ### Shading and light
 
@@ -139,11 +139,11 @@ There are no 1 px stroke outlines on the pixel figures (the `calc(1px / var(--sc
 
 ### Layer order and bubbles
 
-Back to front per desk: floor ring, chair back, character body, desk top and monitor (a raised arm draws above the monitor), desk front edge, mug. Tags and bubbles are in the unscaled overlay on top. Overlapping bubbles: the longer-waiting agent stays on top; the other shifts up in 8px steps, at most 2 shifts, then hides behind its chip. The `?art` sheet (dev only) shows two waving agents side by side.
+The room shell (floor with a shaded checker, two back walls, baseboards; palette tokens only, no text) is the lowest layer, under every prop and desk. Back to front per desk: floor ring, chair back, character body, desk top and monitor (a raised arm draws above the monitor), desk front edge, mug. Tags and bubbles are in the unscaled overlay on top. Overlapping bubbles: the longer-waiting agent stays on top; the other shifts up in 8px steps, at most 2 shifts, then hides behind its chip. A bubble also never covers another agent's tag or figure (head to feet): it takes the same shifts, then hides. The one exception is the single longest-waiting bubble in the room, which never shifts or hides for an obstacle (it may sit over a neighbour's tag); the obstacle rule applies only to the others. The `?art` sheet (dev only) shows two waving agents side by side.
 
 ### Reduced motion destinations
 
-Under `prefers-reduced-motion: reduce`, an agent appears instantly at its semantic place (desk, coffee station, or beside its parent) with a `--dur-slow` (600ms) opacity fade, and fades out on leaving. No walking, typing tap or bobbing. Attention is a static raised hand with ring and bubble. Paper handoff is a 600ms highlight on the paper at both desks; chip pulse is a static `--accent` outline.
+Under `prefers-reduced-motion: reduce`, an agent appears instantly at its semantic place (desk, coffee station, or, for a subagent, its empty desk, else a slot beside its parent) with a `--dur-slow` (600ms) opacity fade, and fades out on leaving. No walking, typing tap or bobbing. Attention is a static raised hand with ring and bubble. Paper handoff is a 600ms highlight on the paper at both desks; chip pulse is a static `--accent` outline.
 
 ### Character geometry
 
@@ -176,23 +176,24 @@ Filled at the style gate (task M5), committed before the rest of the rig is draw
 - Spacing scale in 4px steps: 4, 8, 12, 16, 24, 32. Use no other values.
 - Radius: 4px for chips, 6px for bubbles. No cards. No nested boxes.
 - Shadows: soft offset shadows under characters and furniture inside the scene only. None on UI chrome.
-- Layout: top bar pinned, room below. Minimum window 800x500; narrower shows "Make this window wider". Room scales to fit, never below 50%; under that it scrolls and the bar stays pinned (6D).
+- Layout: top bar pinned, room below. Minimum window 800x500; narrower replaces only the room with "Make this window larger"; the top bar, status line and chips stay, and the chips wrap to extra rows with no "+N" (DR8, DR11). Room scales to fit, never below 50%; under that it scrolls and the bar stays pinned (6D).
 
 ## Motion
 
 - One easing: `--ease: cubic-bezier(0.2, 0.8, 0.2, 1)` (ease-out).
 - Three durations: `--dur-fast: 120ms` (hover, focus), `--dur-base: 240ms` (bubble in/out, chip pulse), `--dur-slow: 600ms` (fade in/out on arrive or leave).
-- Loops (walk, typing, wave) use `linear` or `ease-in-out`, a named exception to the ease-out rule. Starting timings, tuned at the style gate: walk stride 800ms, typing tap 400ms, wave 1200ms then hold the raised pose. Walking speed is stride length over stride time.
+- Loops (walk, typing, wave) use `linear` or `ease-in-out`, a named exception to the ease-out rule. Starting timings, tuned at the style gate: walk stride 800ms, typing tap 400ms, wave 1200ms then hold the raised pose. Walking speed is stride length over stride time: `choreo.ts` sets STRIDE_LENGTH 160px and STRIDE_MS = STRIDE_LENGTH / WALK_SPEED (800ms at 200px/s). A walker draws both walking frames and a CSS `steps(1)` loop shows WALK_A for the first half stride and WALK_B for the second, with the bob in phase; pauses and rest use non-walking poses.
+- Ambient loops (named exception, same as the loops above): coffee steam (3s ease-in-out, fades up over the machine), plant sway (4s ease-in-out alternate, plus or minus 1.5 degrees), wall clock second hand (60s in 60 steps). They are decorative at a fixed pace, never real time, never change an agent's `data-state`, and are all off under `prefers-reduced-motion: reduce` (steam hidden, plants and clock still).
 - Interrupt rule: a state change mid-walk finishes the current stride to the foot-contact pose, keeps position, then switches. No restart from rest, no teleport. One authored motion per character at a time.
-- Walking, typing, wave and paper handoff use CSS transforms and transitions, never per-frame React state.
+- Walking is a requestAnimationFrame loop that writes position, stacking and opacity straight to the element (no CSS transitions, no per-frame React state); the loop stops once the agent is settled. Paths are straight legs at a fixed walking speed (`choreo.ts`). Typing, wave and the paper highlight are CSS keyframes.
 - `prefers-reduced-motion: reduce` (6B): agents fade in and out (600ms) instead of walking; handoff becomes a highlight between desks; no typing or bobbing; the wave is a static raised hand with the bubble. Destinations: see "Reduced motion destinations".
 
 ## Scene rules
 
 - Room: evening dim, monitors glow only while the agent is working, idle screens dim. No neon.
-- Desks: 4 per row. New agent takes the first free desk, preferring one beside its project; seats come from the server seat table and survive reload (7A, R8). New rows grow toward the viewer.
-- Door and coffee station (8A): fixed on the back wall, door at the left, coffee at the right, both outside the desk grid. Adding a row never moves them. Arrivals enter and leavers exit through the door; the coffee break (waiting on subagents) happens at the coffee station.
-- Subagents (8C): each desk reserves two standing slots beside it. Extra subagents wait in a short queue near the door and enter as slots free; the parent's tag shows a small "+N".
+- Desks: 4 per row, and every row draws all four (unseated ones are empty with a dim monitor). New agent takes the first free desk, preferring one beside its project; seats come from the server seat table and survive reload (7A, R8). New rows grow toward the viewer.
+- Door and coffee station (8A): fixed on the back wall, door at the left, coffee at the right, both outside the desk grid. Adding a row never moves them. Arrivals enter and leavers exit through the door; the coffee break (waiting on subagents, and an idle agent's trip) happens at the coffee station, which has 8 standing spots; an agent past the eighth stays seated.
+- Subagents (8C, replaced as the main route by the walk to an empty desk above): each desk reserves two standing slots beside it, used only as the fallback when no desk is empty. Extra subagents wait in a short queue near the door and enter as slots free; the parent's tag shows a small "+N". Only the first 4 queued agents are drawn; a "+N" mark by the door counts the rest. It is not interactive (a click does nothing), and agents beyond the visible queue are reachable only through their waiting chip in the top bar.
 - Identity tag (1A): first name and project, shown only on hover, keyboard focus, or while waving.
 
 ## Components
@@ -211,13 +212,13 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 
 ## Interaction states
 
-| Feature      | Loading                             | Empty                                                 | Error                                           | Success                            | Partial                                    |
-| ------------ | ----------------------------------- | ----------------------------------------------------- | ----------------------------------------------- | ---------------------------------- | ------------------------------------------ |
-| Scene        | desks dim, bar says "Connecting..." | desks empty and dim, "No active Claude Code sessions" | bar says refused (403, not localhost); room dim | agents seated, lit when working    | unknown project: gray shirt, tag "unknown" |
-| Chips        | hidden                              | hidden                                                | hidden                                          | longest wait first                 | time unknown: omit time                    |
-| Bubble       | n/a                                 | n/a                                                   | n/a                                             | "Asking you" or "Stuck?" plus time | time unknown: omit time                    |
-| Tab title    | "Agent Office"                      | "Agent Office"                                        | "Agent Office"                                  | "(N) Agent Office"                 | n/a                                        |
-| Reconnecting | bar: "Reconnecting"                 | keep last scene, dimmed                               | after retries bar shows refused                 | scene resumes                      | n/a                                        |
+| Feature      | Loading                  | Empty                                         | Error                                                 | Success                            | Partial                                    |
+| ------------ | ------------------------ | --------------------------------------------- | ----------------------------------------------------- | ---------------------------------- | ------------------------------------------ |
+| Scene        | bar says "Connecting..." | desks empty, "No active Claude Code sessions" | bar says refused (403, not localhost); room as before | agents seated, lit when working    | unknown project: gray shirt, tag "unknown" |
+| Chips        | hidden                   | hidden                                        | hidden                                                | longest wait first                 | time unknown: omit time                    |
+| Bubble       | n/a                      | n/a                                           | n/a                                                   | "Asking you" or "Stuck?" plus time | time unknown: omit time                    |
+| Tab title    | "Agent Office"           | "Agent Office"                                | "Agent Office"                                        | "(N) Agent Office"                 | n/a                                        |
+| Reconnecting | bar: "Reconnecting"      | keep last scene as is                         | after retries bar shows refused                       | scene resumes                      | n/a                                        |
 
 ## Accessibility
 
@@ -230,6 +231,6 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 
 - Phase 0 is done: no single CC0 pack covers the needed poses, so characters and props are drawn in one consistent style (notes in `docs/designs/phase-0-sprite-notes.md`). Decisions 4A and 4B in the design doc assumed a sprite pack and were amended to the all-drawn route on 2026-10-01.
 - Approved mockup: variant A of 2026-10-01, committed as [docs/designs/mockup-room-variant-a.jpg](docs/designs/mockup-room-variant-a.jpg) (re-encoded as JPEG from the generated 1536x1024 image; it was made with an AI image generator for this project, which is not reproducible). It is the visual reference for the room, with one deliberate difference: the mockup's floor ring and the waving agent's shirt are pink, while the accent token is now violet (`--accent`) so it cannot match a shirt. It shows: regular 2x4 desk grid, door back-left, coffee station back-right, waving agent with bubble, floor ring and name tag, a subagent handing a paper beside its parent, chips in the top bar.
-- Gaps seen in the approved mockup (proposals, not decisions): (1) nearly every monitor glows, but the rule is glow only while working; (2) the waving agent's pink shirt and pink ring: the ring must use the violet accent and the shirt must come from the palette; (3) the mockup adds wall posters with text, a window, a clock and an "Online" status that DESIGN.md does not specify; (4) the subagent stands at the back row, not in a reserved slot beside its desk. Resolve each at build time or in a design review.
+- Gaps seen in the approved mockup (proposals, not decisions): (1) nearly every monitor glows, but the rule is glow only while working; (2) the waving agent's pink shirt and pink ring: the ring must use the violet accent and the shirt must come from the palette; (3) the mockup adds wall posters with text, a window, a clock and an "Online" status that DESIGN.md does not specify (the clock is now specified: Motion, ambient loops; the rest is not); (4) the subagent stands at the back row, not in a reserved slot beside its desk. Resolve each at build time or in a design review.
 - Slop checks on A, from the picture: no hero, no card grid, no neon; the evening mood and one strong anchor (the room) hold. "Premium without decorative shadows" is not judged here.
 - Brand name "Agent Office" is a placeholder.

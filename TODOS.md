@@ -30,6 +30,8 @@
 
 ### Displayed-state hook for characters (M8)
 
+**Status:** DONE in Phase 4 (`src/office/Character.tsx`, `swap.ts`).
+
 **What:** Add `src/office/Character.tsx`, a hook that swaps the displayed pose only when the current animation loop ends, using `nextDisplayed` from `poses.ts`.
 
 **Why:** Without it, state changes cut poses off mid-motion, and `nextDisplayed` and `poseForState` have no production caller yet.
@@ -41,6 +43,8 @@
 **Depends on:** None
 
 ### Bubble layout and hit-area spacing (M9)
+
+**Status:** DONE in Phase 4 (`placeBubbles` in `src/office/iso.ts`); M10 profiling stays open.
 
 **What:** Add `src/office/iso.ts` with `placeBubbles` and `iso.test.ts`.
 
@@ -75,6 +79,18 @@
 **Effort:** S (human ~3h / CC ~20min)
 **Priority:** P4
 **Depends on:** Attention list (top bar) and tab-title count
+
+### Share character drawings via symbols
+
+**What:** Draw each character pose once per hair style as a shared SVG symbol and place it with `<use>`, as the desk is after the Phase 4 eng review (R5).
+
+**Why:** Measured 2026-10-02: one character is 785 to 867 DOM elements (about 40 KB); after the desk is shared, 12 agents are still about 10,000 elements and 24 agents about 20,000.
+
+**Context:** Only worth doing if M10 timings (12 and 24 agents in Chrome and Safari) show jank. Must keep pose swap (`nextDisplayed`, D10) and `--shirt`/`--shirt-stripe`/`--hair`/`--skin` theming working: custom properties set on the `<use>` element inherit into the shared tree. Start from `src/office/CharacterRig.tsx`.
+
+**Effort:** M (human ~1 day / CC ~45min)
+**Priority:** P3
+**Depends on:** Bubble layout and hit-area spacing (M9) and the M10 profiling timings
 
 ## Feed hardening
 
@@ -212,6 +228,8 @@
 
 ### Wire identity.ts or drop it
 
+**Status:** DONE in Phase 4 (`label.ts` `agentIdentity` consumes it).
+
 **What:** `src/office/identity.ts` has no consumer yet and exports `shirtFor`, the same name as the one in `poses.ts`.
 
 **Why:** An unused module drifts, and two functions with one name invite a wrong import.
@@ -329,5 +347,91 @@
 **Effort:** S (human ~1h / CC ~10min)
 **Priority:** P3
 **Depends on:** BUILD_TODO 4.4
+
+## Phase 4 review follow-ups
+
+### Client ignores `gone` frames for subagents, and drops the seat on a transcript reset (DONE: gone removes the agent in `feed-client.ts`; server resend of `seat` after `onReset` stays open)
+
+**What:** `src/office/feed-client.ts` (`gone` handling, ~179) only deletes the seat of a top-level session. A `gone` frame with an `agentId` is ignored, and a truncated transcript (`onReset`) deletes the client seat while the server keeps it.
+
+**Why:** Ghost agents linger until the stale timeout (30 min, 4 h in attention). After a reset the replayed agent stays unseated at the door until the stream reconnects. A fresh snapshot shows a different office than the live view.
+
+**Context:** Found in the Phase 4 /ship review (red-team). Deferred by the user because it touches the D12 replay contract. Fix by removing or leaving the matching agent on `gone`, and have the server resend `seat` after `onReset`.
+
+**Effort:** M (human ~4h / CC ~30min)
+**Priority:** P2
+**Depends on:** None
+
+### Replay clocks every event at its own `ts` with no future cap
+
+**What:** `src/office/machine.ts:205` passes `e.ts` as the clock during replay. One far-future `ts` expires every other agent in the snapshot, and the agent with the future `ts` never expires.
+
+**Why:** Clock skew or an odd transcript line can blank the office on reconnect. The live path and the handoff-back branch already use `Math.min(ts, now)`.
+
+**Context:** Use `Math.min(e.ts, now)` in `applyEvents` replay and optionally clamp in the server normalizer. Add a test with a future-dated event.
+
+**Effort:** S (human ~1h / CC ~10min)
+**Priority:** P2
+**Depends on:** None
+
+### Feed server hardening (session identity, origin check, heartbeat)
+
+**What:** In `server/feed-plugin.ts` and `server/normalize.ts`: (1) the session id comes from transcript content while release and forget use the file name, so a resumed or mislabelled file can release a live session's seat and ring; (2) the SSE endpoint checks only Host and the socket, so any web page can open all 8 SSE slots; (3) there is no SSE heartbeat, so half-open connections hold a slot; (4) truncation is detected only as `size < offset`; (5) there is no cap on tracked files.
+
+**Why:** Wrong seats and history for live sessions, and a 503 for the real UI from a hostile page.
+
+**Context:** Found in the Phase 4 /ship adversarial review; all items sit in the Phase 2 and 3 server code, not this diff. Check `Sec-Fetch-Site` and `Origin` first.
+
+**Effort:** M (human ~1 day / CC ~1h)
+**Priority:** P2
+**Depends on:** None
+
+### Queue overflow button does nothing and waiting agents past it are unreachable (DONE: button now a non-interactive `role="status"`; unreachable waiting agent and stable render order stay open)
+
+**What:** The `+N` button in `src/office/Scene.tsx` (~531) is a focusable button with no handler, and a waiting agent past `QUEUE_VISIBLE` has no `.hit` button, so its top-bar chip does nothing when clicked.
+
+**Why:** Keyboard and screen reader users cannot reach the agent that needs them.
+
+**Context:** Render the count as a non-interactive status element, and make `pulse()` in `src/App.tsx` fall back to a visible target when the wrapper is missing. Also consider a stable render order so focus survives an attention reorder.
+
+**Effort:** S (human ~2h / CC ~20min)
+**Priority:** P3
+**Depends on:** None
+
+### Render cost: per-frame setState, idle tick clone, overlay ref churn
+
+**What:** Every SSE frame and every skipped frame sets state and renders the scene. `tick` in `src/office/machine.ts` clones the whole state on idle ticks. `bindOverlay` in `Scene.tsx` returns a new ref callback each render.
+
+**Why:** Churn grows with agent count and event bursts; measured scale (12 agents, about 28k SVG elements) is acceptable today.
+
+**Context:** Coalesce frames per animation frame, run a cheap "anything due" check before cloning, cache ref callbacks. Deferred by the user in the Phase 4 /ship review.
+
+**Effort:** M (human ~4h / CC ~30min)
+**Priority:** P3
+**Depends on:** None
+
+### Share MAX_DESKS between server and client and cap the layout
+
+**What:** `MAX_DESKS = 256` lives only in `src/office/feed-client.ts`. The server seat table has no cap, and layouts above about 48 desks overflow the viewport at the minimum scale.
+
+**Why:** The 257th concurrent session is seated on the server but dropped on the client. A realistic cap is far below 256.
+
+**Context:** Move the constant to `shared/tuning.ts`, cap `assignSeat`, derive the value from what fits at `MIN_SCALE`.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P3
+**Depends on:** None
+
+### Small simplifications left in Phase 4 files
+
+**What:** `ReportingBoundary` subclass in `src/App.tsx` (give `ErrorBoundary` an `onError` prop instead), `viewportOf` in `app-logic.ts`, `nextAnnouncement` in `topbar-logic.ts`, the repeated render calls in `src/main.tsx`, and two clocks (15 s in App, 60 s in TopBar) that can show different wait times.
+
+**Why:** Less code and one source of truth for the wait label.
+
+**Context:** Advisory items from the Phase 4 /ship review, skipped by the user.
+
+**Effort:** S (human ~2h / CC ~20min)
+**Priority:** P3
+**Depends on:** None
 
 ## Completed

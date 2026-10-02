@@ -1,0 +1,308 @@
+.scene {
+  position: relative;
+  margin: 0 auto;
+}
+
+.scene:focus {
+  outline: none;
+}
+
+.scene-scaled {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
+
+.scene-scaled > * {
+  position: absolute;
+}
+
+.scene-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font);
+  font-size: var(--size-tag);
+  line-height: var(--line);
+}
+
+.agent {
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transition: transform 1500ms linear;
+}
+
+.rig {
+  position: absolute;
+}
+
+.rig[data-loop="walk"] {
+  animation: stride var(--stride-ms, 800ms) linear infinite;
+}
+
+/* Both walking frames are drawn; each is shown for one step (half a stride), A then B. */
+.rig [data-part="walk-a"] {
+  animation: step-a var(--stride-ms, 800ms) steps(1) infinite;
+}
+
+.rig [data-part="walk-b"] {
+  animation: step-b var(--stride-ms, 800ms) steps(1) infinite;
+}
+
+.rig[data-loop="tap"] {
+  animation: tap 400ms ease-in-out infinite;
+}
+
+.rig[data-loop="wave"] {
+  animation: wave 1200ms ease-in-out 1 both;
+}
+
+.agent[data-path] {
+  transition: none;
+}
+
+.agent[data-state="arriving"]:not([data-path]) {
+  animation: walk-in var(--arrive-ms) linear both;
+}
+
+.agent[data-state="leaving"]:not([data-path]) {
+  animation: walk-out var(--leave-ms) linear forwards;
+}
+
+@keyframes walk-in {
+  from {
+    transform: translate(var(--door-x), var(--door-y));
+  }
+  to {
+    transform: translate(var(--x), var(--y));
+  }
+}
+
+@keyframes walk-out {
+  from {
+    transform: translate(var(--x), var(--y));
+  }
+  to {
+    transform: translate(var(--door-x), var(--door-y));
+  }
+}
+
+/* A small bob per step, back on the ground at each foot contact, so the stride ends at rest. */
+@keyframes stride {
+  25%,
+  75% {
+    transform: translateY(-2px);
+  }
+  0%,
+  50%,
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes step-a {
+  0% {
+    visibility: visible;
+  }
+  50% {
+    visibility: hidden;
+  }
+}
+
+@keyframes step-b {
+  0% {
+    visibility: hidden;
+  }
+  50% {
+    visibility: visible;
+  }
+}
+
+@keyframes tap {
+  50% {
+    transform: translateY(1px);
+  }
+}
+
+@keyframes wave {
+  30% {
+    transform: rotate(-1.5deg);
+  }
+  60% {
+    transform: rotate(1.5deg);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.paper-glow {
+  animation: fade-in var(--dur-slow) var(--ease) both;
+}
+
+.sway {
+  transform-origin: 50% 100%;
+  animation: sway 4s ease-in-out infinite alternate;
+}
+
+.steam {
+  animation: steam 3s ease-in-out infinite;
+}
+
+.clock-hand {
+  position: absolute;
+  left: 10px;
+  top: 4px;
+  width: 2px;
+  height: 6px;
+  background: var(--outline);
+  transform-origin: 1px 6px;
+  animation: tick 60s steps(60) infinite;
+}
+
+@keyframes sway {
+  from {
+    transform: rotate(-1.5deg);
+  }
+  to {
+    transform: rotate(1.5deg);
+  }
+}
+
+@keyframes steam {
+  from {
+    opacity: 0.8;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes tick {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hit {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  scroll-margin-top: calc(var(--bar-h) + var(--space-4));
+}
+
+.tag {
+  position: absolute;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bar);
+  color: var(--text);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.tag b {
+  font-weight: 600;
+}
+
+.tag span {
+  color: var(--text-muted);
+}
+
+.hit:hover + .tag,
+.hit:focus-visible + .tag,
+.tag[data-waving] {
+  opacity: 1;
+}
+
+/* "+N" for the queued agents past the drawn ones, at the door; a status, not a control. */
+.queue-more {
+  position: absolute;
+  min-width: 24px;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bar);
+  color: var(--text);
+  font-weight: 600;
+  transform: translate(-50%, -50%);
+}
+
+.bubble {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+  transition:
+    opacity var(--dur-base) var(--ease),
+    transform var(--dur-base) var(--ease);
+}
+
+.bubble[data-hidden] {
+  opacity: 0;
+}
+
+.bubble b {
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent {
+    transition: none;
+  }
+
+  .agent[data-state="arriving"]:not([data-path]) {
+    animation: fade-in var(--dur-slow) var(--ease) both;
+  }
+
+  .agent[data-state="leaving"]:not([data-path]) {
+    animation: fade-out var(--dur-slow) var(--ease) forwards;
+  }
+
+  .rig[data-loop] {
+    animation: none;
+  }
+
+  .rig [data-part="walk-a"],
+  .rig [data-part="walk-b"] {
+    animation: none;
+  }
+
+  .rig [data-part="walk-b"] {
+    visibility: hidden;
+  }
+
+  .steam {
+    animation: none;
+    opacity: 0;
+  }
+
+  .sway {
+    animation: none;
+  }
+
+  .clock-hand {
+    animation: none;
+  }
+}
