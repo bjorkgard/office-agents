@@ -1,0 +1,2 @@
+{"type":"user","sessionId":"6fb589b64edabbfd","agentId":"fa61c5b28491c966","isSidechain":true,"cwd":"/fixture/project","timestamp":"2026-10-02T10:00:27.000Z","message":{"role":"user","content":"x"}}
+{"type":"assistant","sessionId":"6fb589b64edabbfd","agentId":"fa61c5b28491c966","isSidechain":true,"cwd":"/fixture/project","timestamp":"2026-10-02T10:00:28.000Z","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"x?"}]}}

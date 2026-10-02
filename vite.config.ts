@@ -1,5 +1,6 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig, lazyPlugins } from "vite-plus";
+import { officeFeed } from "./server/feed-plugin.ts";
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -30,5 +31,5 @@ export default defineConfig({
       },
     ],
   },
-  plugins: lazyPlugins(() => [react()]),
+  plugins: lazyPlugins(() => [react(), officeFeed()]),
 });
