@@ -140,7 +140,7 @@ History: D4 accepted clause "turn-end-awaiting-user waves"; that clause was supe
 
 Finding: Architecture 1, P1, confidence 8/10, design doc line 50 (wave+bubble on attention) and the original brief "when an agent is done, animate like the agent is leaving", reviewer: plan-eng-review. Reopens only R1's clause "turn ends awaiting you waves"; R1's tool-call timer and no-settings-edit stay approved.
 Plan baseline: R1 accepted scope (approved, D4): "turn-end-awaiting-user" waves. Leaving behavior for top-level sessions: unspecified (design doc only says leaves when done).
-Runtime evidence: a finished turn and a turn that asks the user a question both end identically in the transcript (`system` record, subtype `turn_duration`, probed in this session's jsonl). Nothing in the transcript says "done" vs "asking". Subagent completion is distinct: parent receives a `tool_result` with `toolUseResult.agentId` (probed in GameCentral session f64ecdce...).
+Runtime evidence: a finished turn and a turn that asks the user a question both end identically in the transcript (the assistant record with `stop_reason: end_turn`; the `system` subtype `turn_duration` is absent from the newest transcripts and is ignored, phase 2 and 3 review E1). Nothing in the transcript says "done" vs "asking" beyond the trailing character of that message's last text. Subagent completion is distinct: parent receives a `tool_result` with `toolUseResult.agentId` (probed in GameCentral session f64ecdce...).
 Comparison grid:
 
 | Choice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Current             | A                                                                             | B                                  | C                                                   |
@@ -373,7 +373,7 @@ Approval readiness: PASS. Checked R1 (D4 answer A, clause superseded by R2), R2 
 - LAN/phone viewing opt-in: R3 blocks non-loopback in slice 1; design a token-based opt-in later.
 - Hooks adapter: tracked in TODOS.md (R6).
 - Paper hover-text and redaction: tracked in TODOS.md (R7).
-- Teammates and background agents that run as their own sessions (pixel-agents `CLAUDE.md:244,247`): not needed for the first subagent walk-in.
+- Teammates and background agents that run as their own sessions (pixel-agents `CLAUDE.md:244,247`): not needed for the first subagent walk-in. Async `Agent` subagents (result `async_launched`) are not in this category: they write to `<session>/subagents/` and are handled by the normalizer (P23-SCOPE-N, `docs/designs/phase-2-3-ceo-review.md`).
 - Packaging (`npx`), CI/CD, hosting: local `vp dev` only; decide after the app is fun.
 - Windows/Linux specifics: a ~1 s directory stat scan is portable, but only macOS is exercised.
 - Sound, day/night cycle, click-to-focus terminal: ideas from the riff, not in the brief.
@@ -392,9 +392,9 @@ Approval readiness: PASS. Checked R1 (D4 answer A, clause superseded by R2), R2 
  <session>/subagents/agent-*.jsonl  ──▶  feed-plugin.ts
       (tail new bytes only)               ├─ ~1 s stat scan of active files (mtime window)
                                           ├─ per-file byte offset, buffer to last "\n", JSON.parse
-                                          ├─ normalize.ts  line ──▶ AgentEvent | null (+ drift counter)
-                                          └─ SSE /__office/events: snapshot (bounded buffer) + deltas
-                                                         │  non-loopback host: HTTP 403 + one-line reason
+                                          ├─ normalize.ts  (state, line) ──▶ AgentEvent[] (stateful per file, + drift counter)
+                                          └─ SSE /__office/events: snapshot (atomic, with seat table) + deltas
+                                                         │  Host or socket address not loopback: HTTP 403 + one-line reason
  BROWSER (React)                                         ▼
  useOffice.ts ──events──▶ machine.ts (pure: state, event, now → state)
                                states: arriving | working | waiting-on-subagents(coffee)

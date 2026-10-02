@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { isAgentEvent } from "./events.ts";
+import { isAgentEvent, parseAgentEvent } from "./events.ts";
 import type { AgentEvent, AgentEventKind } from "./events.ts";
 
 const base = { sessionId: "s1", agentId: null, projectId: "p1", ts: 1700000000000 };
@@ -219,5 +219,84 @@ describe("isAgentEvent", () => {
     );
     expect(isAgentEvent(getter)).toBe(false);
     expect(isAgentEvent(proxy)).toBe(false);
+  });
+});
+
+describe("stricter guard (T1)", () => {
+  it.each(["sessionId", "projectId"])("rejects empty %s", (field) => {
+    expect(isAgentEvent({ ...valid.done, [field]: "" })).toBe(false);
+  });
+
+  it("rejects empty non-null ids and keeps null agentId", () => {
+    expect(isAgentEvent({ ...valid.done, agentId: "" })).toBe(false);
+    expect(isAgentEvent({ ...valid.agent_started, parentAgentId: "" })).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, fromAgentId: "" })).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, toAgentId: "" })).toBe(false);
+    expect(isAgentEvent({ ...valid.needs_attention, episodeId: "" })).toBe(false);
+    expect(
+      isAgentEvent({ ...valid.working, tool: { phase: "start", id: "", isSubagent: false } }),
+    ).toBe(false);
+    expect(isAgentEvent({ ...valid.done, agentId: null })).toBe(true);
+  });
+
+  it("rejects negative ts and waitingSince", () => {
+    expect(isAgentEvent({ ...valid.done, ts: -5 })).toBe(false);
+    expect(isAgentEvent({ ...valid.needs_attention, waitingSince: -1 })).toBe(false);
+  });
+
+  it("rejects fractional ts and waitingSince, accepts 0", () => {
+    expect(isAgentEvent({ ...valid.done, ts: 1.5 })).toBe(false);
+    expect(isAgentEvent({ ...valid.needs_attention, waitingSince: 2.5 })).toBe(false);
+    expect(isAgentEvent({ ...valid.done, ts: 0 })).toBe(true);
+  });
+
+  it("rejects ts beyond the safe integer range", () => {
+    expect(isAgentEvent({ ...valid.done, ts: Number.MAX_SAFE_INTEGER + 1 })).toBe(false);
+  });
+});
+
+describe("parseAgentEvent", () => {
+  it("returns null for invalid input", () => {
+    expect(parseAgentEvent({ ...valid.done, ts: -5 })).toBeNull();
+    expect(parseAgentEvent(null)).toBeNull();
+  });
+
+  it("returns an equal but fresh object for every valid kind", () => {
+    for (const event of Object.values(valid)) {
+      const parsed = parseAgentEvent(event);
+      expect(parsed).toEqual(event);
+      expect(parsed).not.toBe(event);
+    }
+  });
+
+  it("copies tool into a fresh object", () => {
+    const parsed = parseAgentEvent(valid.working);
+    expect(parsed).not.toBeNull();
+    expect((parsed as { tool: object }).tool).not.toBe(valid.working.tool);
+  });
+
+  it("drops extra text from a spread transcript entry, top level and tool", () => {
+    const entry = { type: "assistant", message: { content: [{ text: "SECRET" }] }, text: "SECRET" };
+    const parsed = parseAgentEvent({
+      ...entry,
+      ...valid.working,
+      tool: { phase: "start", id: "t1", isSubagent: false, input: "SECRET" },
+    });
+    expect(parsed).not.toBeNull();
+    expect(JSON.stringify(parsed)).not.toContain("SECRET");
+    expect(Object.keys(parsed as object).toSorted()).toEqual(
+      ["agentId", "kind", "projectId", "sessionId", "tool", "ts"].toSorted(),
+    );
+    expect(Object.keys((parsed as { tool: object }).tool).toSorted()).toEqual([
+      "id",
+      "isSubagent",
+      "phase",
+    ]);
+  });
+
+  it("omits tool when absent", () => {
+    const parsed = parseAgentEvent({ ...base, kind: "working" });
+    expect(parsed).not.toBeNull();
+    expect(Object.hasOwn(parsed as object, "tool")).toBe(false);
   });
 });

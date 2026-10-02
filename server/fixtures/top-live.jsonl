@@ -1,0 +1,3 @@
+{"type":"user","sessionId":"6fb589b64edabbfd","isSidechain":false,"cwd":"/fixture/project","timestamp":"2026-10-02T10:00:24.000Z","message":{"role":"user","content":"x"}}
+{"type":"system","sessionId":"6fb589b64edabbfd","timestamp":"2026-10-02T10:00:25.000Z","subtype":"turn_duration"}
+{"type":"assistant","sessionId":"6fb589b64edabbfd","isSidechain":false,"cwd":"/fixture/project","timestamp":"2026-10-02T10:00:26.000Z","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"x"},{"type":"tool_use","id":"752ee553434e09bf","name":"Bash","input":{}}]}}
