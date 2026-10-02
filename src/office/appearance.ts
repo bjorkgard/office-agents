@@ -8,7 +8,7 @@ export type Appearance = { hairStyle: number; hair: HairToken; skin: SkinToken }
 
 // FNV-1a over the UTF-16 code units, then a murmur3 finalizer so short seeds that
 // differ in one character still spread over every bucket.
-function hash(seed: string): number {
+export function hash(seed: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < seed.length; i++) {
     h ^= seed.charCodeAt(i);
