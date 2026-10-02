@@ -10,13 +10,22 @@ import { PROPS, type PropName } from "./props";
 import props from "./props.ts?raw";
 import { DESK, DESK_DIM, HAIRSTYLES } from "./sprites";
 
+// Vitest blanks css imports (even ?raw) and the app tsconfig has no node types, so read the file
+// through the runtime's own fs.
+// @ts-expect-error node:fs has no types in the app project
+const { readFileSync } = (await import("node:fs")) as {
+  readFileSync: (url: URL, enc: string) => string;
+};
+const sceneCss = readFileSync(new URL("./scene.css", import.meta.url), "utf8");
+const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const known = new Set([".", ...Object.keys(CELLS)]);
 const names = Object.keys(PROPS) as PropName[];
 
 describe("prop sprites", () => {
-  it("has the door, coffee station, two plants and the paper", () => {
+  it("has the door, coffee station, two plants, the paper, a clock and steam", () => {
     expect(names.sort()).toEqual(
       [
+        "CLOCK",
         "COFFEE_MACHINE",
         "COFFEE_STATION",
         "COUNTER",
@@ -24,6 +33,7 @@ describe("prop sprites", () => {
         "PAPER",
         "PLANT_BUSH",
         "PLANT_TALL",
+        "STEAM",
       ].sort(),
     );
   });
@@ -54,6 +64,15 @@ describe("prop sprites", () => {
     expect(PROPS.PLANT_TALL.join("")).not.toBe(PROPS.PLANT_BUSH.join(""));
   });
 
+  it("draws the clock face and the steam wisp in the light plastic and outline tokens", () => {
+    expect(PROPS.CLOCK.join("")).toMatch(/[l]/);
+    expect(PROPS.STEAM.join("")).toMatch(/=/);
+    expect(PROPS.CLOCK).toHaveLength(11);
+    for (const row of PROPS.CLOCK) expect(row).toHaveLength(11);
+    expect(PROPS.STEAM).toHaveLength(10);
+    for (const row of PROPS.STEAM) expect(row).toHaveLength(8);
+  });
+
   it("has no hex literals in the prop source", () => {
     expect(props).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });
@@ -64,6 +83,21 @@ describe("prop sprites", () => {
     for (const row of DESK_DIM) for (const c of row) expect(known.has(c), `'${c}'`).toBe(true);
     expect(DESK.join("")).toMatch(/[c!C]/);
     expect(DESK_DIM.join("")).not.toMatch(/[c!C]/);
+  });
+});
+
+describe("ambient loops", () => {
+  const reduced = sceneCss.slice(sceneCss.indexOf("@media (prefers-reduced-motion: reduce)"));
+
+  it("defines steam, sway and tick loops outside the reduced-motion block", () => {
+    const base = sceneCss.slice(0, sceneCss.indexOf("@media (prefers-reduced-motion: reduce)"));
+    for (const cls of [".steam", ".sway", ".clock-hand"])
+      expect(base, cls).toMatch(new RegExp(`\\${cls}\\s*\\{[^}]*animation:`));
+  });
+
+  it("turns every ambient loop off under prefers-reduced-motion", () => {
+    for (const cls of [".steam", ".sway", ".clock-hand"])
+      expect(reduced, cls).toMatch(new RegExp(`\\${cls}\\s*\\{[^}]*animation:\\s*none`));
   });
 });
 
@@ -130,5 +164,36 @@ describe("appearanceFor", () => {
     expect(random).not.toHaveBeenCalled();
     random.mockRestore();
     expect(appearanceSource).not.toMatch(/Math\.random/);
+  });
+});
+
+describe("walking stride css", () => {
+  it("alternates the two walking frames with a steps(1) animation", () => {
+    for (const part of ["walk-a", "walk-b"]) {
+      expect(sceneCss).toMatch(
+        new RegExp(
+          `\\.rig \\[data-part="${part}"\\] \\{[^}]*animation: step-[ab][^;}]*steps\\(1\\)`,
+        ),
+      );
+    }
+    expect(sceneCss).toMatch(/@keyframes step-a/);
+    expect(sceneCss).toMatch(/@keyframes step-b/);
+  });
+});
+
+describe("chip pulse css", () => {
+  it("has no colored glow, and a static outline under reduced motion", () => {
+    expect(indexCss).not.toMatch(/drop-shadow/);
+    expect(indexCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.hit\[data-pulse\] \{[^}]*animation: none;[^}]*outline: 2px solid var\(--accent\);[^}]*outline-offset: 2px/,
+    );
+  });
+});
+
+describe("chip-click pulse", () => {
+  it("targets the hit button (a real box), not the boxless agent wrapper", () => {
+    expect(indexCss).toMatch(/\.hit\[data-pulse\]\s*\{[^}]*animation:/);
+    expect(indexCss).not.toMatch(/\[data-agent\]\[data-pulse\]/);
+    expect(indexCss).toMatch(/\.hit\[data-pulse\]\s*\{[^}]*outline:\s*2px solid var\(--accent\)/);
   });
 });

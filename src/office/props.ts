@@ -274,6 +274,35 @@ export const PAPER: Grid = [
   ".FFFFFF",
 ];
 
+// Wall clock, face and rim only; the second hand is a CSS element over the centre. 11x11 cells.
+export const CLOCK: Grid = [
+  "...lllll...",
+  "..lwwwwwl..",
+  ".lwfffffwl.",
+  "lwfffFfffwl",
+  "lwfffffffwl",
+  "lwfffllffwl",
+  "lwfffffffwl",
+  "lwfffffffwl",
+  ".lwfffffwl.",
+  "..lwwwwwl..",
+  "...lllll...",
+];
+
+// Steam wisp over the coffee machine, light plastic, drifts up under CSS. 8x10 cells.
+export const STEAM: Grid = [
+  "..=.....",
+  ".==.....",
+  ".=......",
+  "..==....",
+  "...=....",
+  "..==....",
+  ".==.....",
+  ".=......",
+  "..=.....",
+  "........",
+];
+
 export const PROPS = {
   DOOR,
   COUNTER,
@@ -282,6 +311,8 @@ export const PROPS = {
   PLANT_TALL,
   PLANT_BUSH,
   PAPER,
+  CLOCK,
+  STEAM,
 } as const;
 export type PropName = keyof typeof PROPS;
 

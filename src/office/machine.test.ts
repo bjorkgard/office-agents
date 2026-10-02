@@ -4,6 +4,7 @@ import { ATTENTION_STALE_MS, STALE_MS } from "../../shared/tuning";
 import {
   agentKey,
   applyEvent,
+  applyEvents,
   createOffice,
   tick,
   TUNING,
@@ -205,6 +206,20 @@ describe("returned children", () => {
   });
 });
 
+// Value: protects=subagent walk-out lasts subagentLeavingMs not leavingMs; fails_when=pass() uses leavingMs for subagents (child vanishes mid-walk) or boundary is off by one; why_new=existing tests only check the long-run bound, not the exact boundary; seam=none
+describe("walk-out duration by kind", () => {
+  it("keeps a returned subagent walking past leavingMs and removes it at subagentLeavingMs", () => {
+    let s = applyEvent(createOffice(), { ...started(), ts: 0 }, 0);
+    s = applyEvent(s, { ...started("kid"), ts: 0 }, 0);
+    s = applyEvent(s, { ...handoff("kid", "back"), ts: 10 }, 10);
+    expect(get(s, "kid")!.phase).toBe("leaving");
+    const at = (ms: number) => get(tick(s, 10 + ms), "kid");
+    expect(at(TUNING.leavingMs)).toBeDefined();
+    expect(at(TUNING.subagentLeavingMs - 1)).toBeDefined();
+    expect(at(TUNING.subagentLeavingMs)).toBeUndefined();
+  });
+});
+
 describe("episodes (D8)", () => {
   function waved(): OfficeState {
     return applyEvent(working0(), done(true), 1000);
@@ -355,6 +370,46 @@ describe("tick is pure", () => {
   });
 });
 
+describe("tick identity", () => {
+  it("returns the same object when nothing changed, a new one when something fired", () => {
+    const s = applyEvent(working0(), working(null, { phase: "start", id: "t1" }), 0);
+    expect(tick(s, 1000)).toBe(s);
+    const fired = tick(s, TUNING.toolTimerMs);
+    expect(fired).not.toBe(s);
+    expect(tick(fired, TUNING.toolTimerMs)).toBe(fired);
+  });
+
+  it("returns the same object when an event is dropped as already returned", () => {
+    let s = applyEvent(createOffice(), started("a"), 0);
+    s = applyEvent(s, handoff("a", "back"), 10);
+    const next = applyEvent(s, { ...working("a"), ts: 5 }, 20);
+    expect(next).toBe(s);
+  });
+});
+
+describe("R1 wait start and bulk replay (E1)", () => {
+  it("a stuck tool replayed an hour later keeps about an hour of wait", () => {
+    const t0 = 1_000_000;
+    const events: AgentEvent[] = [
+      { ...started(), ts: t0 },
+      { ...working(null, { phase: "start", id: "t1" }), ts: t0 + 1000 },
+      // Later activity keeps the agent alive; t1 stays stuck.
+      { ...working(null, { phase: "start", id: "t2" }), ts: t0 + HOUR - 1000 },
+    ];
+    const now = t0 + HOUR;
+    const s = tick(applyEvents(createOffice(), events, now, { replay: true }), now);
+    expect(stateOf(s)).toBe("attention");
+    expect(get(s)!.episode!.waitingSince).toBe(t0 + 1000 + TUNING.toolTimerMs);
+    expect(now - get(s)!.episode!.waitingSince).toBeGreaterThan(HOUR - MIN);
+  });
+
+  it("live: a tool wait starts at the tool start plus the timer, not the detecting tick", () => {
+    let s = applyEvent(working0(), working(null, { phase: "start", id: "t1" }), 100);
+    s = tick(s, 100 + TUNING.toolTimerMs + 700);
+    expect(get(s)!.episode!.waitingSince).toBe(100 + TUNING.toolTimerMs);
+  });
+});
+
 // Seeded generator (mulberry32) so the sequences are the same on every run.
 function rng(seed: number): () => number {
   let a = seed;
@@ -433,11 +488,14 @@ describe("random sequences (ADD-4a)", () => {
       // Reference model for episodes: per agent life, the last id, waitingSince and exit time.
       const ref = new Map<string, { id: string | null; ws: number; exitedAt: number | null }>();
       const allIds = new Set<string>();
+      const log: AgentEvent[] = [];
 
       for (let i = 0; i < 50; i++) {
         now += pick(GAPS);
         const prev = s;
-        s = applyEvent(s, randomEvent(), now);
+        const ev = randomEvent();
+        log.push({ ...ev, ts: now });
+        s = applyEvent(s, ev, now);
 
         for (const key of new Set([...Object.keys(prev.agents), ...Object.keys(s.agents)])) {
           const before = prev.agents[key];
@@ -463,7 +521,13 @@ describe("random sequences (ADD-4a)", () => {
                 expect(ep.waitingSince).toBe(r.ws);
               } else {
                 expect(allIds.has(ep.id)).toBe(false);
-                expect(ep.waitingSince).toBe(now);
+                // A tool wait starts when its earliest overdue call crossed the timer (R1).
+                const overdue = Object.values(cur.openTools)
+                  .filter((t) => !t.isSubagent && now - t.startedAt >= TUNING.toolTimerMs)
+                  .map((t) => t.startedAt + TUNING.toolTimerMs);
+                expect(ep.waitingSince).toBe(
+                  cur.attention!.trigger === "tool" ? Math.min(...overdue) : now,
+                );
               }
             } else {
               expect(ep.id).toBe(r.id);
@@ -488,13 +552,24 @@ describe("random sequences (ADD-4a)", () => {
         }
       }
 
+      // Bulk apply equals sequential: live (one now) and replay (each event's own ts).
+      const lastNow = now;
+      let seqLive = createOffice();
+      let seqReplay = createOffice();
+      for (const e of log) {
+        seqLive = applyEvent(seqLive, e, lastNow);
+        seqReplay = applyEvent(seqReplay, e, e.ts);
+      }
+      expect(applyEvents(createOffice(), log, lastNow)).toEqual(seqLive);
+      expect(applyEvents(createOffice(), log, lastNow, { replay: true })).toEqual(seqReplay);
+
       // (b) after the last event plus the longest timer, only idle or leaving agents remain.
       s = tick(s, now + maxTimer);
       for (const a of Object.values(s.agents)) {
         expect(["idle", "leaving"]).toContain(a.state);
       }
-      // ...and a further leavingMs clears every walker.
-      s = tick(s, now + maxTimer + TUNING.leavingMs);
+      // ...and a further subagentLeavingMs clears every walker.
+      s = tick(s, now + maxTimer + TUNING.subagentLeavingMs);
       expect(Object.values(s.agents).filter((a) => a.state !== "idle")).toEqual([]);
     }
   });

@@ -25,6 +25,11 @@ export const TUNING = {
   arrivingMs: 1500,
   /** Walk-out duration before a leaving agent is removed. */
   leavingMs: 4000,
+  /**
+   * Walk-out of a subagent: desk to the parent's desk to the door (choreo.ts), longer than a
+   * top-level walk-out. An upper bound; choreo.test.ts checks every room fits.
+   */
+  subagentLeavingMs: 20000,
 };
 
 export type AttentionTrigger = "tool" | "question" | "exact";
@@ -123,14 +128,20 @@ function touch(
   return a;
 }
 
-function enterAttention(s: OfficeState, a: Agent, trigger: AttentionTrigger, now: number): void {
+function enterAttention(
+  s: OfficeState,
+  a: Agent,
+  trigger: AttentionTrigger,
+  now: number,
+  waitingSince = now,
+): void {
   if (!a.attention) {
     const ep = a.episode;
     if (ep && ep.exitedAt !== null && now - ep.exitedAt < TUNING.episodeHoldMs) {
       ep.exitedAt = null;
     } else {
       s.episodeSeq += 1;
-      a.episode = { id: `${a.key}#${s.episodeSeq}`, waitingSince: now, exitedAt: null };
+      a.episode = { id: `${a.key}#${s.episodeSeq}`, waitingSince, exitedAt: null };
     }
   }
   a.attention = { trigger };
@@ -175,12 +186,37 @@ function waitsOn(
 }
 
 export function applyEvent(state: OfficeState, event: AgentEvent, now: number): OfficeState {
+  return applyOwned(structuredClone(state), event, now, state);
+}
+
+/**
+ * Applies `events` in order on one clone. Live, every event is applied at `now`; with
+ * `replay` each uses its own `ts` as the clock (D12), and the caller ticks once at `now`.
+ */
+export function applyEvents(
+  state: OfficeState,
+  events: readonly AgentEvent[],
+  now: number,
+  opts: { replay?: boolean } = {},
+): OfficeState {
+  if (events.length === 0) return state;
+  let s = structuredClone(state);
+  for (const e of events) s = applyOwned(s, e, opts.replay ? e.ts : now, s);
+  return s;
+}
+
+/** Applies one event to `s`, which the caller owns. `orig` is returned when nothing changed. */
+function applyOwned(
+  s: OfficeState,
+  event: AgentEvent,
+  now: number,
+  orig: OfficeState,
+): OfficeState {
   // A child's events arriving after its parent's `back` (feeds merge files out of order)
   // are old news: dropping them keeps the child from reappearing as a ghost.
   const returnedAt =
-    event.agentId === null ? undefined : state.returned[agentKey(event.sessionId, event.agentId)];
-  if (returnedAt !== undefined && returnedAt >= event.ts) return tick(state, now);
-  const s = structuredClone(state);
+    event.agentId === null ? undefined : s.returned[agentKey(event.sessionId, event.agentId)];
+  if (returnedAt !== undefined && returnedAt >= event.ts) return tickOwned(s, now, orig);
   // Replaying an old snapshot at receive time must not make stale sessions look fresh.
   const clock = Math.min(event.ts, now);
   const { sessionId, projectId } = event;
@@ -291,7 +327,8 @@ function pass(s: OfficeState, now: number): boolean {
 
   for (const a of agents) {
     if (a.phase === "leaving") {
-      if (now - (a.leftAt ?? now) >= TUNING.leavingMs) {
+      const walkMs = a.agentId === null ? TUNING.leavingMs : TUNING.subagentLeavingMs;
+      if (now - (a.leftAt ?? now) >= walkMs) {
         delete s.agents[a.key];
         changed = true;
       }
@@ -325,11 +362,15 @@ function pass(s: OfficeState, now: number): boolean {
     }
     // gstack-shortcut(dec-R1): tool-call timer heuristic; upgrade when the hooks adapter lands
     if (a.state === "working") {
-      const overdue = Object.values(a.openTools).some(
-        (t) => !t.isSubagent && now - t.startedAt >= TUNING.toolTimerMs,
-      );
-      if (overdue) {
-        enterAttention(s, a, "tool", now);
+      let since = Infinity;
+      for (const t of Object.values(a.openTools)) {
+        if (!t.isSubagent && now - t.startedAt >= TUNING.toolTimerMs) {
+          since = Math.min(since, t.startedAt + TUNING.toolTimerMs);
+        }
+      }
+      if (since !== Infinity) {
+        // The wait began when the call crossed the timer, not when this tick noticed (E1).
+        enterAttention(s, a, "tool", now, since);
         changed = true;
         continue;
       }
@@ -347,13 +388,20 @@ function pass(s: OfficeState, now: number): boolean {
 }
 
 /** Fires every time-based rule due at `now`. Repeats until stable, so a parent whose
- * last subagent just expired can expire in the same call. */
+ * last subagent just expired can expire in the same call. Returns `state` itself when
+ * nothing fired. */
 export function tick(state: OfficeState, now: number, owned = false): OfficeState {
-  const s = owned ? state : structuredClone(state);
+  return owned ? tickOwned(state, now, state) : tickOwned(structuredClone(state), now, state);
+}
+
+/** Runs the passes on `s` (owned); gives back `orig` if no pass changed anything. */
+function tickOwned(s: OfficeState, now: number, orig: OfficeState): OfficeState {
   // Each pass can only expire one more layer of a parent chain, so agents + 2 passes settle it.
   const maxPasses = Object.keys(s.agents).length + 2;
+  let changed = false;
   for (let i = 0; i < maxPasses; i++) {
     if (!pass(s, now)) break;
+    changed = true;
   }
-  return s;
+  return changed ? s : orig;
 }
