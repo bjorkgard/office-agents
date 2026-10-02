@@ -39,25 +39,37 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
 
 ## Phase 2: Feed (server). Can run in parallel with Phase 3 after 1.1
 
-- [ ] **2.1 Normalizer (T2).** Line to `AgentEvent | null` plus a drift counter. Isolate Claude Code's file layout here. Subagent completion is the parent `tool_result` with `toolUseResult.agentId`.
+Amended by the phase 2 and 3 review (`docs/designs/phase-2-3-ceo-review.md`, decisions D1 to D12 and E1 to E5). Those decisions are settled; do not reopen them while building.
+
+- [x] **2.1 Normalizer (T2, amended by D3, D7, D8, D12, E1, E3).** `normalize(state, line) -> AgentEvent[]`, stateful per file (launch ids, dedupe set, last assistant text, `finishedAtFirstSight` flag). Isolate Claude Code's file layout here. Events are built field by field through `parseAgentEvent`; no transcript text reaches an `AgentEvent`. Done on top-level assistant `stop_reason: end_turn` (E1); `endsWithQuestion` from that message's last text block, one shared trailing-`?` predicate; `system/turn_duration` ignored; a subagent file's `end_turn` is not a `done`. Sync launch (`run_in_background: false`, result `completed`) sends the parent to `waiting_on_subagents` and emits handoff out (D7). Background launch (flag absent or true, result `async_launched`) emits handoff out only. Completion is a sync `completed` result, or a `<task-notification>` `enqueue` line (tags `task-id`, `tool-use-id`, `status` only; `completed` and `failed` both emit handoff back and the subagent leaves; dedupe `task-id` + `tool-use-id`; accept only an `Agent` launch or a `SendMessage` to a known agent seen in the same file) (D3). `agent_started` is synthesized from the first parsed line of an unseen session or agent. Cold start (E3): at first sight of a file whose last record is `end_turn`, a subagent file emits nothing, a top-level file emits `agent_started` plus `done` only when its last text ends with a question. Unknown types return no event; known types with a bad shape bump a per-reason drift counter, logged rate-limited and shown at `GET /__office/status` (D12). `normalizeBatch` is used for the first read of a file.
   - Files: `server/normalize.ts`, `server/normalize.test.ts`
-  - Verify: `vp test`; malformed or unknown line returns `null` and bumps the counter.
-- [ ] **2.2 Feed plugin core (T3).** Vite `configureServer` plugin: ~1 s stat scan inside an mtime window, per-file byte offsets, buffer to last `\n`, SSE at `/__office/events` with a bounded snapshot plus deltas. Configurable transcript root. Handle ENOENT as the agent leaving.
-  - Files: `server/feed-plugin.ts`, `vite.config.ts`
-  - Verify: tailer cases (split line, deleted file) pass in `vp test`.
-- [ ] **2.3 Loopback guard (R3 / R5).** Non-loopback host (anything but `localhost`, `127.0.0.1`, `::1`): HTTP 403, one-line reason, no data, one log line.
+  - Verify: `vp test`; async launch, `failed`, SendMessage resume, duplicate copies, cold-start skip and `x?` are covered; malformed or unknown line yields no event and bumps the counter. Fixtures are synthetic pending a check against a real transcript.
+- [x] **2.1b Guard hardening (D2, D11).** `parseAgentEvent` returns a fresh object with declared fields only; `isAgentEvent` is `parseAgentEvent(value) !== null`; empty-string ids rejected (`agentId` may be null); `ts` and `waitingSince` non-negative safe integers; Phase 1 tests updated; TODOS.md entry marked done.
+  - Files: `shared/events.ts`, `shared/events.test.ts`, `TODOS.md`
+  - Verify: `vp test`; empty `sessionId` and `ts: -5` rejected; a spread transcript entry does not carry text through.
+- [x] **2.1c Fixtures (D4).** Allowlist sanitizer builds committed `.jsonl` fixtures under `server/fixtures/` (line type, role, block types, tool names, hashed ids, timestamps, `stop_reason`, `status`, `isAsync`, notification tags; text becomes `x` or `x?`). A case in `normalize.test.ts` scans fixtures for non-allowlisted strings and home paths. The fixtures are synthetic until compared with a real transcript.
+  - Files: `server/sanitize-fixtures.ts`, `server/fixtures/*`, `server/normalize.test.ts`
+  - Verify: `vp test`; leak scan finds no non-allowlisted text or home path.
+- [x] **2.1d Shared limits (E2, E4).** `shared/tuning.ts` exports `STALE_MS` (30 min) and `ATTENTION_STALE_MS` (4 h); the machine `TUNING` spreads them and the server window imports them.
+  - Files: `shared/tuning.ts`, `src/office/machine.ts`, `server/feed-plugin.ts`
+  - Verify: `vp test`; the machine uses the shared values.
+- [x] **2.2 Feed plugin core (T3, amended by D9, D12, E2, E3).** Vite `configureServer` plugin, skipped when `mode === "test"`. Tree walk every 5 s, active-set stat every 1 s, within a window of `ATTENTION_STALE_MS` by mtime; per-file byte offsets, buffer to last `\n`; single-flight scan; SSE at `/__office/events` with frames `{type:"snapshot",events,seats}`, `{type:"event",event}`, `{type:"seat",sessionId,desk}`, `{type:"gone",sessionId,agentId}`; atomic snapshot-then-subscribe. Configurable transcript root and clock, `scanOnce()`. Truncation reset, EACCES skip with one log line, oversize-line window doubles to a cap then drift++, symlinks not followed, ENOENT as the agent leaving, client and server close cleanup, startup failure logs and disables the feed. `GET /__office/status` (files tracked, drift by reason, last scan ms, SSE client count).
+  - Files: `server/feed-plugin.ts`, `server/feed-plugin.test.ts`, `vite.config.ts`
+  - Verify: `vp test` (split line, deleted file, pause/release ordering, truncation, EACCES, oversize, close cleanup, symlink).
+- [x] **2.3 Loopback guard (R3 / R5, amended by D10).** HTTP 403 unless both the `Host` hostname and `req.socket.remoteAddress` are loopback (`localhost`, `127.0.0.1`, `::1`; `::ffff:127.x` for the socket), one-line reason, no data, one log line. The status endpoint uses the same guard.
   - Files: `server/feed-plugin.ts`, `server/feed-plugin.test.ts`
-  - Verify: test asserts 403 on non-loopback and serving on loopback; manual `vp dev --host` returns 403.
-- [ ] **2.4 Seat table (T10 / R8).** Server-side session-id to desk map, new agents seated beside their project, table included in every snapshot.
+  - Verify: `vp test` matrix test (done).
+  - Done 2026-10-02: live LAN check run, all pass (`.gstack/qa-reports/ship-functional/report.md`).
+- [x] **2.4 Seat table (T10 / R8).** Server-side session-id to desk map, new agents seated beside their project, table included in every snapshot.
   - Files: `server/feed-plugin.ts`, `server/feed-plugin.test.ts`
   - Verify: desk kept after an earlier agent leaves; same-project neighbor; snapshot carries the table.
 
 ## Phase 3: Pure logic (client)
 
-- [ ] **3.1 State machine (T4 / T12).** States: arriving, working, waiting-on-subagents, idle, attention, leaving. Single exported `TUNING` object. The machine owns the attention episode id and `waitingSince` so flaps announce once; `needs_attention` is for exact adapters. Add the markers `gstack-shortcut(dec-R1)` at the tool-call timer and `gstack-shortcut(dec-R2)` at the trailing-`?` check.
+- [x] **3.1 State machine (T4 / T12, amended by D7, D8, E2, E4).** States: arriving, working, waiting-on-subagents, idle, attention, leaving. Single exported `TUNING` object. The machine owns the attention episode id and `waitingSince`; `needs_attention` is for exact adapters. Hold-down (D8): re-entry into attention within `TUNING.episodeHoldMs` (60 s) keeps `episodeId` and `waitingSince`, so a flap announces once. Two-tier expiry (E2): `TUNING.staleMs` (30 min) removes silent arriving, working and waiting-on-subagents agents (not while an unresolved subagent launch exists), `TUNING.attentionStaleMs` (4 h) removes silent attention; a new event re-arrives an expired agent. A background launch (D7) does not send the parent to waiting-on-subagents. Markers `gstack-shortcut(dec-R1)` at the tool-call timer and `gstack-shortcut(dec-R2)` at the trailing-`?` check.
   - Files: `src/office/machine.ts`, `src/office/machine.test.ts`
-  - Verify: `vp test`; markers present; one announce per episode.
-- [ ] **3.2 Identity and palette (T5 / DT3 pure part / 6A).** Seeded name and gender from session id. 8 color-blind-checked shirt colors, stripe from the 9th project, collision avoidance among active projects.
+  - Verify: `vp test`; markers present; hold-down, each expiry and the seeded invariant test (D5: fixed seed, 1,000 sequences of 50 events) pass.
+- [x] **3.2 Identity and palette (T5 / DT3 pure part / 6A).** Seeded name and gender from session id. 8 color-blind-checked shirt colors, stripe from the 9th project, collision avoidance among active projects.
   - Files: `src/office/identity.ts`, `src/office/identity.test.ts`
   - Verify: same session gives same name; 16 projects give 16 distinct (color, stripe) pairs; stable across reloads.
 
@@ -73,6 +85,8 @@ Task ids (T1..T14, DT1..DT9) point to the design doc. Decision ids (R1..R9, 1A..
   - Files: `src/office/iso.ts`
 - [ ] **4.2 SSE hook (T6).** `useOffice` connects, applies the snapshot, then deltas, runs the machine, handles reconnect.
   - Files: `src/office/useOffice.ts`
+  - Note (Phase 2-3 review): replay each snapshot event through `applyEvent` with its own `ts` (the machine uses min(ts, now)), and handle `gone` frames by dropping that agent.
+  - Note (Phase 4 replay): when replaying a snapshot, drop expired agents outright instead of letting them walk out (replay mode), and snapshot events older than `STALE_MS` must not create agents.
 - [x] **4.3 Recolor (DT3 / 4B, amended: Phase 0 chose all-drawn art).** Recolor by CSS variable on drawn characters (decision 4B already says so): `shirtVars(index, stripe)` sets `--shirt` and `--shirt-stripe`; the stripe is palette cells filled with `var(--shirt-stripe)`. Gray fallback and a dev warning for an out-of-range index.
   - Files: `src/office/poses.ts`
   - Done 2026-10-01: `shirtVars` and `--shirt`/`--shirt-stripe` on pixel cells.
