@@ -34,3 +34,7 @@ dist-ssr
 
 # gstack tool state
 .gstack/
+
+# playwright
+test-results/
+playwright-report/

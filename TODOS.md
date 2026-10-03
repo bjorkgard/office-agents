@@ -600,6 +600,20 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** None
 
+## Phase 5 review follow-ups
+
+### E2E failure context: attach feed status and server log
+
+**What:** On a failed E2E spec, attach the `/__office/status` JSON and the dev server's plugin log lines to the test result.
+
+**Why:** An empty room has several causes (root wrong, tailer saw nothing, refused host). The trace and screenshot do not show which one; status and log do.
+
+**Context:** Phase 5 review (docs/designs/phase-5-ceo-review.md, D12). Each Playwright project runs its own webServer with `stdout: "pipe"`; add an `afterEach` that fetches the project's status URL and calls `testInfo.attach` when the test failed. Source of the log lines: `[office] ...` from `server/feed-plugin.ts`.
+
+**Effort:** S (human ~1h / CC ~10min)
+**Priority:** P3
+**Depends on:** Phase 5 E2E harness (5.1, 5.2)
+
 ## Completed
 
 ### V1: Windows with a random outside world

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0.0] - 2026-10-04
+
+### Added
+
+- A browser test suite now checks the real office end to end. It replays recorded Claude sessions, watches each agent change state in Chromium, and covers the wave on a waiting question, a subagent walking in and out, agents leaving after a quiet spell, the empty and refused banners, a 12-agent room with a "+N" chip, reduced motion, shirt colors, the tab title, keyboard order and focus, and one screenshot of the scene. Run it with `vp run e2e` (install the browser once with `npx playwright install chromium`).
+- A GitHub Actions workflow runs the checks, the unit tests and the browser suite on every push and pull request. A manual job produces the Linux screenshot baseline.
+- Each test scenario starts its own dev server on ports 5201 to 5206 with its own transcript folder and its own build cache, so scenarios cannot disturb each other or a dev server already running on port 5173.
+
+### Changed
+
+- `vp test` skips the browser specs under `e2e/` and still runs the helper tests.
+- The feed folder and the build cache can be set with `OFFICE_E2E_ROOT` and `OFFICE_E2E_CACHE`; with neither set, `vp dev` reads your real Claude sessions as before.
+
 ## [0.3.0.0] - 2026-10-03
 
 ### Added
