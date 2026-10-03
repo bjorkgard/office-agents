@@ -884,9 +884,9 @@ DESIGN.md token tables, `PixelProp` and the 2px grid, `--screen` and `--screen-g
 
 ### Approved Mockups
 
-| Screen/Section                        | Mockup Path                                                                                        | Direction                                                          | Notes                                                                                                         |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Room with windows, clock, floor light | /Users/nathanael/.gstack/projects/office-agents/designs/office-life-windows-20261002/variant-B.png | Dim dusk glass with blinds, pane-shaped floor light, wall dressing | No text, trophy or bubble from the mockup; wall dressing deferred (D11); user gave "B" without a board rating |
+| Screen/Section                        | Mockup Path                                                                         | Direction                                                          | Notes                                                                                                         |
+| ------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| Room with windows, clock, floor light | ~/.gstack/projects/office-agents/designs/office-life-windows-20261002/variant-B.png | Dim dusk glass with blinds, pane-shaped floor light, wall dressing | No text, trophy or bubble from the mockup; wall dressing deferred (D11); user gave "B" without a board rating |
 
 ### Implementation Tasks
 
