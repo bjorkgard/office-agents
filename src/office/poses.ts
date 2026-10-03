@@ -12,6 +12,7 @@ export type Pose =
   | "walking"
   | "seated-typing"
   | "standing-mug"
+  | "standing-cup"
   | "seated-idle"
   | "seated-raised-hand";
 

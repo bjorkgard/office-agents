@@ -260,6 +260,51 @@ export const PLANT_BUSH: Grid = [
   ".....8888888......",
 ];
 
+// Water dispenser against the back-right wall: a lit jug of water on a plastic cabinet with two
+// taps and a drip tray, sheared down to the right by whole cells at the wall slope like the counter
+// (a column pair drops a row for every two across). 16x36 cells.
+export const DISPENSER: Grid = [
+  "................",
+  "................",
+  "...!.=..........",
+  "...!!c==........",
+  "...!!ccc==......",
+  "...!!ccccc=.....",
+  "...!!ccccccC....",
+  "...!!ccccccCC...",
+  "...!!ccccccCC...",
+  "...!!ccccccCC...",
+  ".=.C!ccccccCC...",
+  ".===CCcccccCC...",
+  ".=gg==CCcccCC...",
+  ".=gggg==CCcCC...",
+  ".=gggggg==CCC...",
+  ".=gg!!gggg==C...",
+  ".=gg!!gggggg==..",
+  ".=gxggggmmggg8=.",
+  ".=gxxxggmmggg88.",
+  ".=g~xxxxggggg88.",
+  ".=gg~~xxxxggg88.",
+  ".=gggg~~xxxgg88.",
+  ".=gggggg~~xgg88.",
+  ".=gggggggg~gg88.",
+  ".=ggggggggggg88.",
+  ".=ggggggggggg88.",
+  ".=ggggggggggg88.",
+  ".=ggggggggggg88.",
+  ".8ggggggggggg88.",
+  "..88ggggggggg88.",
+  "....88ggggggg88.",
+  "......88ggggg88.",
+  "........88ggg88.",
+  "..........88g88.",
+  "............888.",
+  "..............8.",
+];
+
+// Two bubbles in the jug; CSS steps them up and fades them (.gurgle). 4x4 cells.
+export const GURGLE: Grid = ["!!..", "!!..", "..!!", "..!!"];
+
 // The sheet a subagent carries and hands over. 7x10 cells.
 export const PAPER: Grid = [
   "fffff..",
@@ -274,19 +319,61 @@ export const PAPER: Grid = [
   ".FFFFFF",
 ];
 
-// Wall clock, face and rim only; the second hand is a CSS element over the centre. 11x11 cells.
+// The sheet as it lies on a desk: PAPER drawn smaller and skewed to the desk-top slope (a column
+// pair drops a row for every two across), two-cell text lines. Fits desk-kinds paperSlot. 6x7 cells.
+export const PAPER_DESK: Grid = [
+  "ff....",
+  "ffff..",
+  "ffffff",
+  "fFFFFf",
+  "fFFFFf",
+  "..ffff",
+  "....ff",
+];
+
+// A subagent's own devices, as they lie on its desk: skewed to the desk-top slope (a row drop for
+// every two cells across), no line under two cells. Each has a lit screen (working), a half-lit
+// one (waiting on subagents, the plain screen blue) and a dark one. They fit desk-kinds deviceSlot.
+// Laptop: a three-row lid over a two-row metal base, 12x5 cells. Tablet: a bare slab, 8x3 cells.
+// Every line is two cells thick both ways, bar the two end columns of a row, which are the slope.
+const device = (rows: Grid, screen: string): Grid => rows.map((r) => r.replaceAll("S", screen));
+const LAPTOP: Grid = [
+  "SSSSSS......",
+  "..SSSSSS....",
+  "....SSSSSS..",
+  "..mmmmmmmm..",
+  "....mmmmmmmm",
+];
+const TABLET: Grid = ["SSSS....", "..SSSS..", "....SSSS"];
+export const LAPTOP_LIT: Grid = device(LAPTOP, "!");
+export const LAPTOP_HALF: Grid = device(LAPTOP, "c");
+export const LAPTOP_DARK: Grid = device(LAPTOP, "7");
+export const TABLET_LIT: Grid = device(TABLET, "!");
+export const TABLET_HALF: Grid = device(TABLET, "c");
+export const TABLET_DARK: Grid = device(TABLET, "7");
+
+// Wall clock face with its hour marks, drawn flat 12x12 then sheared down to the right by whole
+// cells at the wall slope (decor.ts, so it matches the counter and door). The hands are drawn
+// over it by RoomDecor from the real time. 12x18 cells.
 export const CLOCK: Grid = [
-  "...lllll...",
-  "..lwwwwwl..",
-  ".lwfffffwl.",
-  "lwfffFfffwl",
-  "lwfffffffwl",
-  "lwfffllffwl",
-  "lwfffffffwl",
-  "lwfffffffwl",
-  ".lwfffffwl.",
-  "..lwwwwwl..",
-  "...lllll...",
+  "............",
+  "............",
+  "..l.l.......",
+  ".lwlwll.....",
+  "llwwfwwl....",
+  "lwfffllwl...",
+  "lwlffllfwl..",
+  "lwllfffffwl.",
+  ".wflfffffwl.",
+  ".lwffffflfw.",
+  ".lwfffffllwl",
+  "..lwfllfflwl",
+  "...lwllfffwl",
+  "....lwwfwwll",
+  ".....llwlwl.",
+  ".......l.l..",
+  "............",
+  "............",
 ];
 
 // Steam wisp over the coffee machine, light plastic, drifts up under CSS. 8x10 cells.
@@ -311,8 +398,17 @@ export const PROPS = {
   PLANT_TALL,
   PLANT_BUSH,
   PAPER,
+  PAPER_DESK,
   CLOCK,
   STEAM,
+  DISPENSER,
+  GURGLE,
+  LAPTOP_LIT,
+  LAPTOP_HALF,
+  LAPTOP_DARK,
+  TABLET_LIT,
+  TABLET_HALF,
+  TABLET_DARK,
 } as const;
 export type PropName = keyof typeof PROPS;
 

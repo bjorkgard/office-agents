@@ -1,7 +1,9 @@
 /**
  * Isometric projection and room layout. Pure: no DOM, no React.
  * Desks fill 4 per row (shared with the server's seat rule); a new row is added when the
- * last is full and grows toward the viewer. The room scales to fit down to a 50% floor,
+ * last is full and grows toward the viewer. Room px are anchored to desk (0, 0), so adding a
+ * row moves nothing in room px: the bounds grow (to the left and down) and the fit (scale
+ * plus offsets) is what changes. The room scales to fit down to a 50% floor,
  * then scrolls vertically (D22). Below 800x500 the layout stays at the minimum size and
  * reports `needsWider`.
  */
@@ -35,6 +37,15 @@ export const FLOOR_MARGIN = { backLeft: 0.9, backRight: 1.2, frontRight: 0.8, fr
 /** Wall height above the floor edge, unscaled px; the door is 120 tall. */
 export const WALL_HEIGHT = 156;
 
+/**
+ * Room px of desk (0, 0): where a one-row room puts it, so one-row coordinates are what they
+ * always were. Fixed from here on, so extra rows extend the room left and down instead.
+ */
+const ANCHOR = (() => {
+  const c = floorCorners(1);
+  return { x: PAD_SIDE - c.left.x, y: PAD_TOP - (c.top.y - WALL_HEIGHT) };
+})();
+
 export const BUBBLE_STEP = 8;
 export const BUBBLE_MAX_SHIFTS = 2;
 
@@ -42,12 +53,20 @@ export type Viewport = { width: number; height: number };
 export type FloorCorners = { top: Pt; right: Pt; bottom: Pt; left: Pt };
 type Pt = { x: number; y: number };
 export type DeskPosition = { col: number; row: number; x: number; y: number; depth: number };
+/** Room px extents of the floor and walls; they only ever grow when a row is added. */
+export type Bounds = { minX: number; maxX: number; minY: number; maxY: number };
+/** Room px to screen px: screen = room * scale + (x, y), in the scene box. */
+export type Fit = { scale: number; x: number; y: number };
 export type OfficeLayout = {
   rows: number;
   desks: DeskPosition[];
-  /** Where grid cell (0, 0)'s desk center lands in room px. */
+  /** Where grid cell (0, 0)'s desk center lands in room px: fixed, whatever the rows. */
   origin: { x: number; y: number };
-  /** Unscaled room size. */
+  bounds: Bounds;
+  fit: Fit;
+  /** Layer and shell box at room (0, 0): ends where the padded bounds end, so none of it overhangs. */
+  box: { width: number; height: number };
+  /** Padded size of the bounds, unscaled. */
   width: number;
   height: number;
   scale: number;
@@ -94,15 +113,17 @@ export function layoutOffice(deskCount: number, viewport: Viewport): OfficeLayou
   const vw = Math.max(viewport.width, MIN_WIDTH);
   const vh = Math.max(viewport.height, MIN_HEIGHT);
 
-  // Bounds come from the floor and walls of the full rows so desks never shift as a row fills.
+  // Bounds come from the floor and walls of the full rows; desks sit at fixed room px.
+  const origin = ANCHOR;
   const c = floorCorners(rows);
-  const minX = c.left.x;
-  const maxX = c.right.x;
-  const minY = c.top.y - WALL_HEIGHT;
-  const maxY = c.bottom.y;
-  const origin = { x: PAD_SIDE - minX, y: PAD_TOP - minY };
-  const width = maxX - minX + PAD_SIDE * 2;
-  const height = maxY - minY + PAD_TOP + PAD_BOTTOM;
+  const bounds: Bounds = {
+    minX: c.left.x + origin.x,
+    maxX: c.right.x + origin.x,
+    minY: c.top.y - WALL_HEIGHT + origin.y,
+    maxY: c.bottom.y + origin.y,
+  };
+  const width = bounds.maxX - bounds.minX + PAD_SIDE * 2;
+  const height = bounds.maxY - bounds.minY + PAD_TOP + PAD_BOTTOM;
 
   // Every row draws all its desks; the unseated ones are empty (and free work desks).
   const desks = Array.from({ length: rows * DESKS_PER_ROW }, (_, i): DeskPosition => {
@@ -117,12 +138,30 @@ export function layoutOffice(deskCount: number, viewport: Viewport): OfficeLayou
     rows,
     desks,
     origin,
+    bounds,
+    fit: fitFor(bounds, scale, viewport),
+    box: { width: bounds.maxX + PAD_SIDE, height: bounds.maxY + PAD_BOTTOM },
     width,
     height,
     scale,
     scrollHeight,
     scrolls: scrollHeight > vh,
     needsWider,
+  };
+}
+
+/**
+ * The fit that puts the padded bounds on screen: the room's left edge (plus its slack) at the
+ * centering margin, its top (plus slack) at the top of the scene box. Same spot the room had
+ * when its origin followed its size, so screen = room * scale + offset.
+ */
+export function fitFor(bounds: Bounds, scale: number, viewport: Viewport): Fit {
+  const width = bounds.maxX - bounds.minX + PAD_SIDE * 2;
+  const margin = Math.max(0, (viewport.width - width * scale) / 2);
+  return {
+    scale,
+    x: margin + (PAD_SIDE - bounds.minX) * scale,
+    y: (PAD_TOP - bounds.minY) * scale,
   };
 }
 

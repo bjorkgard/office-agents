@@ -1,20 +1,27 @@
 import {
   assignWorkDesks,
   idleTrip,
+  idleTripDrink,
+  idleTripNext,
+  stand,
   subagentPath,
   waitTrip,
+  waitTripDrink,
+  waitTripNext,
   IDLE_BEFORE_TRIP_MS,
   RETURN_CAP_MS,
   type SubagentCtx,
   type TripCtx,
   type TripSample,
 } from "./choreo";
-import type { OfficeLayout } from "./iso";
+import type { Fit, OfficeLayout } from "./iso";
 import type { Agent } from "./machine";
 import { poseForState, type AgentState, type Pose } from "./poses";
 import type { RigPose } from "./CharacterRig";
+import type { Drink } from "./breaks";
 import { COFFEE_SPOTS } from "./room";
 import {
+  deskZ,
   planSubagents,
   QUEUE_VISIBLE,
   SEATED_FOOT,
@@ -47,6 +54,10 @@ export type Frame = {
   rest: boolean;
   /** At rest but standing (a subagent on a slot beside its parent's desk). */
   standing: boolean;
+  /** Debug hook (data-break): the trip phase, only for an agent on a trip. */
+  phase?: TripSample["phase"];
+  /** Debug hook (data-drink): the trip's drink, only for an agent on a trip. */
+  drink?: Drink;
 };
 
 export type Drive = {
@@ -55,6 +66,11 @@ export type Drive = {
   frame(t: number): Frame;
   /** True once nothing will move without new props: the Character stops its animation loop. */
   settled(t: number): boolean;
+  /**
+   * The next epoch ms at which the output moves or changes phase (`t` itself while it is moving),
+   * or null if it never will. Pure. A settled drive with a next change is woken by `runLoop`.
+   */
+  nextChange(t: number): number | null;
 };
 
 /** A remembered coffee trip; the machine forgets idleSince and the wait start once they end. */
@@ -66,7 +82,18 @@ export type Trip = {
   spot: number;
 };
 
-const deskZOf = (layout: OfficeLayout, desk: number) => Math.round(layout.desks[desk].y + 30);
+/**
+ * When a parent's wait really began: its earliest still-open tool it waits on, clamped to `now`
+ * (a reload then lands on the same break plan); first sight when none is known.
+ */
+function waitStart(a: Agent, now: number): number {
+  let since = now;
+  for (const id of a.waitingOn) {
+    const t = a.openTools[id];
+    if (t) since = Math.min(since, t.startedAt);
+  }
+  return since;
+}
 
 /**
  * Trips by agent key. A top-level agent with a seat that is idle (from `idleSince`) or waiting on
@@ -86,7 +113,7 @@ export function updateTrips(
   const wants = (a: Agent): { kind: Trip["kind"]; since: number } | null => {
     if (a.agentId !== null || seats[a.sessionId] === undefined) return null;
     if (a.state === "idle" && a.idleSince !== null) return { kind: "idle", since: a.idleSince };
-    if (a.state === "waiting-on-subagents") return { kind: "wait", since: now };
+    if (a.state === "waiting-on-subagents") return { kind: "wait", since: waitStart(a, now) };
     return null;
   };
   const sorted = [...agents].sort(byKey);
@@ -120,7 +147,7 @@ export function updateTrips(
   return next;
 }
 
-function tripFrame(s: TripSample): Frame {
+function tripFrame(s: TripSample, drink: Drink): Frame {
   return {
     x: s.x,
     y: s.y,
@@ -130,28 +157,39 @@ function tripFrame(s: TripSample): Frame {
     opacity: s.opacity,
     rest: s.phase === "seated",
     standing: false,
+    phase: s.phase,
+    drink,
   };
 }
 
 function tripDrive(trip: Trip, ctx: TripCtx, deskZ: number): Drive {
-  const at = (t: number) =>
-    (trip.kind === "idle" ? idleTrip : waitTrip)(ctx, trip.since, trip.resumedAt, t);
+  const idle = trip.kind === "idle";
+  const at = (t: number) => (idle ? idleTrip : waitTrip)(ctx, trip.since, trip.resumedAt, t);
   return {
     deskZ,
-    frame: (t) => tripFrame(at(t)),
+    frame: (t) =>
+      tripFrame(
+        at(t),
+        idle
+          ? idleTripDrink(ctx, trip.since)
+          : // After it resumed the parent only walks back: the drink stays that of the break it left.
+            waitTripDrink(ctx, trip.since, Math.min(t, trip.resumedAt ?? t)),
+      ),
     settled: (t) => {
       const s = at(t);
       if (trip.resumedAt !== null) return s.phase === "seated";
-      if (trip.kind === "wait") return s.phase === "at-coffee";
+      // A waiting parent rests at the station and on its seat between breaks; nextChange wakes it.
+      if (!idle) return s.phase === "seated" || s.phase === "at-coffee";
       return s.phase === "seated" && t - trip.since >= IDLE_BEFORE_TRIP_MS;
     },
+    nextChange: (t) => (idle ? idleTripNext : waitTripNext)(ctx, trip.since, trip.resumedAt, t),
   };
 }
 
 function subagentDrive(a: Agent, ctx: SubagentCtx, deskZ: number | null): Drive | null {
   if (subagentPath(a, ctx, 0) === null) return null;
   const at = (t: number) => subagentPath(a, ctx, t)!;
-  return {
+  const drive: Drive = {
     deskZ,
     frame: (t) => {
       const s = at(t);
@@ -170,7 +208,10 @@ function subagentDrive(a: Agent, ctx: SubagentCtx, deskZ: number | null): Drive 
       const s = at(t);
       return s.phase === "working" || (s.phase === "leaving" && s.opacity <= 0);
     },
+    // Walking or pausing it is never settled; once settled nothing changes.
+    nextChange: (t) => (drive.settled(t) ? null : t),
   };
+  return drive;
 }
 
 export type MotionInput = {
@@ -210,60 +251,59 @@ export type Motion = {
 };
 
 const queueSpotOf = (geo: Geometry, queue: number): Point =>
-  standing(geo.queueSpot(Math.min(queue, QUEUE_VISIBLE - 1)));
-const standing = (p: Point): Point => ({ x: p.x, y: p.y - SEATED_FOOT + STANDING_FOOT });
+  stand(geo.queueSpot(Math.min(queue, QUEUE_VISIBLE - 1)));
 
-export function planMotion(input: MotionInput): Motion {
-  const { agents, seats, layout, geo, reducedMotion, now } = input;
-  const kids = agents.filter((a) => a.agentId !== null && seats[a.sessionId] !== undefined);
-  const desks = assignWorkDesks(
-    input.prevDesks,
-    kids,
-    new Set(Object.values(seats)),
-    layout.desks.length,
-  );
-  const workDeskOf = new Map<string, number>();
-  for (const [key, desk] of desks) if (desk !== null) workDeskOf.set(key, desk);
-  const plan = planSubagents(
-    agents.filter((a) => !workDeskOf.has(a.key)),
-    seats,
-  );
-  const trips = reducedMotion
-    ? new Map<string, Trip>()
-    : updateTrips(input.prevTrips, agents, seats, now);
-  const drives = new Map<string, Drive>();
-  const subs = new Map<string, SubMemory>();
-  const cache = new Map<string, CacheEntry>();
-  if (reducedMotion) return { desks, workDeskOf, plan, trips, drives, subs, cache };
+/** A drive is rebuilt only when its inputs changed, so a render does not restart its animation. */
+type Keep = (
+  key: string,
+  ctx: SubagentCtx | null,
+  sig: string,
+  make: () => Drive | null,
+) => Drive | null;
 
-  // A drive is rebuilt only when its inputs changed, so a render does not restart its animation.
-  const keep = (
-    key: string,
-    ctx: SubagentCtx | null,
-    sig: string,
-    make: () => Drive | null,
-  ): Drive | null => {
-    const old = input.prevCache?.get(key);
-    const drive = old && old.geo === geo && old.ctx === ctx && old.sig === sig ? old.drive : make();
-    if (drive) cache.set(key, { geo, ctx, sig, drive });
-    return drive;
-  };
-
+/** Coffee-trip drives of top-level agents, into `drives`. */
+function planTripDrives(
+  input: MotionInput,
+  trips: ReadonlyMap<string, Trip>,
+  keep: Keep,
+  drives: Map<string, Drive>,
+): void {
+  const { agents, seats, layout, geo } = input;
   for (const a of agents) {
+    if (a.agentId !== null) continue;
     const parent = seats[a.sessionId];
-    if (a.agentId === null) {
-      const trip = trips.get(a.key);
-      if (trip && parent !== undefined) {
-        const sig = `${trip.kind}|${trip.since}|${trip.resumedAt}|${trip.spot}|${parent}`;
-        const drive = keep(a.key, null, sig, () => {
-          const ctx = { geo, desk: parent, spot: trip.spot, seatPose: "seated-idle" as const };
-          return tripDrive(trip, ctx, deskZOf(layout, parent));
-        });
-        if (drive) drives.set(a.key, drive);
-      }
-      continue;
-    }
+    const trip = trips.get(a.key);
+    if (!trip || parent === undefined) continue;
+    const sig = `${trip.kind}|${trip.since}|${trip.resumedAt}|${trip.spot}|${parent}`;
+    const drive = keep(a.key, null, sig, () => {
+      const ctx = {
+        geo,
+        desk: parent,
+        spot: trip.spot,
+        seatPose: "seated-idle" as const,
+        seed: a.key,
+      };
+      return tripDrive(trip, ctx, deskZ(layout, parent));
+    });
+    if (drive) drives.set(a.key, drive);
+  }
+}
+
+/** Path contexts and drives of subagents, into `subs` and `drives`. */
+function planSubagentDrives(
+  input: MotionInput,
+  workDeskOf: ReadonlyMap<string, number>,
+  plan: SubagentPlan,
+  keep: Keep,
+  subs: Map<string, SubMemory>,
+  drives: Map<string, Drive>,
+): void {
+  const { agents, seats, layout, geo, now } = input;
+  for (const a of agents) {
+    if (a.agentId === null) continue;
+    const parent = seats[a.sessionId];
     if (parent === undefined) continue;
+
     const workDesk = workDeskOf.get(a.key) ?? null;
     const slot = plan.slot.get(a.key);
     const was = input.prevSubs?.get(a.key);
@@ -314,34 +354,95 @@ export function planMotion(input: MotionInput): Motion {
     subs.set(a.key, { ctx, queue: null });
     const sig = `${a.phase}|${a.arrivedAt}|${a.leftAt}`;
     const drive = keep(a.key, ctx, sig, () =>
-      subagentDrive(a, ctx, ctx.workDesk === null ? null : deskZOf(layout, ctx.workDesk)),
+      subagentDrive(a, ctx, ctx.workDesk === null ? null : deskZ(layout, ctx.workDesk)),
     );
     if (drive) drives.set(a.key, drive);
   }
+}
+
+export function planMotion(input: MotionInput): Motion {
+  const { agents, seats, layout, geo, reducedMotion, now } = input;
+  const kids = agents.filter((a) => a.agentId !== null && seats[a.sessionId] !== undefined);
+  const desks = assignWorkDesks(
+    input.prevDesks,
+    kids,
+    new Set(Object.values(seats)),
+    layout.desks.length,
+  );
+  const workDeskOf = new Map<string, number>();
+  for (const [key, desk] of desks) if (desk !== null) workDeskOf.set(key, desk);
+  const plan = planSubagents(
+    agents.filter((a) => !workDeskOf.has(a.key)),
+    seats,
+  );
+  const trips = reducedMotion
+    ? new Map<string, Trip>()
+    : updateTrips(input.prevTrips, agents, seats, now);
+  const drives = new Map<string, Drive>();
+  const subs = new Map<string, SubMemory>();
+  const cache = new Map<string, CacheEntry>();
+  if (reducedMotion) return { desks, workDeskOf, plan, trips, drives, subs, cache };
+
+  const keep: Keep = (key, ctx, sig, make) => {
+    const old = input.prevCache?.get(key);
+    const drive = old && old.geo === geo && old.ctx === ctx && old.sig === sig ? old.drive : make();
+    if (drive) cache.set(key, { geo, ctx, sig, drive });
+    return drive;
+  };
+  planTripDrives(input, trips, keep, drives);
+  planSubagentDrives(input, workDeskOf, plan, keep, subs, drives);
   return { desks, workDeskOf, plan, trips, drives, subs, cache };
 }
 
+type Scheduler = {
+  raf: (cb: () => void) => number;
+  caf: (id: number) => void;
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (id: ReturnType<typeof setTimeout>) => void;
+};
+
+/** setTimeout holds its delay in 32 bits; a later change just re-arms. */
+export const MAX_WAKE_MS = 2 ** 31 - 1;
+/** A wake-up due now or already late waits one frame, so it can never spin. */
+const MIN_WAKE_MS = 16;
+
 /**
- * Runs `frame` at once and then on every animation frame until the drive is settled; returns the
- * cleanup that cancels the pending frame. The only place a settled agent stops costing anything.
+ * Runs `frame` at once and then on every animation frame until the drive is settled. A settled
+ * drive with a next change (`nextChange`) arms one timer for it and restarts the frame loop when
+ * it fires, so a rest between two movements costs nothing but that timer. Returns the cleanup that
+ * cancels the pending frame and timer. The only place a settled agent stops costing anything.
  */
 export function runLoop(
   drive: Drive,
   clock: () => number,
   frame: (t: number) => void,
-  sched: { raf: (cb: () => void) => number; caf: (id: number) => void } = {
+  sched: Scheduler = {
     raf: (cb) => requestAnimationFrame(cb),
     caf: (id) => cancelAnimationFrame(id),
+    setTimeout: (cb, ms) => setTimeout(cb, ms),
+    clearTimeout: (id) => clearTimeout(id),
   },
 ): () => void {
   let id = 0;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const step = () => {
+    timer = null;
     const t = clock();
     frame(t);
-    if (!drive.settled(t)) id = sched.raf(step);
+    if (!drive.settled(t)) {
+      id = sched.raf(step);
+      return;
+    }
+    const next = drive.nextChange(t);
+    if (next === null) return;
+    const wait = next > t ? Math.ceil(next - t) + 1 : MIN_WAKE_MS;
+    timer = sched.setTimeout(step, Math.min(wait, MAX_WAKE_MS));
   };
   step();
-  return () => sched.caf(id);
+  return () => {
+    sched.caf(id);
+    if (timer !== null) sched.clearTimeout(timer);
+  };
 }
 
 /** The foot point the overlay hangs from: seated frames end at the chair base, others at the soles. */
@@ -351,11 +452,55 @@ export function overlayFoot(f: Frame): Point {
     : { x: f.x, y: f.y };
 }
 
-/** Hit-area center and tag anchor in screen px for an overlay foot point. */
-export function overlayPoints(foot: Point, scale: number, hit: number) {
-  const left = foot.x * scale;
-  const top = (foot.y - TORSO) * scale;
+/** Hit-area center and tag anchor in screen px for an overlay foot point, at a fit. */
+export function overlayPoints(foot: Point, fit: Fit, hit: number) {
+  const left = foot.x * fit.scale + fit.x;
+  const top = (foot.y - TORSO) * fit.scale + fit.y;
   return { hit: { left, top }, tag: { left, top: top + hit / 2 + 4 } };
+}
+
+/** `calc()` for one overlay coordinate: room px through the fit vars, plus screen px. */
+function fitCalc(axis: "x" | "y", room: number, screen = 0): string {
+  const s = axis === "x" ? "--fit-x" : "--fit-y";
+  return `calc(var(--fit-s) * ${room}px + var(${s})${screen === 0 ? "" : ` + ${screen}px`})`;
+}
+
+/**
+ * The same points as `overlayPoints`, as CSS in terms of the overlay container's fit vars
+ * (--fit-s, --fit-x, --fit-y), so they ease with the camera instead of jumping.
+ */
+export function overlayCalc(foot: Point, hit: number) {
+  const left = fitCalc("x", foot.x);
+  const room = foot.y - TORSO;
+  return {
+    hit: { left, top: fitCalc("y", room) },
+    tag: { left, top: fitCalc("y", room, hit / 2 + 4) },
+  };
+}
+
+/** A room point through the fit vars plus a screen-px offset (a bubble's own size and nudge). */
+export function roomCalcAt(p: Point, offset: Point) {
+  return { left: fitCalc("x", p.x, offset.x), top: fitCalc("y", p.y, offset.y) };
+}
+
+/** A queue-marker style position: a room point through the fit vars. */
+export function roomCalc(p: Point) {
+  return { left: fitCalc("x", p.x), top: fitCalc("y", p.y) };
+}
+
+/** Debug hooks (data-break, data-drink): written only on change, removed when the frame has no trip. */
+export function syncTripAttrs(
+  node: { dataset: Record<string, string | undefined> },
+  f: Pick<Frame, "phase" | "drink">,
+): void {
+  for (const [name, value] of [
+    ["break", f.phase],
+    ["drink", f.drink],
+  ] as const) {
+    if (value === undefined) {
+      if (name in node.dataset) delete node.dataset[name];
+    } else if (node.dataset[name] !== value) node.dataset[name] = value;
+  }
 }
 
 /** Stacking: behind its desk when seated (a raised arm in front), otherwise by foot depth. */

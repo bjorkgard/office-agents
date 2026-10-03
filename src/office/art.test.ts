@@ -7,6 +7,7 @@ import appearanceSrc from "./appearance.ts?raw";
 import { appearanceFor, HAIR, SKIN } from "./appearance";
 import ArtSheet from "./ArtSheet";
 import artSheetSrc from "./ArtSheet.tsx?raw";
+import { DESK_KINDS } from "./desk-kinds";
 import { CharacterRig, DeskDefs, PixelDesk, PixelProp, SharedDesk } from "./CharacterRig";
 import rigSrc from "./CharacterRig.tsx?raw";
 import mainSrc from "../main.tsx?raw";
@@ -22,7 +23,10 @@ import {
   parseGrid,
 } from "./pixel";
 import pixel from "./pixel.ts?raw";
-import { ART, SHIRTS } from "./palette";
+import { ART, GLASS, SHIRTS } from "./palette";
+import decorSrc from "./decor.ts?raw";
+import roomDecorSrc from "./RoomDecor.tsx?raw";
+import { WINDOW_SCENE_IDS } from "./decor";
 import {
   DESK,
   FRAME_VIEW,
@@ -246,12 +250,13 @@ describe("pixel sprites", () => {
       for (const c of row) expect(known.has(c), `${name} cell '${c}'`).toBe(true);
   };
 
-  it("has the seven figure frames", () => {
+  it("has the eight figure frames", () => {
     expect(grids.map(([n]) => n).sort()).toEqual([
       "SEATED_IDLE",
       "SEATED_RAISED",
       "SEATED_TYPING",
       "STANDING",
+      "STANDING_CUP",
       "STANDING_MUG",
       "WALK_A",
       "WALK_B",
@@ -267,6 +272,7 @@ describe("pixel sprites", () => {
       WALK_B: "front",
       STANDING: "front",
       STANDING_MUG: "front",
+      STANDING_CUP: "front",
     });
   });
 
@@ -284,6 +290,23 @@ describe("pixel sprites", () => {
   it("holds a metal mug in the coffee frame and nothing in the standing frame", () => {
     expect(FRAMES.STANDING_MUG.join("")).toMatch(/m/);
     expect(FRAMES.STANDING.join("")).not.toMatch(/[mf]/);
+  });
+
+  it("holds a plain cup in the water frame, with no metal mug and no handle", () => {
+    expect(FRAMES.STANDING_CUP).toHaveLength(FRAMES.STANDING_MUG.length);
+    for (const [i, row] of FRAMES.STANDING_CUP.entries()) {
+      expect(row).toHaveLength(FRAMES.STANDING_MUG[i].length);
+    }
+    expect(FRAMES.STANDING_CUP.join("")).not.toMatch(/[mM~7]/);
+    // Same figure as the coffee frame: every cell left of the hand column matches.
+    const left = (g: readonly string[]) => g.map((r) => r.slice(0, 24)).join("|");
+    expect(left(FRAMES.STANDING_CUP)).toBe(left(FRAMES.STANDING_MUG));
+    // the cup is the white-ish `l` cell (--outline), not the darker plastic cells
+    expect(FRAMES.STANDING_CUP.join("")).not.toMatch(/[=g8]/);
+    expect(FRAMES.STANDING_CUP.slice(22, 31).join("").replace(/[^l]/g, "").length).toBeGreaterThan(
+      15,
+    );
+    expect(HEAD_ANCHOR.STANDING_CUP).toEqual(HEAD_ANCHOR.STANDING_MUG);
   });
 
   it("places the coffee figure by MUG_COL and SOLE_ROW as the grid draws it", () => {
@@ -476,6 +499,7 @@ describe("self-contained roots", () => {
       "seated-raised-hand",
       "seated-idle",
       "standing-mug",
+      "standing-cup",
     ] as const)
       html[pose] = renderToStaticMarkup(
         createElement(CharacterRig, { pose, shirt: 1, stripe: false }),
@@ -491,13 +515,15 @@ describe("self-contained roots", () => {
   });
 
   // Value: 12 agents must not re-emit the 1,500-element desk each (phase 4 R5).
-  it("draws each desk variant once and reuses it with one <use> per desk", () => {
+  it("draws each desk kind and light state once and reuses it with one <use> per desk", () => {
     const defs = renderToStaticMarkup(createElement(DeskDefs));
-    expect(defs.match(/id="desk-lit"/g)).toHaveLength(1);
-    expect(defs.match(/id="desk-dim"/g)).toHaveLength(1);
+    for (const id of ["tidy", "cluttered"])
+      for (const light of ["lit", "dim"])
+        expect(defs.match(new RegExp(`id="desk-${id}-${light}"`, "g"))).toHaveLength(1);
+    expect(defs.match(/<g id=/g)).toHaveLength(4);
     expect(defs).toContain("var(--screen)");
     const desks = [true, true, false].map((lit) =>
-      renderToStaticMarkup(createElement(SharedDesk, { lit })),
+      renderToStaticMarkup(createElement(SharedDesk, { kind: DESK_KINDS[0], lit })),
     );
     for (const html of desks) {
       expect(html.match(/<use /g)).toHaveLength(1);
@@ -505,8 +531,8 @@ describe("self-contained roots", () => {
       expect(html).toMatch(/^<svg[^>]*aria-hidden="true"/);
       expect(html).toContain("--screen:");
     }
-    expect(desks[0]).toContain('href="#desk-lit"');
-    expect(desks[2]).toContain('href="#desk-dim"');
+    expect(desks[0]).toContain('href="#desk-tidy-lit"');
+    expect(desks[2]).toContain('href="#desk-tidy-dim"');
   });
 
   it("declares every palette token on each root", () => {
@@ -566,6 +592,7 @@ describe("CharacterRig", () => {
       "walking",
       "standing",
       "standing-mug",
+      "standing-cup",
     ] as const) {
       const html = render({ pose, shirt: 0, stripe: true });
       expect(html, pose).toContain('fill="var(--shirt)"');
@@ -606,6 +633,7 @@ describe("CharacterRig", () => {
     expect(frame({ ...base, pose: "seated-idle" })).toBe("SEATED_IDLE");
     expect(frame({ ...base, pose: "standing" })).toBe("STANDING");
     expect(frame({ ...base, pose: "standing-mug" })).toBe("STANDING_MUG");
+    expect(frame({ ...base, pose: "standing-cup" })).toBe("STANDING_CUP");
   });
 
   it("draws both walking frames under a stride when walking, and only one at rest", () => {
@@ -613,7 +641,13 @@ describe("CharacterRig", () => {
     const walking = render({ ...base, pose: "walking", stride: true });
     expect(walking).toContain('data-part="walk-a"');
     expect(walking).toContain('data-part="walk-b"');
-    for (const pose of ["standing", "standing-mug", "seated-idle", "seated-typing"] as const) {
+    for (const pose of [
+      "standing",
+      "standing-mug",
+      "standing-cup",
+      "seated-idle",
+      "seated-typing",
+    ] as const) {
       const still = render({ ...base, pose, stride: true });
       expect(still, pose).not.toContain('data-part="walk-');
     }
@@ -629,6 +663,7 @@ describe("CharacterRig", () => {
     for (const [pose, name] of [
       ["standing", "STANDING"],
       ["standing-mug", "STANDING_MUG"],
+      ["standing-cup", "STANDING_CUP"],
     ] as const) {
       const html = render({ pose, shirt: 4, stripe: true });
       expect(html, pose).toMatch(new RegExp(`^<svg[^>]*data-frame="${name}"`));
@@ -736,5 +771,77 @@ describe("CharacterRig", () => {
     expect(html).toContain("--skin:var(--skin-3)");
     expect(html).toContain('fill="var(--hair)"');
     expect(html).toContain('fill="var(--skin)"');
+  });
+});
+
+describe("GLASS palette", () => {
+  const glassRows = sectionRows(design, "## Glass tokens", "## Typography");
+  const header = glassRows[0];
+  const capText = /cap (\d\.\d{4})/.exec(header)?.[1];
+  const designGlass = new Map<string, { value: string; lum: string }>();
+  for (const row of glassRows) {
+    const c = cells(row);
+    const token = /^`(--[a-z0-9-]+)`$/.exec(c[0]);
+    const [value] = hexes(row);
+    if (token && value) designGlass.set(token[1], { value, lum: c[c.length - 1] });
+  }
+  const cap = luminance(ART["--plastic"]);
+
+  it("states the --plastic luminance cap in the table header", () => {
+    expect(capText).toBeDefined();
+    expect(Number(capText)).toBeCloseTo(cap, 4);
+  });
+
+  it("has the same token set in palette.ts and the DESIGN.md Glass tokens table", () => {
+    expect(Object.keys(GLASS).sort()).toEqual([...designGlass.keys()].sort());
+  });
+
+  it("matches every glass hex and its luminance column", () => {
+    for (const [token, value] of Object.entries(GLASS)) {
+      const row = designGlass.get(token)!;
+      expect(row.value, token).toBe(value);
+      expect(Number(row.lum), token).toBeCloseTo(luminance(value), 4);
+    }
+  });
+
+  it("keeps every glass colour at most as bright as --plastic", () => {
+    for (const [token, value] of Object.entries(GLASS))
+      expect(luminance(value), token).toBeLessThanOrEqual(cap);
+    for (const row of designGlass.values())
+      expect(Number(row.lum)).toBeLessThanOrEqual(Number(capText));
+  });
+
+  it("keeps the frame colours (--wood, --metal) at least 3:1 on --bg", () => {
+    for (const t of ["--wood", "--metal"] as const)
+      expect(contrast(ART[t], BG), t).toBeGreaterThanOrEqual(3);
+  });
+
+  it("is not in ART and not written onto a character, desk or prop root", () => {
+    for (const token of Object.keys(GLASS)) expect(ART, token).not.toHaveProperty([token]);
+    const roots = [
+      renderToStaticMarkup(
+        createElement(CharacterRig, { pose: "standing", shirt: 0, stripe: false }),
+      ),
+      renderToStaticMarkup(createElement(PixelDesk, {})),
+      ...(Object.keys(PROPS) as PropName[]).map((name) =>
+        renderToStaticMarkup(createElement(PixelProp, { name })),
+      ),
+    ];
+    for (const html of roots) expect(html).not.toContain("--glass");
+  });
+
+  it("has no hex literals in the decor and room decor sources", () => {
+    expect(decorSrc).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    expect(roomDecorSrc).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+  });
+
+  it("shows every scene on a left-wall and a right-wall window in the dev sheet, at 100% and 50%", () => {
+    const html = renderToStaticMarkup(createElement(ArtSheet));
+    for (const id of WINDOW_SCENE_IDS)
+      for (const wall of ["left", "right"] as const) {
+        const n = html.match(new RegExp(`data-window-scene="${id}"[^>]*data-wall="${wall}"`, "g"));
+        expect(n?.length, `${id} ${wall}`).toBeGreaterThanOrEqual(2);
+      }
+    expect(html).toContain('data-part="floor-light"');
   });
 });

@@ -13,7 +13,15 @@ import { STRIDE_MS } from "./choreo";
 import type { ShirtChoice } from "./identity";
 import { TUNING } from "./machine";
 import { SWAP_TIMEOUT_MS, shirtFor, type AgentState } from "./poses";
-import { frameZ, legacyPose, restPose, runLoop, type Drive, type Frame } from "./motion";
+import {
+  frameZ,
+  legacyPose,
+  restPose,
+  runLoop,
+  syncTripAttrs,
+  type Drive,
+  type Frame,
+} from "./motion";
 import { SEATED_FOOT, STANDING_FOOT, type Point } from "./scene-model";
 import { createSwap, isLooping, resolveSwap, retarget } from "./swap";
 
@@ -179,6 +187,7 @@ export const Character = memo(function Character({
       node.style.transform = `translate(${f.x}px, ${f.y}px)`;
       node.style.zIndex = String(frameZ(f, deskZ, node.dataset.state === "attention"));
       node.style.opacity = f.opacity < 1 ? String(f.opacity) : "";
+      syncTripAttrs(node, f);
       onFrame?.(seed, f);
       if (lookKey(f) !== shown.current) {
         shown.current = lookKey(f);
@@ -195,6 +204,8 @@ export const Character = memo(function Character({
       data-shirt={known ? known.name : "unknown"}
       data-pose={pose}
       data-path={driven ? "" : undefined}
+      data-break={frame?.phase}
+      data-drink={frame?.drink}
       style={style}
       onAnimationIteration={onLoopEnd}
     >

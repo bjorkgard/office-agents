@@ -1,14 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 import { DESKS_PER_ROW } from "../../shared/tuning";
 import { CELL } from "./pixel";
-import { COFFEE_STATION, DOOR, propSize } from "./props";
-import { MIN_HEIGHT, MIN_WIDTH, layoutOffice } from "./iso";
+import { COFFEE_STATION, DISPENSER, DOOR, propSize } from "./props";
+import { MIN_HEIGHT, MIN_WIDTH, TILE_W, layoutOffice } from "./iso";
+import { stand } from "./choreo";
 import { QUEUE_VISIBLE, STANDING_FOOT, geometryFor } from "./scene-model";
 import { RIG_HEIGHT, RIG_WIDTH } from "./CharacterRig";
 import {
   BASEBOARD_HEIGHT,
   COFFEE_SPOTS,
+  DOOR_AT,
+  QUEUE_GAP,
+  WALL_LAYOUT,
+  WATER_ALONG,
   WALL_SKEW,
+  WINDOW_COLS,
+  WINDOW_LIFT,
+  WINDOW_ROWS,
+  WINDOW_SPOTS,
   deskFootprint,
   roomShell,
   wallPropRect,
@@ -51,18 +60,22 @@ describe("roomShell", () => {
   it.each(counts)("keeps every desk and the shell inside the room box at %i agents", (n) => {
     const layout = layoutOffice(n, view);
     const shell = roomShell(layout);
+    // Anchored room px: the padded room box starts at the bounds' corner, less the slack.
+    const pad = (layout.width - (layout.bounds.maxX - layout.bounds.minX)) / 2;
+    const x0 = layout.bounds.minX - pad;
+    const y0 = layout.bounds.minY - pad;
     for (const p of [...shell.floor, ...shell.leftWall, ...shell.rightWall]) {
-      expect(p.x).toBeGreaterThanOrEqual(0);
-      expect(p.x).toBeLessThanOrEqual(layout.width);
-      expect(p.y).toBeGreaterThanOrEqual(0);
-      expect(p.y).toBeLessThanOrEqual(layout.height);
+      expect(p.x).toBeGreaterThanOrEqual(x0);
+      expect(p.x).toBeLessThanOrEqual(x0 + layout.width);
+      expect(p.y).toBeGreaterThanOrEqual(y0);
+      expect(p.y).toBeLessThanOrEqual(y0 + layout.height);
     }
     for (const d of layout.desks) {
       const f = deskFootprint(d);
-      expect(f.left).toBeGreaterThanOrEqual(0);
-      expect(f.right).toBeLessThanOrEqual(layout.width);
-      expect(f.top).toBeGreaterThanOrEqual(0);
-      expect(f.bottom).toBeLessThanOrEqual(layout.height);
+      expect(f.left).toBeGreaterThanOrEqual(x0);
+      expect(f.right).toBeLessThanOrEqual(x0 + layout.width);
+      expect(f.top).toBeGreaterThanOrEqual(y0);
+      expect(f.bottom).toBeLessThanOrEqual(y0 + layout.height);
     }
   });
 
@@ -192,6 +205,39 @@ describe("roomShell", () => {
       }
   });
 
+  it.each(counts)("keeps water spots off every desk and on the floor at %i desks", (n) => {
+    const layout = layoutOffice(n, view);
+    const shell = roomShell(layout);
+    const desks = layout.desks.map(deskFootprint);
+    for (let i = 0; i < 30; i++) {
+      const spot = shell.waterSpot(i);
+      expect(inside(shell.floor, spot)).toBe(true);
+      for (const r of desks) expect(overlap(figure(spot), r)).toBe(false);
+    }
+  });
+
+  it("clamps the water spot index to the water table, which is as long as the coffee one", () => {
+    const shell = roomShell(layoutOffice(4, view));
+    expect(WATER_ALONG).toHaveLength(COFFEE_SPOTS);
+    expect(shell.waterSpot(WATER_ALONG.length + 7)).toEqual(
+      shell.waterSpot(WATER_ALONG.length - 1),
+    );
+  });
+
+  it("keeps every spot of both stations at least a figure width from every other", () => {
+    const shell = roomShell(layoutOffice(4, view));
+    const all = [
+      ...Array.from({ length: COFFEE_SPOTS }, (_, i) => shell.coffeeSpot(i)),
+      ...Array.from({ length: COFFEE_SPOTS }, (_, i) => shell.waterSpot(i)),
+    ];
+    for (let i = 0; i < all.length; i++)
+      for (let j = i + 1; j < all.length; j++)
+        expect(
+          Math.hypot(all[i].x - all[j].x, all[i].y - all[j].y),
+          `${i} vs ${j}`,
+        ).toBeGreaterThanOrEqual(40);
+  });
+
   it("slopes both wall bases at the tile slope and tiles half the floor", () => {
     const shell = roomShell(layoutOffice(8, view));
     const [top, right, , left] = shell.floor;
@@ -239,6 +285,34 @@ describe("roomShell", () => {
     },
   );
 
+  it.each(counts)(
+    "stands the dispenser on the back-right wall, off the desks, at %i agents",
+    (n) => {
+      const layout = layoutOffice(n, view);
+      const shell = roomShell(layout);
+      const [top, right] = shell.floor;
+      const slope = (right.y - top.y) / (right.x - top.x);
+      expect(shell.dispenser.y - top.y).toBeCloseTo((shell.dispenser.x - top.x) * slope);
+      expect(shell.dispenser.x).toBeGreaterThan(shell.coffee.x);
+      const r = wallPropRect("DISPENSER", shell.dispenser);
+      for (const d of layout.desks.map(deskFootprint)) expect(overlap(d, r)).toBe(false);
+      expect(overlap(r, wallPropRect("COFFEE_STATION", shell.coffee))).toBe(false);
+    },
+  );
+
+  it.each(counts)("sits the dispenser's base on the back-right baseboard at %i agents", (n) => {
+    const shell = roomShell(layoutOffice(n, view));
+    const r = wallPropRect("DISPENSER", shell.dispenser);
+    for (let col = 0; col < DISPENSER[0].length; col++) {
+      let last = -1;
+      for (let row = 0; row < DISPENSER.length; row++) if (DISPENSER[row][col] !== ".") last = row;
+      if (last < 0) continue;
+      const x = r.left + (col + 0.5) * CELL;
+      const wallY = shell.dispenser.y + (x - shell.dispenser.x) * WALL_SKEW;
+      expect(Math.abs(r.top + (last + 1) * CELL - wallY)).toBeLessThanOrEqual(BASEBOARD_HEIGHT);
+    }
+  });
+
   it.each(counts)("keeps every plant's pot inside the floor at %i agents", (n) => {
     const shell = roomShell(layoutOffice(n, view));
     for (const [at, width] of [
@@ -265,9 +339,278 @@ describe("roomShell", () => {
       expect(overlap(box("PLANT_TALL", shell.plantTall), wallPropRect("DOOR", shell.door))).toBe(
         false,
       );
-      expect(
-        overlap(box("PLANT_BUSH", shell.plantBush), wallPropRect("COFFEE_STATION", shell.coffee)),
-      ).toBe(false);
+      for (const r of [
+        wallPropRect("COFFEE_STATION", shell.coffee),
+        wallPropRect("DISPENSER", shell.dispenser),
+        wallPropRect("DOOR", shell.door),
+        box("PLANT_TALL", shell.plantTall),
+      ])
+        expect(overlap(box("PLANT_BUSH", shell.plantBush), r)).toBe(false);
     },
   );
+});
+
+describe("WALL_LAYOUT", () => {
+  type Item = (typeof WALL_LAYOUT)[number];
+  const clash = (a: Item, b: Item) => a.from < b.to && b.from < a.to;
+  // Pairs allowed to overlap (order-free). Spots stand in front of the stations, and the two
+  // spot lines interleave on separate lines of floor (room.ts).
+  const allowed: [string, string][] = [
+    ["coffee spots", "coffee station"],
+    ["coffee spots", "dispenser"],
+    ["coffee spots", "water spots"],
+    ["water spots", "coffee station"],
+    ["water spots", "dispenser"],
+    ["door queue", "door"],
+  ];
+  const isAllowed = (a: Item, b: Item) =>
+    allowed.some(([x, y]) => (a.name === x && b.name === y) || (a.name === y && b.name === x));
+  /** Every same-wall pair, whatever the lane, that overlaps and is not allowed. */
+  const overlaps = (table: readonly Item[]) => {
+    const bad: string[] = [];
+    table.forEach((a, i) =>
+      table.slice(i + 1).forEach((b) => {
+        if (a.wall === b.wall && clash(a, b) && !isAllowed(a, b))
+          bad.push(`${a.name} vs ${b.name}`);
+      }),
+    );
+    return bad;
+  };
+  const moved = (name: string, along: number) =>
+    WALL_LAYOUT.map((i) => {
+      if (i.name !== name) return i;
+      const half = (i.to - i.from) / 2;
+      return { ...i, from: along - half, to: along + half };
+    });
+
+  it("lists the door, clock, both stations, both plants, both spot lines and the windows", () => {
+    expect(WALL_LAYOUT.map((i) => i.name).sort()).toEqual(
+      [
+        "bush plant",
+        "clock",
+        "coffee spots",
+        "coffee station",
+        "dispenser",
+        "door",
+        "door queue",
+        "tall plant",
+        "water spots",
+        "window left 1",
+        "window right 1",
+      ].sort(),
+    );
+  });
+
+  it("hangs at most 4 windows, all in the wall lane, and allowlists none of them", () => {
+    const windows = WALL_LAYOUT.filter((i) => i.name.startsWith("window"));
+    expect(windows.length).toBeGreaterThan(0);
+    expect(windows.length).toBeLessThanOrEqual(4);
+    expect(windows.map((w) => w.name)).toEqual(WINDOW_SPOTS.map((w) => w.name));
+    for (const w of windows) expect(w.lane).toBe("wall");
+    for (const name of allowed.flat()) expect(name).not.toMatch(/^window/);
+    expect(allowed).toHaveLength(6);
+  });
+
+  it("lists the door queue's 4 visible spots as a standing stretch on the left wall", () => {
+    const q = WALL_LAYOUT.find((i) => i.name === "door queue")!;
+    expect([q.wall, q.lane]).toEqual(["left", "stand"]);
+    expect(q.from).toBeCloseTo(DOOR_AT - (QUEUE_VISIBLE - 1) * QUEUE_GAP);
+    expect(q.to).toBeCloseTo(DOOR_AT);
+    // A window moved onto the queue is reported (the queue is no longer invisible to the table).
+    expect(overlaps(moved("window left 1", 0.15))).toContain("door queue vs window left 1");
+  });
+
+  it("reports a window moved into the door, the tall plant or the clock", () => {
+    expect(overlaps(moved("window left 1", DOOR_AT))).toContain("door vs window left 1");
+    expect(overlaps(moved("window left 1", 0.7))).toContain("tall plant vs window left 1");
+    expect(overlaps(moved("window left 1", -0.6))).toContain("bush plant vs window left 1");
+    expect(overlaps(moved("window right 1", 0.9))).toContain("clock vs window right 1");
+    expect(overlaps(moved("window right 1", 2.2))).toContain("coffee station vs window right 1");
+  });
+
+  it("has no allowlist entry for the bush plant", () => {
+    expect(allowed.flat()).not.toContain("bush plant");
+  });
+
+  it("gives every item a stretch of wall that starts before it ends", () => {
+    for (const i of WALL_LAYOUT) expect(i.from, i.name).toBeLessThan(i.to);
+  });
+
+  it("overlaps no two items on a wall, whatever the lane, bar the allowlist", () => {
+    expect(overlaps(WALL_LAYOUT)).toEqual([]);
+  });
+
+  it("reports the bush plant moved into the door", () => {
+    expect(overlaps(moved("bush plant", DOOR_AT))).toContain("door vs bush plant");
+  });
+
+  it("reports the dispenser moved into the coffee station", () => {
+    expect(overlaps(moved("dispenser", 2.2))).toContain("coffee station vs dispenser");
+  });
+
+  it("reports the clock moved into the dispenser", () => {
+    const at = WALL_LAYOUT.find((i) => i.name === "dispenser")!;
+    expect(overlaps(moved("clock", (at.from + at.to) / 2))).toContain("clock vs dispenser");
+  });
+
+  it("reports the clock moved into the coffee station", () => {
+    expect(overlaps(moved("clock", 2.2))).toContain("clock vs coffee station");
+  });
+});
+
+describe("windows", () => {
+  const wallOf = (shell: ReturnType<typeof roomShell>, wall: "left" | "right") =>
+    wall === "left" ? shell.leftWall : shell.rightWall;
+  const boxOf = (c: Point): Rect => ({
+    left: c.x - (WINDOW_COLS * CELL) / 2,
+    right: c.x + (WINDOW_COLS * CELL) / 2,
+    top: c.y - (WINDOW_ROWS * CELL) / 2,
+    bottom: c.y + (WINDOW_ROWS * CELL) / 2,
+  });
+
+  it("hangs only the right-wall window at one row, the left-wall one once the wall lengthens", () => {
+    const names = (n: number) => roomShell(layoutOffice(n, view)).windows.map((w) => w.name);
+    expect(names(4)).toEqual(["window right 1"]);
+    for (const n of [8, 12, 16, 20, 24])
+      expect(names(n)).toEqual(["window left 1", "window right 1"]);
+    expect(names(0)).toEqual(["window right 1"]);
+  });
+
+  it("keeps every window where it was, against the back desk, for rows 1 to 6", () => {
+    const ref = layoutOffice(8, view);
+    const refWindows = roomShell(ref).windows;
+    expect(refWindows).toHaveLength(2);
+    for (let rows = 1; rows <= 6; rows++) {
+      const layout = layoutOffice(rows * 4, view);
+      for (const w of roomShell(layout).windows) {
+        const r = refWindows.find((x) => x.name === w.name)!;
+        expect(w.center.x - layout.desks[0].x, `${w.name} ${rows}`).toBeCloseTo(
+          r.center.x - ref.desks[0].x,
+        );
+        expect(w.center.y - layout.desks[0].y, `${w.name} ${rows}`).toBeCloseTo(
+          r.center.y - ref.desks[0].y,
+        );
+      }
+    }
+  });
+
+  it.each(counts)(
+    "hangs each window inside its wall, WINDOW_LIFT above the wall base, at %i agents",
+    (n) => {
+      const shell = roomShell(layoutOffice(n, view));
+      for (const w of shell.windows) {
+        const wall = wallOf(shell, w.wall);
+        const b = boxOf(w.center);
+        for (const p of [
+          { x: b.left, y: b.top },
+          { x: b.right, y: b.top },
+          { x: b.left, y: b.bottom },
+          { x: b.right, y: b.bottom },
+        ])
+          expect(inside(wall, p), `${w.name} corner ${p.x},${p.y}`).toBe(true);
+        const [top, right, , left] = shell.floor;
+        const [a, c] = w.wall === "left" ? [left, top] : [top, right];
+        const baseY = a.y + ((w.center.x - a.x) * (c.y - a.y)) / (c.x - a.x);
+        expect(baseY - w.center.y).toBeCloseTo(WINDOW_LIFT);
+      }
+    },
+  );
+
+  it.each(counts)(
+    "keeps every window off the door, clock, stations, plants and each other at %i agents",
+    (n) => {
+      const shell = roomShell(layoutOffice(n, view));
+      const box = (name: "PLANT_TALL" | "PLANT_BUSH", at: Point): Rect => {
+        const { width, height } = propSize(name);
+        return {
+          left: at.x - width / 2,
+          right: at.x + width / 2,
+          top: at.y - height,
+          bottom: at.y,
+        };
+      };
+      const clock = propSize("CLOCK");
+      const others: Rect[] = [
+        wallPropRect("DOOR", shell.door),
+        wallPropRect("COFFEE_STATION", shell.coffee),
+        wallPropRect("DISPENSER", shell.dispenser),
+        box("PLANT_TALL", shell.plantTall),
+        box("PLANT_BUSH", shell.plantBush),
+        {
+          left: shell.clock.x - clock.width / 2,
+          right: shell.clock.x + clock.width / 2,
+          top: shell.clock.y - clock.height / 2,
+          bottom: shell.clock.y + clock.height / 2,
+        },
+      ];
+      shell.windows.forEach((w, i) => {
+        for (const r of others) expect(overlap(boxOf(w.center), r), w.name).toBe(false);
+        for (const o of shell.windows.slice(i + 1))
+          expect(overlap(boxOf(w.center), boxOf(o.center)), `${w.name} vs ${o.name}`).toBe(false);
+      });
+    },
+  );
+
+  // Standing figures (40 px wide, head to feet) at every queue, coffee and water spot, and the
+  // "+N" mark's spot: none overlaps any window box (min gap in px reported on failure).
+  it.each(counts)("keeps every window off every standing spot and figure box at %i agents", (n) => {
+    const shell = roomShell(layoutOffice(n, view));
+    const spots: [string, Point][] = [];
+    // A queued figure is drawn on its standing-foot point (motion.ts stand(): 6 px above the spot).
+    for (let i = 0; i <= QUEUE_VISIBLE; i++) spots.push([`queue ${i}`, stand(shell.queueSpot(i))]);
+    for (let i = 0; i < COFFEE_SPOTS; i++) {
+      spots.push([`coffee ${i}`, shell.coffeeSpot(i)], [`water ${i}`, shell.waterSpot(i)]);
+    }
+    for (const w of shell.windows)
+      for (const [name, p] of spots) {
+        const fig: Rect = {
+          left: p.x - 20,
+          right: p.x + 20,
+          top: p.y - STANDING_FOOT,
+          bottom: p.y,
+        };
+        expect(overlap(boxOf(w.center), fig), `${w.name} vs ${name}`).toBe(false);
+        expect(within(boxOf(w.center), p), `${w.name} spot ${name}`).toBe(false);
+      }
+  });
+
+  it.each(counts)("lays each floor light patch on the floor, just inside it, at %i agents", (n) => {
+    const layout = layoutOffice(n, view);
+    const shell = roomShell(layout);
+    for (const w of shell.windows) {
+      expect(w.patch.length, w.name).toBeGreaterThanOrEqual(2);
+      for (const pane of w.patch) {
+        expect(pane, w.name).toHaveLength(4);
+        for (const p of pane) expect(inside(shell.floor, p), `${w.name} ${p.x},${p.y}`).toBe(true);
+        // A parallelogram: opposite edges equal.
+        expect(pane[1].x - pane[0].x).toBeCloseTo(pane[2].x - pane[3].x);
+        expect(pane[1].y - pane[0].y).toBeCloseTo(pane[2].y - pane[3].y);
+        // Along the wall: the edge slopes like the wall base.
+        expect(Math.abs((pane[1].y - pane[0].y) / (pane[1].x - pane[0].x))).toBeCloseTo(WALL_SKEW);
+      }
+    }
+  });
+
+  it.each(counts)("keeps the patches out of every desk's ground strip at %i agents", (n) => {
+    const layout = layoutOffice(n, view);
+    const shell = roomShell(layout);
+    for (const d of layout.desks) {
+      const f = deskFootprint(d);
+      const strip: Rect = { left: f.left, right: f.right, top: f.bottom - 12, bottom: f.bottom };
+      for (const w of shell.windows)
+        for (const pane of w.patch)
+          for (const p of pane) expect(within(strip, p), `${w.name} ${p.x},${p.y}`).toBe(false);
+    }
+  });
+
+  it("sits the patch along its window's stretch of wall", () => {
+    const shell = roomShell(layoutOffice(8, view));
+    for (const w of shell.windows) {
+      const xs = w.patch.flat().map((p) => p.x);
+      // The patch stays within the window's width on screen, give or take the depth into the room.
+      const depth = 0.7 * (TILE_W / 2);
+      expect(Math.min(...xs)).toBeGreaterThanOrEqual(w.center.x - WINDOW_COLS - depth);
+      expect(Math.max(...xs)).toBeLessThanOrEqual(w.center.x + WINDOW_COLS + depth);
+    }
+  });
 });

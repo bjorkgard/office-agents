@@ -1,3 +1,4 @@
+import { breakPlan, pickDrink, type Drink } from "./breaks";
 import { SEATED_FOOT, STANDING_FOOT, type Geometry, type Point } from "./scene-model";
 import type { Agent } from "./machine";
 import { byKey } from "./selectors";
@@ -125,7 +126,7 @@ function sampleSegs<P extends string>(segs: readonly Seg<P>[], t: number): Sampl
 const total = (segs: readonly Seg<string>[]) => segs.reduce((n, s) => n + s.ms, 0);
 
 /** Geometry's seat and slot points are seated-foot points; paths use standing-foot ones. */
-const stand = (p: Point): Point => ({ x: p.x, y: p.y - SEATED_FOOT + STANDING_FOOT });
+export const stand = (p: Point): Point => ({ x: p.x, y: p.y - SEATED_FOOT + STANDING_FOOT });
 
 // ---------- work desks ----------
 
@@ -294,49 +295,149 @@ export type TripCtx = {
   spot: number;
   /** Pose when seated: seated-idle for an idle trip, seated-typing for a waiting parent. */
   seatPose: Pose;
+  /** The agent's key: seeds a waiting parent's break schedule (breaks.ts). */
+  seed?: string;
 };
 
 type TripPhase = TripSample["phase"];
 
-function tripSegs(ctx: TripCtx, beforeMs: number, dwellMs: number) {
+/** Where and how a trip's drink is taken: the same spot index has a place at each station. */
+const drinkAt = (ctx: TripCtx, drink: Drink) =>
+  drink === "water"
+    ? { spot: ctx.geo.waterSpot(ctx.spot), pose: "standing-cup" as const }
+    : { spot: ctx.geo.coffeeSpot(ctx.spot), pose: "standing-mug" as const };
+
+// The phases keep their coffee names for water too: they only say "away from the seat".
+function tripSegs(
+  ctx: TripCtx,
+  drink: Drink,
+  beforeMs: number,
+  dwellMs: number,
+  afterMs = Infinity,
+) {
   const seat = stand(ctx.geo.seat(ctx.desk));
-  const cup = ctx.geo.coffeeSpot(ctx.spot);
+  const at = drinkAt(ctx, drink);
   const tl = timeline<TripPhase>(seat);
   tl.stay(beforeMs, ctx.seatPose, false, "seated", { face: false });
-  tl.walk(cup, false, "to-coffee");
-  tl.stay(dwellMs, "standing-mug", false, "at-coffee", { face: true });
+  tl.walk(at.spot, false, "to-coffee");
+  tl.stay(dwellMs, at.pose, false, "at-coffee", { face: true });
   tl.walk(seat, false, "back");
-  tl.stay(Infinity, ctx.seatPose, false, "seated", { face: false });
+  tl.stay(afterMs, ctx.seatPose, false, "seated", { face: false });
   return tl.segs;
 }
 
 /**
- * A trip's frame `elapsed` ms after it began. `resumed` is the elapsed time when the reason
- * for the trip ended (null while it lasts): the agent then walks straight back from wherever it
- * is, within RETURN_CAP_MS.
+ * Offset of the next change in a timeline at `elapsed`: `elapsed` itself while a leg moves, the
+ * end of a standing stretch, null when it stands for good.
  */
-function tripAt(
-  ctx: TripCtx,
-  segs: readonly Seg<TripPhase>[],
-  elapsed: number,
-  resumed: number | null,
-): TripSample {
-  if (resumed === null || elapsed < resumed) return sampleSegs(segs, elapsed);
-  const from = sampleSegs(segs, resumed);
-  if (from.phase === "seated") return sampleSegs(segs, Infinity);
+function nextOfSegs(segs: readonly Seg<string>[], elapsed: number): number | null {
+  let start = 0;
+  const at = Math.max(0, elapsed);
+  for (const s of segs) {
+    if (at < start + s.ms) {
+      if (s.from !== s.to) return at;
+      return Number.isFinite(s.ms) ? start + s.ms : null;
+    }
+    start += s.ms;
+  }
+  return null;
+}
+
+/** A trip as functions of elapsed time: the frame, and when it next changes (null: never). */
+type Track = { at(e: number): TripSample; next(e: number): number | null };
+
+const segTrack = (segs: readonly Seg<TripPhase>[]): Track => ({
+  at: (e) => sampleSegs(segs, e),
+  next: (e) => nextOfSegs(segs, e),
+});
+
+/**
+ * Adds the end of the reason for the trip: `resumed` is the elapsed time when it ended (null while
+ * it lasts); the agent then walks straight back from wherever it is, within RETURN_CAP_MS.
+ */
+function withResume(ctx: TripCtx, base: Track, resumed: number | null): Track {
+  if (resumed === null) return base;
   const seat = stand(ctx.geo.seat(ctx.desk));
+  const from = base.at(resumed);
+  const seated: TripSample = {
+    x: seat.x,
+    y: seat.y,
+    pose: ctx.seatPose,
+    mirror: false,
+    carryPaper: false,
+    opacity: 1,
+    phase: "seated",
+  };
+  if (from.phase === "seated") {
+    return {
+      at: (e) => (e < resumed ? base.at(e) : seated),
+      next: (e) => (e < resumed ? (base.next(e) === null ? resumed : base.next(e)) : null),
+    };
+  }
   const ms = Math.min((dist(from, seat) / WALK_SPEED) * 1000, RETURN_CAP_MS);
   const back = timeline<TripPhase>({ x: from.x, y: from.y }, from.mirror);
   back.walk(seat, false, "back");
   back.segs[0].ms = ms;
   back.stay(Infinity, ctx.seatPose, false, "seated", { face: false });
-  return sampleSegs(back.segs, elapsed - resumed);
+  return {
+    at: (e) => (e < resumed ? base.at(e) : sampleSegs(back.segs, e - resumed)),
+    next: (e) => {
+      if (e < resumed) {
+        const n = base.next(e);
+        return n === null ? resumed : Math.min(n, resumed);
+      }
+      const n = nextOfSegs(back.segs, e - resumed);
+      return n === null ? null : n + resumed;
+    },
+  };
 }
+
+const idleTrack = (ctx: TripCtx, idleSince: number, resumed: number | null) =>
+  withResume(
+    ctx,
+    segTrack(
+      tripSegs(ctx, pickDrink(ctx.seed ?? "", idleSince), IDLE_BEFORE_TRIP_MS, COFFEE_DWELL_MS),
+    ),
+    resumed,
+  );
+
+/** One break after another, from the plan: cycle `i` is its own finite set of legs. */
+function waitPlan(ctx: TripCtx) {
+  const seat = stand(ctx.geo.seat(ctx.desk));
+  const walkTo = (drink: Drink) => (dist(seat, drinkAt(ctx, drink).spot) / WALK_SPEED) * 1000;
+  return breakPlan(ctx.seed ?? "", walkTo("coffee"), walkTo("water"));
+}
+
+function waitTrack(ctx: TripCtx, resumed: number | null): Track {
+  const plan = waitPlan(ctx);
+  const cycleOf = (e: number) => {
+    const { cycle, start } = plan.locate(e);
+    const drink = plan.drink(cycle);
+    return { start, segs: tripSegs(ctx, drink, 0, plan.dwellMs(cycle), plan.cooldownMs(cycle)) };
+  };
+  return withResume(
+    ctx,
+    {
+      at: (e) => {
+        const c = cycleOf(e);
+        return sampleSegs(c.segs, e - c.start);
+      },
+      next: (e) => {
+        const c = cycleOf(e);
+        const n = nextOfSegs(c.segs, e - c.start);
+        return n === null ? null : c.start + n;
+      },
+    },
+    resumed,
+  );
+}
+
+const rel = (at: number | null, since: number) => (at === null ? null : at - since);
 
 /**
  * An idle top-level agent's coffee trip, deterministic from the time idle began (`idleSince`):
- * sits IDLE_BEFORE_TRIP_MS, walks to its coffee spot, stays COFFEE_DWELL_MS with the mug, walks
- * back and sits idle. `resumedAt` is when it stopped being idle (new work), null while idle.
+ * sits IDLE_BEFORE_TRIP_MS, walks to its coffee or water spot (pickDrink), stays COFFEE_DWELL_MS
+ * with the mug or cup, walks back and sits idle. `resumedAt` is when it stopped being idle (new work), null while idle.
  */
 export function idleTrip(
   ctx: TripCtx,
@@ -344,13 +445,25 @@ export function idleTrip(
   resumedAt: number | null,
   now: number,
 ): TripSample {
-  const segs = tripSegs(ctx, IDLE_BEFORE_TRIP_MS, COFFEE_DWELL_MS);
-  return tripAt(ctx, segs, now - idleSince, resumedAt === null ? null : resumedAt - idleSince);
+  return idleTrack(ctx, idleSince, rel(resumedAt, idleSince)).at(now - idleSince);
+}
+
+/** The epoch ms at which an idle trip next moves or changes phase (`now` while walking), null if never. */
+export function idleTripNext(
+  ctx: TripCtx,
+  idleSince: number,
+  resumedAt: number | null,
+  now: number,
+): number | null {
+  const n = idleTrack(ctx, idleSince, rel(resumedAt, idleSince)).next(now - idleSince);
+  return n === null ? null : n + idleSince;
 }
 
 /**
- * A parent waiting on subagents: walks to the coffee station at once, stays there while the
- * wait lasts, walks back when it ends (`resumedAt`, null while waiting).
+ * A parent waiting on subagents, from the start of the wait (`waitSince`): walks to a drink
+ * station (coffee or water, picked per cycle) at once, stays a planned 5 to 20 s (breaks.ts), walks back, sits a planned 20 to 60 s,
+ * and repeats while the wait lasts. `resumedAt` is when the wait ended (null while waiting): it
+ * then walks straight back from wherever it is and stays seated.
  */
 export function waitTrip(
   ctx: TripCtx,
@@ -358,7 +471,27 @@ export function waitTrip(
   resumedAt: number | null,
   now: number,
 ): TripSample {
-  const segs = tripSegs(ctx, 0, Infinity);
-  const resumed = resumedAt === null ? null : resumedAt - waitSince;
-  return tripAt(ctx, segs, now - waitSince, resumed);
+  return waitTrack(ctx, rel(resumedAt, waitSince)).at(now - waitSince);
+}
+
+/** The epoch ms at which a waiting parent next moves or changes phase (`now` while walking), null if never. */
+export function waitTripNext(
+  ctx: TripCtx,
+  waitSince: number,
+  resumedAt: number | null,
+  now: number,
+): number | null {
+  const n = waitTrack(ctx, rel(resumedAt, waitSince)).next(now - waitSince);
+  return n === null ? null : n + waitSince;
+}
+
+/** The drink of the idle trip that began at `idleSince` (debug hook; the trip's own pick). */
+export function idleTripDrink(ctx: TripCtx, idleSince: number): Drink {
+  return pickDrink(ctx.seed ?? "", idleSince);
+}
+
+/** The drink of the waiting parent's break at `now` (debug hook; the plan's cycle at that time). */
+export function waitTripDrink(ctx: TripCtx, waitSince: number, now: number): Drink {
+  const plan = waitPlan(ctx);
+  return plan.drink(plan.locate(now - waitSince).cycle);
 }

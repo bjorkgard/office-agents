@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import { COFFEE_DWELL_MS, IDLE_BEFORE_TRIP_MS, RETURN_CAP_MS, WALK_SPEED } from "./choreo";
+import { breakPlan, pickDrink } from "./breaks";
 import { layoutOffice } from "./iso";
 import { agentKey, type Agent } from "./machine";
 import {
   frameZ,
   legacyPose,
+  overlayCalc,
   overlayFoot,
   overlayPoints,
   planMotion,
   runLoop,
+  TORSO,
   updateTrips,
   type Drive,
   type Frame,
@@ -198,6 +201,23 @@ describe("coffee trips", () => {
     expect(later.get(agentKey("s1", null))!.resumedAt).toBe(NOW + 4000);
   });
 
+  it("keeps a resumed waiting parent's drink fixed from the moment it resumed", () => {
+    const parent = agent("s1", null, { state: "waiting-on-subagents" });
+    const others = [parent, agent("s2", null)];
+    const m0 = planMotion(input(others, seats, { now: NOW }));
+    const resumeAt = NOW + 70_000;
+    const back = agent("s1", null);
+    const m1 = planMotion(
+      input([back, agent("s2", null)], seats, { prevTrips: m0.trips, now: resumeAt }),
+    );
+    expect(m1.trips.get(back.key)!.resumedAt).toBe(resumeAt);
+    const drive = m1.drives.get(back.key)!;
+    const drink = drive.frame(resumeAt).drink;
+    expect(drink).toBeDefined();
+    for (let t = resumeAt; t < resumeAt + 3_600_000; t += 7000)
+      expect(drive.frame(t).drink, `t+${t - resumeAt}`).toBe(drink);
+  });
+
   it("an attention agent on a coffee break is back in its seat within a second", () => {
     const idle = idleAgent("s1", NOW);
     const m0 = planMotion(input([idle, agent("s2", null)], seats, { now: NOW }));
@@ -229,12 +249,136 @@ describe("coffee trips", () => {
     expect(drive.settled(end)).toBe(true);
   });
 
-  it("a waiting parent stays at the coffee station without moving until it resumes", () => {
+  it("fetches water from the water spot with the cup, coffee from the coffee spot with the mug", () => {
+    const key = agentKey("s1", null);
+    const since = (drink: "coffee" | "water") => {
+      for (let t = NOW; t < NOW + 5000; t++) if (pickDrink(key, t) === drink) return t;
+      throw new Error(`no idle start within 5000 ms of NOW picks ${drink}`);
+    };
+    for (const drink of ["coffee", "water"] as const) {
+      const t0 = since(drink);
+      const idle = idleAgent("s1", t0);
+      const others = [idle, agent("s2", null)];
+      const m = planMotion(input(others, seats, { now: t0 }));
+      const drive = m.drives.get(idle.key)!;
+      const g = input(others, seats).geo;
+      const n = m.trips.get(idle.key)!.spot;
+      const spot = drink === "water" ? g.waterSpot(n) : g.coffeeSpot(n);
+      const seat = stand(g.seat(0));
+      const walk = (Math.hypot(seat.x - spot.x, seat.y - spot.y) / WALK_SPEED) * 1000;
+      const f = drive.frame(t0 + IDLE_BEFORE_TRIP_MS + walk + 50);
+      expect(f.pose).toBe(drink === "water" ? "standing-cup" : "standing-mug");
+      expect(Math.hypot(f.x - spot.x, f.y - spot.y)).toBeLessThan(1e-6);
+      // same clock as before: the dwell ends COFFEE_DWELL_MS after arrival
+      expect(drive.nextChange(t0 + IDLE_BEFORE_TRIP_MS + walk + 50)).toBe(
+        t0 + IDLE_BEFORE_TRIP_MS + walk + COFFEE_DWELL_MS,
+      );
+    }
+  });
+
+  describe("a waiting parent's breaks", () => {
     const parent = agent("s1", null, { state: "waiting-on-subagents" });
-    const m = planMotion(input([parent, agent("s2", null)], seats, { now: NOW }));
+    const others = [parent, agent("s2", null)];
+    const m = planMotion(input(others, seats, { now: NOW }));
     const drive = m.drives.get(parent.key)!;
-    expect(drive.settled(NOW + 60_000)).toBe(true);
-    expect(drive.frame(NOW + 60_000).pose).toBe("standing-mug");
+    const trip = m.trips.get(parent.key)!;
+    const seat = stand(input(others, seats).geo.seat(0));
+    const cup = input(others, seats).geo.coffeeSpot(trip.spot);
+    const walk = (Math.hypot(seat.x - cup.x, seat.y - cup.y) / WALK_SPEED) * 1000;
+    const wspot = input(others, seats).geo.waterSpot(trip.spot);
+    const waterWalk = (Math.hypot(seat.x - wspot.x, seat.y - wspot.y) / WALK_SPEED) * 1000;
+    const plan = breakPlan(parent.key, walk, waterWalk);
+    const at = (c: number, off: number) => NOW + plan.start(c) + off;
+    // Each cycle picks its drink and is timed with that drink's own walk.
+    const water = (c: number) => pickDrink(parent.key, c) === "water";
+    const walkOf = (c: number) => {
+      const to = water(c) ? input(others, seats).geo.waterSpot(trip.spot) : cup;
+      return (Math.hypot(seat.x - to.x, seat.y - to.y) / WALK_SPEED) * 1000;
+    };
+    const poseOf = (c: number) => (water(c) ? "standing-cup" : "standing-mug");
+
+    it("is at the station at once, seated after the dwell, away again after the cooldown", () => {
+      expect(drive.frame(NOW + walkOf(0) + 50).pose).toBe(poseOf(0));
+      expect(drive.settled(NOW + walkOf(0) + 50)).toBe(true);
+      const back = at(0, 2 * walkOf(0) + plan.dwellMs(0) + 10);
+      expect(drive.frame(back).rest).toBe(true);
+      expect(drive.settled(back)).toBe(true);
+      for (const c of [1, 2]) {
+        expect(drive.frame(at(c, -1)).rest).toBe(true);
+        expect(drive.frame(at(c, 1)).pose).toBe("walking");
+        expect(drive.settled(at(c, 1))).toBe(false);
+        expect(drive.frame(at(c, walkOf(c) + 10)).pose).toBe(poseOf(c));
+      }
+    });
+
+    it("says when it next changes, and never while a wait lasts is it null", () => {
+      expect(drive.nextChange(NOW + walkOf(0) + 50)).toBe(at(0, walkOf(0) + plan.dwellMs(0)));
+      const cool = at(0, 2 * walkOf(0) + plan.dwellMs(0) + 10);
+      expect(drive.nextChange(cool)).toBe(at(1, 0));
+      expect(drive.nextChange(NOW + 100)).toBe(NOW + 100);
+    });
+
+    it("is back within the cap when the wait ends, and then never changes", () => {
+      const r = at(0, walk + 2000);
+      const m1 = planMotion(
+        input([agent("s1", null), agent("s2", null)], seats, { prevTrips: m.trips, now: r }),
+      );
+      const d = m1.drives.get(parent.key)!;
+      expect(d.frame(r + RETURN_CAP_MS + 1).rest).toBe(true);
+      expect(d.settled(r + RETURN_CAP_MS + 1)).toBe(true);
+      expect(d.nextChange(r + RETURN_CAP_MS + 1)).toBeNull();
+      expect(d.frame(r + 300_000).rest).toBe(true);
+    });
+  });
+
+  it("anchors a waiting parent's plan to its earliest open tool, so a reload keeps the plan", () => {
+    const tools = {
+      a: { startedAt: NOW - 50_000, isSubagent: true },
+      b: { startedAt: NOW - 9_000, isSubagent: true },
+    };
+    const wait = (over: Partial<Agent> = {}) =>
+      agent("s1", null, {
+        state: "waiting-on-subagents",
+        openTools: tools,
+        waitingOn: ["a", "b"],
+        ...over,
+      });
+    const t1 = updateTrips(new Map(), [wait()], seats, NOW);
+    expect(t1.get(agentKey("s1", null))).toMatchObject({ kind: "wait", since: NOW - 50_000 });
+    // a reload 70 s later sees the same anchor
+    const t2 = updateTrips(new Map(), [wait()], seats, NOW + 70_000);
+    expect(t2.get(agentKey("s1", null))!.since).toBe(NOW - 50_000);
+    // a start in the future is clamped to now; no open tool falls back to first sight
+    const future = { a: { startedAt: NOW + 9_000, isSubagent: true } };
+    expect(
+      updateTrips(new Map(), [wait({ openTools: future, waitingOn: ["a"] })], seats, NOW).get(
+        agentKey("s1", null),
+      )!.since,
+    ).toBe(NOW);
+    expect(
+      updateTrips(new Map(), [wait({ openTools: {}, waitingOn: [] })], seats, NOW).get(
+        agentKey("s1", null),
+      )!.since,
+    ).toBe(NOW);
+    // the drive at the same real time is the same plan whenever it is built
+    const frameAt = (builtAt: number) => {
+      const p = wait();
+      const mm = planMotion(input([p, agent("s2", null)], seats, { now: builtAt }));
+      return mm.drives.get(p.key)!.frame(NOW + 12_345);
+    };
+    expect(frameAt(NOW)).toEqual(frameAt(NOW + 5_000));
+  });
+
+  it("gives a waiting parent no break past the last coffee spot", () => {
+    const many = Array.from({ length: COFFEE_SPOTS + 2 }, (_, i) => `w${i}`);
+    const seatsMany = Object.fromEntries(many.map((id, i) => [id, i]));
+    const t = updateTrips(
+      new Map(),
+      many.map((id) => agent(id, null, { state: "waiting-on-subagents" })),
+      seatsMany,
+      NOW,
+    );
+    expect(t.size).toBe(COFFEE_SPOTS);
   });
 });
 
@@ -259,23 +403,84 @@ describe("overlay follows the foot point", () => {
   });
 
   it("puts the hit and tag around the torso at any scale, moving with the foot", () => {
-    const a = overlayPoints({ x: 100, y: 200 }, 1, 44);
-    const b = overlayPoints({ x: 130, y: 210 }, 1, 44);
+    const a = overlayPoints({ x: 100, y: 200 }, { scale: 1, x: 0, y: 0 }, 44);
+    const b = overlayPoints({ x: 130, y: 210 }, { scale: 1, x: 0, y: 0 }, 44);
     expect(b.hit.left - a.hit.left).toBe(30);
     expect(b.hit.top - a.hit.top).toBe(10);
     expect(b.tag.left - a.tag.left).toBe(30);
-    expect(overlayPoints({ x: 100, y: 200 }, 2, 44).hit.left).toBe(200);
+    expect(overlayPoints({ x: 100, y: 200 }, { scale: 2, x: 0, y: 0 }, 44).hit.left).toBe(200);
   });
 
   it("keeps seated hit centers at least 24px apart between neighbouring desks", () => {
     const layout = layoutOffice(4, view);
     const g = geometryFor(layout);
-    const centers = [0, 1, 2, 3].map((i) => overlayPoints(g.seat(i), layout.scale, 24).hit);
+    const centers = [0, 1, 2, 3].map((i) => overlayPoints(g.seat(i), layout.fit, 24).hit);
     for (let i = 0; i < 4; i++)
       for (let j = i + 1; j < 4; j++)
         expect(
           Math.hypot(centers[i].left - centers[j].left, centers[i].top - centers[j].top),
         ).toBeGreaterThanOrEqual(24);
+  });
+});
+
+describe("overlay fit (eng D4: equal to the pre-fit overlay at fit offset 0)", () => {
+  // The formula as it was before the fit: screen px from room px and a bare scale.
+  const old = (foot: { x: number; y: number }, scale: number, hit: number) => {
+    const left = foot.x * scale;
+    const top = (foot.y - TORSO) * scale;
+    return { hit: { left, top }, tag: { left, top: top + hit / 2 + 4 } };
+  };
+  const feet = [-310.25, -12, 0, 7.5, 133.333, 640.9, 1500];
+  const scales = [0.5, 0.5137, 0.75, 1, 1.5];
+  const hits = [24, 30.5, 44];
+
+  it("evaluates to the old numbers within 0.01px for many feet, scales and hit sizes", () => {
+    let n = 0;
+    for (const x of feet)
+      for (const y of feet)
+        for (const scale of scales)
+          for (const hit of hits) {
+            const a = overlayPoints({ x, y }, { scale, x: 0, y: 0 }, hit);
+            const b = old({ x, y }, scale, hit);
+            for (const part of ["hit", "tag"] as const)
+              for (const axis of ["left", "top"] as const) {
+                expect(Math.abs(a[part][axis] - b[part][axis])).toBeLessThan(0.01);
+                n++;
+              }
+          }
+    expect(n).toBe(feet.length ** 2 * scales.length * hits.length * 4);
+  });
+
+  it("adds the fit offset after scaling, on each axis", () => {
+    const a = overlayPoints({ x: 100, y: 200 }, { scale: 0.5, x: 30, y: -12 }, 44);
+    const b = old({ x: 100, y: 200 }, 0.5, 44);
+    expect(a.hit.left - b.hit.left).toBeCloseTo(30);
+    expect(a.hit.top - b.hit.top).toBeCloseTo(-12);
+    expect(a.tag.top - b.tag.top).toBeCloseTo(-12);
+  });
+
+  // Evaluates a calc() string the way the browser does, from the overlay's fit vars.
+  const evalCalc = (s: string, fit: { scale: number; x: number; y: number }) => {
+    const m =
+      /^calc\(var\(--fit-s\) \* (-?[\d.e-]+)px \+ var\(--fit-([xy])\)(?: \+ (-?[\d.e-]+)px)?\)$/.exec(
+        s,
+      );
+    expect(m, s).not.toBeNull();
+    return fit.scale * Number(m![1]) + fit[m![2] as "x" | "y"] + Number(m![3] ?? 0);
+  };
+
+  it("writes calc() strings in the fit vars that evaluate to the same points", () => {
+    const fit = { scale: 0.5137, x: 41.5, y: -8.25 };
+    for (const x of feet)
+      for (const y of feet)
+        for (const hit of hits) {
+          const c = overlayCalc({ x, y }, hit);
+          const n = overlayPoints({ x, y }, fit, hit);
+          expect(evalCalc(c.hit.left, fit)).toBeCloseTo(n.hit.left, 6);
+          expect(evalCalc(c.hit.top, fit)).toBeCloseTo(n.hit.top, 6);
+          expect(evalCalc(c.tag.left, fit)).toBeCloseTo(n.tag.left, 6);
+          expect(evalCalc(c.tag.top, fit)).toBeCloseTo(n.tag.top, 6);
+        }
   });
 });
 
@@ -472,22 +677,37 @@ describe("coffee spots", () => {
 });
 
 describe("runLoop", () => {
+  type Timer = { id: number; cb: () => void; ms: number };
   const sched = () => {
-    const calls = { raf: 0, caf: [] as number[] };
+    const calls = { raf: 0, caf: [] as number[], cleared: [] as number[] };
+    const frames: (() => void)[] = [];
+    const timers: Timer[] = [];
+    let nextTimer = 0;
     return {
       calls,
+      frames,
+      timers,
       raf: (cb: () => void) => {
         calls.raf++;
-        void cb;
+        frames.push(cb);
         return calls.raf;
       },
       caf: (id: number) => calls.caf.push(id),
+      setTimeout: (cb: () => void, ms: number) => {
+        const id = ++nextTimer;
+        timers.push({ id, cb, ms });
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimeout: (id: ReturnType<typeof setTimeout>) => {
+        calls.cleared.push(id as unknown as number);
+      },
     };
   };
-  const drive = (settledAt: number): Drive => ({
+  const drive = (settledAt: number, next: (t: number) => number | null = () => null): Drive => ({
     deskZ: null,
     frame: () => ({}) as Frame,
     settled: (t) => t >= settledAt,
+    nextChange: next,
   });
 
   it("schedules another frame only while the drive is not settled", () => {
@@ -509,29 +729,93 @@ describe("runLoop", () => {
       s2,
     );
     expect(s2.calls.raf).toBe(0);
+    expect(s2.timers).toHaveLength(0);
   });
 
   it("stops scheduling once the drive settles and cancels the pending frame on cleanup", () => {
     const s = sched();
     let now = 0;
-    const cbs: (() => void)[] = [];
     const stop = runLoop(
       drive(100),
       () => now,
       () => {},
-      {
-        raf: (cb) => {
-          cbs.push(cb);
-          return s.raf(cb);
-        },
-        caf: s.caf,
-      },
+      s,
     );
     now = 120;
-    cbs.pop()!();
-    expect(cbs).toHaveLength(0);
+    s.frames.pop()!();
+    expect(s.frames).toHaveLength(0);
     expect(s.calls.raf).toBe(1);
     stop();
+    expect(s.calls.caf).toHaveLength(1);
+  });
+
+  it("arms a timer at nextChange when settled, restarts the frame loop when it fires", () => {
+    const s = sched();
+    let now = 1000;
+    const seen: number[] = [];
+    // settled until 5000, then it moves until 6000
+    const d: Drive = {
+      deskZ: null,
+      frame: () => ({}) as Frame,
+      settled: (t) => t < 5000 || t >= 6000,
+      nextChange: (t) => (t < 5000 ? 5000 : null),
+    };
+    runLoop(
+      d,
+      () => now,
+      (t) => seen.push(t),
+      s,
+    );
+    expect(s.calls.raf).toBe(0);
+    expect(s.timers).toHaveLength(1);
+    expect(s.timers[0].ms).toBe(4001);
+    now = 5001;
+    s.timers[0].cb();
+    expect(seen).toEqual([1000, 5001]);
+    expect(s.calls.raf).toBe(1);
+    now = 6100;
+    s.frames.pop()!();
+    expect(s.timers).toHaveLength(1);
+    expect(s.calls.raf).toBe(1);
+  });
+
+  it("re-arms for the remainder when the timer fires early", () => {
+    const s = sched();
+    let now = 0;
+    runLoop(
+      drive(0, (t) => (t < 1000 ? 1000 : null)),
+      () => now,
+      () => {},
+      s,
+    );
+    now = 990;
+    s.timers[0].cb();
+    expect(s.timers).toHaveLength(2);
+    expect(s.timers[1].ms).toBe(11);
+  });
+
+  it("never re-arms in a tight loop when nextChange is not in the future", () => {
+    const s = sched();
+    runLoop(
+      drive(0, (t) => t - 500),
+      () => 1000,
+      () => {},
+      s,
+    );
+    expect(s.timers).toHaveLength(1);
+    expect(s.timers[0].ms).toBeGreaterThanOrEqual(16);
+  });
+
+  it("cleanup cancels both the timer and the frame", () => {
+    const s = sched();
+    const stop = runLoop(
+      drive(0, () => 9000),
+      () => 0,
+      () => {},
+      s,
+    );
+    stop();
+    expect(s.calls.cleared).toEqual([1]);
     expect(s.calls.caf).toHaveLength(1);
   });
 });

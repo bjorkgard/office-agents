@@ -1,6 +1,7 @@
+/* A stable full-width box: the fit (centering and top offset included) lives in the layers. */
 .scene {
   position: relative;
-  margin: 0 auto;
+  width: 100%;
 }
 
 .scene:focus {
@@ -12,6 +13,10 @@
   left: 0;
   top: 0;
   transform-origin: 0 0;
+  /* The one camera move: the fit eases on any fit change (a row change or a window resize), a plain
+     transform ease (no custom property is animated here, so the room's elements are not restyled
+     per frame). */
+  transition: transform var(--dur-base) var(--ease);
 }
 
 .scene-scaled > * {
@@ -25,6 +30,30 @@
   font-family: var(--font);
   font-size: var(--size-tag);
   line-height: var(--line);
+  /* Overlay positions are calc(var(--fit-s) * room px + var(--fit-x)); these ease with the
+     same fit. Where @property is unsupported the vars just snap and positions stay right. */
+  transition:
+    --fit-s var(--dur-base) var(--ease),
+    --fit-x var(--dur-base) var(--ease),
+    --fit-y var(--dur-base) var(--ease);
+}
+
+@property --fit-s {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+@property --fit-x {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --fit-y {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
 }
 
 .agent {
@@ -148,8 +177,50 @@
   }
 }
 
-.paper-glow {
+@keyframes desk-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+.desk-pop {
+  animation: desk-pop var(--dur-base) var(--ease) both;
+}
+
+.desk-device {
+  position: absolute;
+}
+
+.paper-desk {
+  position: absolute;
   animation: fade-in var(--dur-slow) var(--ease) both;
+}
+
+.paper-desk[data-fading] {
+  animation: fade-out var(--dur-slow) var(--ease) forwards;
+}
+
+.screen-overlay {
+  position: absolute;
+  overflow: hidden;
+  transform-origin: 0 0;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.screen-live {
+  opacity: 1;
+}
+
+.screen-live .screen-pattern {
+  animation: screen-scroll 2.4s steps(4) infinite;
+}
+
+@keyframes screen-scroll {
+  to {
+    transform: translateY(calc(-1 * var(--screen-period)));
+  }
 }
 
 .sway {
@@ -161,14 +232,50 @@
   animation: steam 3s ease-in-out infinite;
 }
 
+/* Bubbles rising in the dispenser's jug, in whole 2 px cell steps. */
+.gurgle {
+  position: absolute;
+  animation: gurgle 2.4s steps(4) infinite;
+}
+
+/* Window weather and clouds, in whole 2 px cells: each loop moves its layer inside the window's
+   cell grid (SVG user units are cells), 2 cells a step, no faster than one step per 450 ms (rain
+   450 ms, snow 1 s, clouds 8 s). Rain and snow fall straight down; clouds
+   drift one tile along the wall slope (2 cells across, 1 row up or down a step). Off, and rain
+   and snow hidden, under reduced motion. */
+.win-rain {
+  animation: win-rain 2.7s steps(6) infinite;
+}
+
+.win-snow {
+  animation: win-snow 8s steps(8) infinite;
+}
+
+.win-cloud-right {
+  animation: win-cloud-right 120s steps(15) infinite;
+}
+
+.win-cloud-left {
+  animation: win-cloud-left 120s steps(15) infinite;
+}
+
+.clock-second {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Sheared onto the right wall like the face (WALL_SKEW 160/296). */
+  transform: skewY(28.4deg);
+  transform-origin: 12px 18px;
+}
+
 .clock-hand {
   position: absolute;
   left: 10px;
-  top: 4px;
-  width: 2px;
+  top: 12px;
+  width: 4px;
   height: 6px;
   background: var(--outline);
-  transform-origin: 1px 6px;
+  transform-origin: 2px 6px;
   animation: tick 60s steps(60) infinite;
 }
 
@@ -189,6 +296,41 @@
   to {
     opacity: 0;
     transform: translateY(-8px);
+  }
+}
+
+@keyframes gurgle {
+  from {
+    opacity: 1;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes win-rain {
+  to {
+    transform: translateY(12px);
+  }
+}
+
+@keyframes win-snow {
+  to {
+    transform: translateY(16px);
+  }
+}
+
+@keyframes win-cloud-right {
+  to {
+    transform: translate(30px, 15px);
+  }
+}
+
+@keyframes win-cloud-left {
+  to {
+    transform: translate(30px, -15px);
   }
 }
 
@@ -268,6 +410,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .scene-scaled,
+  .scene-overlay {
+    transition: none;
+  }
+
   .agent {
     transition: none;
   }
@@ -284,6 +431,19 @@
     animation: none;
   }
 
+  .screen-live .screen-pattern {
+    animation: none;
+  }
+
+  .desk-pop {
+    animation: none;
+  }
+
+  .paper-desk,
+  .paper-desk[data-fading] {
+    animation-duration: var(--dur-slow);
+  }
+
   .rig [data-part="walk-a"],
   .rig [data-part="walk-b"] {
     animation: none;
@@ -298,11 +458,29 @@
     opacity: 0;
   }
 
+  .gurgle {
+    animation: none;
+    opacity: 0;
+  }
+
   .sway {
     animation: none;
   }
 
   .clock-hand {
     animation: none;
+    display: none;
+  }
+
+  .win-rain,
+  .win-snow,
+  .win-cloud-right,
+  .win-cloud-left {
+    animation: none;
+  }
+
+  .win-rain,
+  .win-snow {
+    display: none;
   }
 }

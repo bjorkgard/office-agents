@@ -1,10 +1,35 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import { layoutOffice } from "./iso";
 import { agentKey, type Agent, type OfficeState } from "./machine";
 import { Scene } from "./Scene";
 import { roomShell, wallPropRect } from "./room";
+import { DESK_CAP } from "../../shared/tuning";
+import { DeskLayer, SCREEN_BAND_CELLS } from "./DeskLayer";
+import { geometryFor } from "./scene-model";
+import { DESK_KINDS } from "./desk-kinds";
+import { CELL } from "./pixel";
+import { propSize } from "./props";
+import { deviceFor } from "./devices";
 import { QUEUE_VISIBLE, TAG_H, tagWidth } from "./scene-model";
+import {
+  CLOUD_PERIOD,
+  RAIN_PERIOD,
+  SNOW_PERIOD,
+  WINDOW_SCENE_IDS,
+  sceneFor,
+  setSceneOverride,
+  windowScene,
+} from "./decor";
+import { ART, GLASS } from "./palette";
+
+// Vitest blanks css imports (even ?raw) and the app tsconfig has no node types, so read the file
+// through the runtime's own fs.
+// @ts-expect-error node:fs has no types in the app project
+const { readFileSync } = (await import("node:fs")) as {
+  readFileSync: (url: URL, enc: string) => string;
+};
+const css = readFileSync(new URL("./scene.css", import.meta.url), "utf8");
 
 function agent(sessionId: string, agentId: string | null, over: Partial<Agent> = {}): Agent {
   return {
@@ -98,6 +123,10 @@ describe("Scene", () => {
     // Every row draws all four desks, seated or not.
     expect(html.match(/<use /g)).toHaveLength(4);
     expect(html.match(/data-desk=/g)).toHaveLength(4);
+    // Two kinds, each lit and dim: four symbols; each desk uses its kind's by index.
+    expect(html.match(/<g id="desk-/g)).toHaveLength(4);
+    const uses = [...html.matchAll(/href="#desk-(tidy|cluttered)-(?:lit|dim)"/g)].map((m) => m[1]);
+    expect(uses).toEqual(["tidy", "cluttered", "tidy", "cluttered"]);
   });
 
   it("names each hit area with first name, project and state, waiting agents first", () => {
@@ -109,10 +138,27 @@ describe("Scene", () => {
   });
 
   it("shows +N on the parent's tag for subagents queued past its two slots", () => {
-    const kids = ["a", "b", "c"].map((id, i) => agent("s1", id, { arrivedAt: i }));
+    // Rows grow for subagents up to DESK_CAP: 20 desks are free, so 23 subagents leave 3 over.
+    const kids = Array.from({ length: 23 }, (_, i) => agent("s1", `k${i}`, { arrivedAt: i }));
     const others = ["s2", "s3", "s4"].map((id) => agent(id, null));
     const html = render([agent("s1", null), ...others, ...kids], { s1: 0, s2: 1, s3: 2, s4: 3 });
     expect(html).toContain("+1");
+  });
+
+  it("seats every subagent when a departed session still holds a seat (rows grow past it)", () => {
+    // Seats {A: 0, B: 1}, B has left: A and 3 subagents need desks 0, 2, 3, 4 -> two rows.
+    const kids = [0, 1, 2].map((i) => agent("A", `k${i}`, { arrivedAt: i }));
+    const html = render(
+      [agent("A", null), ...kids],
+      { A: 0, B: 1 },
+      null,
+      undefined,
+      () => 120_000,
+    );
+    // Someone sits at four desks: the parent on the monitor, the three subagents on devices.
+    expect(html.match(/data-screen="live"/g)).toHaveLength(1);
+    expect(html.match(/data-device=/g)).toHaveLength(3);
+    expect(html.match(/data-desk=/g)).toHaveLength(8);
   });
 
   it("throws a machine failure so the ErrorBoundary can catch it", () => {
@@ -125,7 +171,7 @@ describe("Scene choreography", () => {
   const cast = [agent("s1", null), agent("s2", null), agent("s1", "k", { arrivedAt: 1000 })];
   const seats = { s1: 0, s2: 2 };
   const hitLeft = (html: string) =>
-    [...html.matchAll(/class="hit"[^>]*style="left:(-?[\d.]+)px/g)].map((m) => Number(m[1]));
+    [...html.matchAll(/class="hit"[^>]*style="left:([^;"]+)/g)].map((m) => m[1]);
 
   it("walks a fresh subagent from the door instead of standing it at a slot", () => {
     const html = render(cast, seats, null, undefined, () => 1100);
@@ -159,8 +205,9 @@ describe("Scene choreography", () => {
 describe("Scene ambient life", () => {
   it("places the clock, steam and swaying plants without touching agent state", () => {
     const empty = render([], {});
-    for (const name of ["CLOCK", "STEAM", "PLANT_TALL", "PLANT_BUSH"])
+    for (const name of ["CLOCK", "STEAM", "PLANT_TALL", "PLANT_BUSH", "DISPENSER", "GURGLE"])
       expect(empty).toContain(`data-prop="${name}"`);
+    expect(empty).toContain("gurgle");
     expect(empty).toContain("clock-hand");
     expect(empty).toContain("sway");
     const html = render([agent("s1", null)], { s1: 0 });
@@ -174,19 +221,45 @@ const px = (style: string, prop: string) =>
 const wrapperStyle = (html: string, prop: string) =>
   new RegExp(`<div[^>]*style="([^"]*)"[^>]*><svg[^>]*data-prop="${prop}"`).exec(html)![1];
 
+describe("Scene wall clock", () => {
+  const delay = (html: string) =>
+    /class="clock-hand" style="animation-delay:([^"]*)"/.exec(html)![1];
+  const at = (second: number) => new Date(2026, 5, 1, 12, 0, second).getTime();
+
+  it("starts the second hand at the injected clock's second, not Date.now", () => {
+    expect(delay(render([], {}, null, undefined, () => at(30)))).toBe("-30s");
+    expect(delay(render([], {}, null, undefined, () => at(6)))).toBe("-6s");
+    expect(delay(render([], {}, null, undefined, () => at(0)))).toBe("0s");
+  });
+});
+
+describe("Scene bush plant", () => {
+  it("stands at the shell's bush spot, clear of the dispenser and coffee spots", () => {
+    const shell = roomShell(layoutOffice(1, { width: 1200, height: 800 }));
+    const style = wrapperStyle(render([agent("s1", null)], { s1: 0 }), "PLANT_BUSH");
+    const { width, height } = propSize("PLANT_BUSH");
+    expect(px(style, "left")).toBeCloseTo(shell.plantBush.x - width / 2);
+    expect(px(style, "top")).toBeCloseTo(shell.plantBush.y - height);
+    expect(shell.plantBush.x).toBeLessThan(shell.coffee.x);
+  });
+});
+
 describe("Scene wall props", () => {
   const html = render([agent("s1", null)], { s1: 0 });
   const shell = roomShell(layoutOffice(1, { width: 1200, height: 800 }));
 
-  it("draws the door, coffee station and clock without skew", () => {
-    for (const name of ["DOOR", "COFFEE_STATION", "CLOCK"])
+  it("draws the door and coffee station without skew, the clock hands skewed onto the wall", () => {
+    for (const name of ["DOOR", "COFFEE_STATION", "DISPENSER", "CLOCK"])
       expect(wrapperStyle(html, name)).not.toMatch(/skew|transform/);
+    const hands = /<svg[^>]*viewBox="0 0 12 18"[^>]*>(.*?)<\/svg>/.exec(html)![1];
+    expect(hands).toMatch(/<rect[^>]*fill="var\(--outline\)"/);
   });
 
-  it("puts the door and coffee station where their base meets the wall", () => {
+  it("puts the door, coffee station and dispenser where their base meets the wall", () => {
     for (const [name, at] of [
       ["DOOR", shell.door],
       ["COFFEE_STATION", shell.coffee],
+      ["DISPENSER", shell.dispenser],
     ] as const) {
       const r = wallPropRect(name, at);
       const style = wrapperStyle(html, name);
@@ -215,9 +288,17 @@ describe("Scene waving crowd", () => {
   const crowd = Array.from({ length: 24 }, (_, i) => waving(`s${i}`, i * 1000));
   const seats = Object.fromEntries(crowd.map((a, i) => [a.sessionId, i]));
   const html = render(crowd, seats, null, view);
-  const num = (s: string, p: string) => Number(new RegExp(`${p}:(-?[\\d.]+)px`).exec(s)![1]);
+  const fit = layoutOffice(24, view).fit;
+  // Bubbles are plain screen px at the final fit; tags are calc() in the fit vars, evaluated here.
+  const num = (s: string, p: string) => {
+    const calc = new RegExp(
+      `(?:^|;)${p}:calc\\(var\\(--fit-s\\) \\* (-?[\\d.e-]+)px \\+ var\\(--fit-([xy])\\)(?: \\+ (-?[\\d.e-]+)px)?\\)`,
+    ).exec(s);
+    if (!calc) return Number(new RegExp(`(?:^|;)${p}:(-?[\\d.]+)px`).exec(s)![1]);
+    return fit.scale * Number(calc[1]) + fit[calc[2] as "x" | "y"] + Number(calc[3] ?? 0);
+  };
   const bubbles = [...html.matchAll(/data-bubble="([^"]+)"([^>]*)style="([^"]*)"/g)].map((m) => ({
-    id: m[1],
+    id: m[1].slice(0, -1),
     hidden: m[2].includes("data-hidden"),
     x: num(m[3], "left"),
     y: num(m[3], "top"),
@@ -241,6 +322,15 @@ describe("Scene waving crowd", () => {
         expect(b.x < t.x + t.width && t.x < b.x + 112 && b.y < t.y + TAG_H && t.y < b.y + 32).toBe(
           false,
         );
+  });
+
+  it("places every bubble with calc() in the fit vars, so it eases with its agent", () => {
+    const styles = [...html.matchAll(/data-bubble="[^"]+"[^>]*style="([^"]*)"/g)].map((m) => m[1]);
+    expect(styles).toHaveLength(24);
+    for (const st of styles) {
+      expect(st).toMatch(/(?:^|;)left:calc\(var\(--fit-s\) \* -?[\d.e-]+px \+ var\(--fit-x\)/);
+      expect(st).toMatch(/(?:^|;)top:calc\(var\(--fit-s\) \* -?[\d.e-]+px \+ var\(--fit-y\)/);
+    }
   });
 
   it("hides some bubbles rather than stack them on neighbours", () => {
@@ -312,5 +402,628 @@ describe("Scene focus container", () => {
     const html = render([agent("s1", null)], { s1: 0 });
     expect(html).toMatch(/<div[^>]*data-testid="scene"[^>]*tabindex="-1"/);
     expect(html).toMatch(/<div[^>]*data-testid="scene"[^>]*aria-label="Office"/);
+  });
+});
+
+describe("Scene screens", () => {
+  const overlays = (html: string) => html.match(/data-screen-overlay/g) ?? [];
+  const screens = (html: string) => [...html.matchAll(/data-desk="\d+"[^>]*data-screen="(\w+)"/g)];
+  const waiting = (id: string) => agent(id, null, { state: "waiting-on-subagents" });
+
+  it("draws one overlay per working or waiting desk, and none on an empty office", () => {
+    expect(overlays(render([], {}))).toHaveLength(0);
+    const html = render(
+      [agent("s1", null), waiting("s2"), agent("s3", null, { state: "idle" }), waving("s4", 0)],
+      { s1: 0, s2: 1, s3: 2, s4: 3 },
+    );
+    expect(overlays(html)).toHaveLength(2);
+    expect(html.match(/class="screen-pattern"/g)).toHaveLength(2);
+  });
+
+  it("marks each desk with its screen state", () => {
+    const html = render([agent("s1", null), waiting("s2"), agent("s3", null, { state: "idle" })], {
+      s1: 0,
+      s2: 1,
+      s3: 2,
+    });
+    expect(screens(html).map((m) => m[1])).toEqual(["live", "still", "off", "off"]);
+  });
+
+  it("gives arriving, leaving, idle and attention desks no overlay", () => {
+    for (const state of ["arriving", "leaving", "idle"] as const)
+      expect(overlays(render([agent("s1", null, { state })], { s1: 0 })), state).toHaveLength(0);
+    expect(overlays(render([waving("s1", 0)], { s1: 0 }))).toHaveLength(0);
+  });
+
+  it("animates only the live overlay", () => {
+    const live = render([agent("s1", null)], { s1: 0 });
+    const still = render([waiting("s1")], { s1: 0 });
+    expect(live).toMatch(/class="screen-overlay screen-live"/);
+    expect(still).toMatch(/class="screen-overlay"/);
+    expect(still).not.toContain("screen-live");
+  });
+
+  it("binds the scroll animation to the live pattern only", () => {
+    const rules = [...css.matchAll(/([^{}@]+)\{([^{}]*)\}/g)].map((m) => ({
+      selector: m[1].trim(),
+      body: m[2],
+    }));
+    const animated = rules.filter(
+      (r) => /animation[^;]*screen-scroll/.test(r.body) && !/animation:\s*none/.test(r.body),
+    );
+    expect(animated.length).toBeGreaterThan(0);
+    for (const r of animated) expect(r.selector).toContain(".screen-live");
+    for (const r of rules) {
+      if (/\.screen-(pattern|still|overlay)\b/.test(r.selector) && /animation/.test(r.body)) {
+        if (!/animation:\s*none/.test(r.body)) expect(r.selector).toContain(".screen-live");
+      }
+    }
+  });
+
+  it("makes the live overlay static under reduced motion", () => {
+    const block = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(block).toMatch(/\.screen-live \.screen-pattern\s*{[^}]*animation:\s*none/);
+  });
+
+  it("draws lines at least two cells thick", () => {
+    expect(SCREEN_BAND_CELLS).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Scene paper on the desk", () => {
+  const arriving = agent("s1", "a1", {
+    state: "arriving",
+    phase: "arriving",
+    arrivedAt: 1000,
+    parentAgentId: null,
+  });
+  const at = (ms: number) => () => ms;
+
+  it("lies at the paper slot of the parent's desk, never on the monitor", () => {
+    const html = render([agent("s1", null), arriving], { s1: 0 }, null, undefined, at(1010));
+    const slot = DESK_KINDS[0].paperSlot;
+    expect(html).toContain("data-paper");
+    expect(html).toContain(`left:${slot.x * CELL}px;top:${slot.y * CELL}px`);
+    expect(html).toContain('data-prop="PAPER_DESK"');
+    expect(html).not.toContain("left:40px;top:28px");
+    expect(html).not.toContain('data-prop="PAPER"');
+  });
+
+  it("is absent when no subagent hands over", () => {
+    expect(render([agent("s1", null)], { s1: 0 }, null, undefined, at(1010))).not.toContain(
+      "data-paper",
+    );
+  });
+
+  it("renders plain, then data-fading, then nothing as the subagent takes the sheet", () => {
+    const seen: string[] = [];
+    for (let ms = 1000; ms <= 5000; ms += 50) {
+      const html = render([agent("s1", null), arriving], { s1: 0 }, null, undefined, at(ms));
+      const m = html.match(/<[^>]*data-paper[^>]*>/)?.[0];
+      const kind = m === undefined ? "none" : m.includes("data-fading") ? "fading" : "plain";
+      if (seen[seen.length - 1] !== kind) seen.push(kind);
+    }
+    expect(seen).toEqual(["plain", "fading", "none"]);
+  });
+
+  it("has a fade-in and, under reduced motion, a --dur-slow fade rule", () => {
+    expect(css).toMatch(/\.paper-desk\s*{[^}]*animation:\s*fade-in var\(--dur-slow\)/);
+    const block = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+    expect(block).toMatch(/\.paper-desk[^{]*{[^}]*animation-duration:\s*var\(--dur-slow\)/);
+  });
+});
+
+describe("Scene rows on demand", () => {
+  const settled = () => 10 * 60_000;
+  const parents = (n: number) => Array.from({ length: n }, (_, i) => agent(`s${i}`, null));
+  const seatsOf = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`s${i}`, i]));
+  const kids = (n: number, parent = "s0") =>
+    Array.from({ length: n }, (_, i) =>
+      agent(parent, `k${i}`, { arrivedAt: i + 1, parentAgentId: null }),
+    );
+  const deskCount = (html: string) => (html.match(/data-desk="/g) ?? []).length;
+  const seated = (html: string) =>
+    (html.match(/<div class="agent"[^>]*data-pose="seated[^"]*"/g) ?? []).length;
+
+  it("draws 8 desks for 4 sessions and 3 subagents, and every subagent sits at a work desk", () => {
+    const html = render([...parents(4), ...kids(3)], seatsOf(4), null, undefined, settled);
+    expect(deskCount(html)).toBe(8);
+    expect(seated(html)).toBe(7);
+    expect(html).not.toContain("data-queue-more");
+  });
+
+  it("keeps today's four desks when the subagents still fit the free desks", () => {
+    const html = render([...parents(2), ...kids(2)], seatsOf(2), null, undefined, settled);
+    expect(deskCount(html)).toBe(4);
+  });
+
+  it("falls back to standing slots and the door queue beyond the cap", () => {
+    const html = render([...parents(4), ...kids(30)], seatsOf(4), null, undefined, settled);
+    expect(deskCount(html)).toBe(DESK_CAP);
+    // 20 free desks seat 20 subagents; the other 10 stand or queue, so they are not seated.
+    expect(seated(html)).toBe(4 + (DESK_CAP - 4));
+    expect(html.match(/data-agent="/g)?.length).toBeGreaterThan(24);
+  });
+
+  it("draws no pop-in on the first render", () => {
+    const html = render([...parents(4), ...kids(3)], seatsOf(4), null, undefined, settled);
+    expect(html).not.toContain("desk-pop");
+  });
+});
+
+describe("DeskLayer pop-in", () => {
+  const layout = layoutOffice(8, { width: 1200, height: 800 });
+  const html = (fresh: number[]) =>
+    renderToStaticMarkup(
+      <DeskLayer
+        layout={layout}
+        geo={geometryFor(layout)}
+        occupant={new Map()}
+        worker={new Map()}
+        paper={new Map()}
+        fresh={new Set(fresh)}
+      />,
+    );
+  const popped = (h: string) =>
+    [...h.matchAll(/<div[^>]*class="desk-pop"[^>]*data-desk="(\d+)"/g)].map((m) => Number(m[1]));
+
+  it("marks only the new desks", () => {
+    expect(popped(html([4, 5, 6, 7]))).toEqual([4, 5, 6, 7]);
+    expect(popped(html([6]))).toEqual([6]);
+  });
+  it("marks none when nothing is new", () => {
+    expect(html([])).not.toContain("desk-pop");
+  });
+});
+
+describe("desk pop-in css", () => {
+  // Whole rules and at-rule blocks, with each selector list compared as a set of whole selectors.
+  const rulesIn = (text: string) =>
+    [...text.matchAll(/([^{}@]+)\{([^{}]*)\}/g)].map((m) => ({
+      selectors: m[1].split(",").map((x) => x.trim()),
+      body: m[2],
+    }));
+  const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"));
+  const only = (list: { selectors: string[]; body: string }[], sel: string) =>
+    list.filter((r) => r.selectors.length === 1 && r.selectors[0] === sel);
+
+  it("fades and drops 8px over --dur-base with --ease, and never scales", () => {
+    const rule = only(rulesIn(css.slice(0, css.indexOf("@media"))), ".desk-pop");
+    expect(rule).toHaveLength(1);
+    expect(rule[0].body).toMatch(/animation:\s*desk-pop var\(--dur-base\) var\(--ease\) both/);
+    const frames = css.match(/@keyframes desk-pop\s*{([\s\S]*?\n})/)?.[1] ?? "";
+    expect(frames).toMatch(/opacity:\s*0/);
+    expect(frames).toMatch(/transform:\s*translateY\(-8px\)/);
+    expect(frames).not.toMatch(/scale/);
+  });
+  it("is off under reduced motion", () => {
+    const rule = only(rulesIn(reduced), ".desk-pop");
+    expect(rule).toHaveLength(1);
+    expect(rule[0].body).toMatch(/animation:\s*none/);
+  });
+});
+
+describe("Scene fit (eng D2/E5, design D7)", () => {
+  // Strict parse: comments stripped, brace-matched blocks, each selector list split whole.
+  type Rule = { selectors: string[]; body: string; media: string | null };
+  const parse = (text: string, media: string | null = null): Rule[] => {
+    const out: Rule[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf("{", i);
+      if (open < 0) break;
+      let depth = 1;
+      let j = open + 1;
+      while (depth > 0) depth += text[j++] === "{" ? 1 : text[j - 1] === "}" ? -1 : 0;
+      const head = text.slice(i, open).trim();
+      const body = text.slice(open + 1, j - 1);
+      if (head.startsWith("@media")) out.push(...parse(body, head));
+      else out.push({ selectors: head.split(",").map((x) => x.trim()), body, media });
+      i = j;
+    }
+    return out;
+  };
+  const rules = parse(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+  const find = (sel: string, media: string | null = null) =>
+    rules.filter((r) => r.media === media && r.selectors.length === 1 && r.selectors[0] === sel);
+  const REDUCED = "@media (prefers-reduced-motion: reduce)";
+
+  it("eases the scaled layer by its own transform only, 240ms var(--dur-base) with var(--ease)", () => {
+    const [r, ...rest] = find(".scene-scaled");
+    expect(rest).toHaveLength(0);
+    expect(r.body).toMatch(/transition:\s*transform var\(--dur-base\) var\(--ease\)\s*;/);
+    // No custom property is animated on the layer that holds the room's ~28k elements.
+    expect(r.body).not.toMatch(/transition:\s*--|,\s*--/);
+    expect(r.body).not.toMatch(/\d+m?s/);
+    for (const rule of rules.filter((x) => x.selectors.includes(".scene-scaled")))
+      expect(rule.body).not.toMatch(/@property|--fit/);
+  });
+
+  it("eases the overlay's fit vars with the same duration and easing", () => {
+    const [r, ...rest] = find(".scene-overlay");
+    expect(rest).toHaveLength(0);
+    for (const v of ["--fit-s", "--fit-x", "--fit-y"])
+      expect(r.body).toMatch(new RegExp(`${v} var\\(--dur-base\\) var\\(--ease\\)`));
+    expect(r.body).not.toMatch(/\d+m?s\b/);
+  });
+
+  it("registers the fit vars, inheriting, so only the overlay's few children restyle", () => {
+    for (const [v, syntax, initial] of [
+      ["--fit-s", '"<number>"', "1"],
+      ["--fit-x", '"<length>"', "0px"],
+      ["--fit-y", '"<length>"', "0px"],
+    ]) {
+      const hit = rules.filter(
+        (r) => r.selectors.length === 1 && r.selectors[0] === `@property ${v}`,
+      );
+      expect(hit, v).toHaveLength(1);
+      expect(hit[0].body).toMatch(new RegExp(`syntax:\\s*${syntax}\\s*;`));
+      expect(hit[0].body).toMatch(/inherits:\s*true\s*;/);
+      expect(hit[0].body).toMatch(new RegExp(`initial-value:\\s*${initial}\\s*;`));
+    }
+  });
+
+  it("turns both transitions off under reduced motion", () => {
+    const hit = rules.filter(
+      (r) =>
+        r.media === REDUCED &&
+        r.selectors.includes(".scene-scaled") &&
+        r.selectors.includes(".scene-overlay"),
+    );
+    expect(hit).toHaveLength(1);
+    expect(hit[0].body).toMatch(/transition:\s*none\s*;/);
+  });
+
+  it("leaves .scene a stable full-width box (no centering margin)", () => {
+    const [r] = find(".scene");
+    expect(r.body).toMatch(/width:\s*100%/);
+    expect(r.body).not.toMatch(/margin/);
+  });
+
+  const view = { width: 1200, height: 800 };
+  const html = render([agent("s1", null), waving("s2", 0)], { s1: 0, s2: 1 }, null, view);
+  const fit = layoutOffice(4, view).fit;
+
+  it("sets the fit vars on the overlay container and the translate+scale transform on the layer", () => {
+    expect(html).toContain(
+      `class="scene-overlay" style="--fit-s:${fit.scale};--fit-x:${fit.x}px;--fit-y:${fit.y}px"`,
+    );
+    expect(html).toContain(`transform:translate(${fit.x}px, ${fit.y}px) scale(${fit.scale})`);
+    // The scene box is only as tall as the room; its width and centering live in the fit.
+    expect(/data-testid="scene"[^>]*style="([^"]*)"/.exec(html)![1]).toMatch(
+      new RegExp(`^height:${layoutOffice(4, view).scrollHeight}px(;|$)`),
+    );
+  });
+
+  it("declares the art tokens on the scene root, so the clock hands and screen stripes resolve", () => {
+    const style = /data-testid="scene"[^>]*style="([^"]*)"/.exec(html)![1];
+    for (const token of ["--screen", "--outline"])
+      expect(style).toContain(`${token}:${ART[token as "--screen" | "--outline"]}`);
+  });
+
+  it("positions hits and tags with calc() in the fit vars, never bare px", () => {
+    const style = (cls: string) =>
+      [...html.matchAll(new RegExp(`class="${cls}"[^>]*style="([^"]*)"`, "g"))].map((m) => m[1]);
+    for (const cls of ["hit", "tag"]) {
+      const all = style(cls);
+      expect(all).toHaveLength(2);
+      for (const st of all) {
+        expect(st).toMatch(/left:calc\(var\(--fit-s\) \* -?[\d.e-]+px \+ var\(--fit-x\)\)/);
+        expect(st).toMatch(/top:calc\(var\(--fit-s\) \* -?[\d.e-]+px \+ var\(--fit-y\)/);
+      }
+    }
+  });
+
+  it("starts with no fit transition state: the layer and overlay carry no transition inline", () => {
+    expect(html).not.toMatch(/transition/);
+  });
+});
+
+describe("Scene element budget (eng D14)", () => {
+  const CEIL_12 = { svg: 39, elements: 20_900 };
+  const CEIL_24 = { svg: 65, elements: 31_100 };
+  // Measured with renderToStaticMarkup, working parents at desks 0..n-1 and no subagents:
+  // 12 agents: 37 svg, 19055 elements. 24 agents: 61 svg, 28287 elements (the largest window scene of the six; the scene is pinned
+  // with the dev override, so the numbers do not depend on the time zone). Ceilings are +10 percent.
+  const count = (html: string) => ({
+    svg: (html.match(/<svg\b/g) ?? []).length,
+    elements: (html.match(/<[a-zA-Z][^>]*>/g) ?? []).length,
+  });
+  afterEach(() => setSceneOverride(null));
+  const room = (n: number, scene: string) => {
+    setSceneOverride(scene);
+    return count(
+      render(
+        Array.from({ length: n }, (_, i) => agent(`s${i}`, null)),
+        Object.fromEntries(Array.from({ length: n }, (_, i) => [`s${i}`, i])),
+        null,
+        undefined,
+        () => 10 * 60_000,
+      ),
+    );
+  };
+  const biggest = (n: number) => {
+    const all = WINDOW_SCENE_IDS.map((id) => room(n, id));
+    return {
+      svg: Math.max(...all.map((c) => c.svg)),
+      elements: Math.max(...all.map((c) => c.elements)),
+    };
+  };
+
+  it("12 and 24 seated agents stay under their ceilings, in every window scene", () => {
+    const a = biggest(12);
+    const b = biggest(24);
+    expect(a.svg).toBeLessThanOrEqual(CEIL_12.svg);
+    expect(a.elements).toBeLessThanOrEqual(CEIL_12.elements);
+    expect(b.svg).toBeLessThanOrEqual(CEIL_24.svg);
+    expect(b.elements).toBeLessThanOrEqual(CEIL_24.elements);
+  });
+
+  it("1 parent and 23 subagents, all seated with devices, stay under their own ceiling", () => {
+    // Measured: 84 svg, 28539 elements (largest scene; each device adds about 10 elements and 1 svg, so the svg
+    // count passes CEIL_24's 65). Ceiling is +10 percent.
+    const sizes = WINDOW_SCENE_IDS.map((id) => {
+      setSceneOverride(id);
+      const html = render(
+        [
+          agent("s0", null),
+          ...Array.from({ length: 23 }, (_, i) => agent("s0", `k${i}`, { arrivedAt: i + 1 })),
+        ],
+        { s0: 0 },
+        null,
+        undefined,
+        () => 10 * 60_000,
+      );
+      expect((html.match(/data-device=/g) ?? []).length).toBe(23);
+      return count(html);
+    });
+    for (const c of sizes) {
+      expect(c.svg).toBeLessThanOrEqual(90);
+      expect(c.elements).toBeLessThanOrEqual(31_350);
+    }
+  });
+});
+
+describe("DeskLayer devices", () => {
+  const layout = layoutOffice(8, { width: 1200, height: 800 });
+  const html = (occupant: [number, Agent][], worker: [number, Agent][]) =>
+    renderToStaticMarkup(
+      <DeskLayer
+        layout={layout}
+        geo={geometryFor(layout)}
+        occupant={new Map(occupant)}
+        worker={new Map(worker)}
+        paper={new Map()}
+        fresh={new Set()}
+      />,
+    );
+  const desk = (h: string, i: number) =>
+    new RegExp(`<div[^>]*data-desk="${i}"[^>]*>.*?(?=<div[^>]*data-desk=|$)`, "s").exec(h)![0];
+  const sub = (id: string, state: Agent["state"] = "working") =>
+    agent("s1", id, { state, parentAgentId: null });
+
+  it("gives a subagent at a work desk its device, a dark monitor and the lit variant", () => {
+    const a = sub("a1");
+    const h = desk(html([], [[2, a]]), 2);
+    const device = deviceFor(a.key);
+    expect(h).toContain(`data-device="${device}"`);
+    expect(h).toContain('data-screen="off"');
+    expect(h).not.toContain("data-screen-overlay");
+    expect(h).toContain(`data-prop="${device.toUpperCase()}_LIT"`);
+  });
+
+  it("follows the subagent's state: working lit, waiting half, other dark", () => {
+    const variant = (state: Agent["state"]) => {
+      const a = sub("a1", state);
+      return desk(html([], [[0, a]]), 0)
+        .match(/data-prop="(\w+)"/g)
+        ?.pop();
+    };
+    const d = deviceFor(sub("a1").key).toUpperCase();
+    expect(variant("working")).toBe(`data-prop="${d}_LIT"`);
+    expect(variant("waiting-on-subagents")).toBe(`data-prop="${d}_HALF"`);
+    expect(variant("idle")).toBe(`data-prop="${d}_DARK"`);
+  });
+
+  it("keeps parents on the monitor with no device, and empty desks bare", () => {
+    const p = agent("s9", null);
+    const h = html([[1, p]], []);
+    expect(desk(h, 1)).toContain('data-screen="live"');
+    expect(desk(h, 1)).toContain("data-screen-overlay");
+    expect(h).not.toContain("data-device");
+    expect(desk(h, 0)).toContain('data-screen="off"');
+  });
+
+  it("is stable across re-renders", () => {
+    const a = sub("a1");
+    expect(html([], [[3, a]])).toBe(html([], [[3, a]]));
+  });
+});
+
+describe("Scene windows", () => {
+  afterEach(() => setSceneOverride(null));
+  const local = (h: number, mi = 0, s = 0) => new Date(2026, 2, 9, h, mi, s).getTime();
+  const renderAt = (now: number, desks = 1) => {
+    const agents = Array.from({ length: desks }, (_, i) => agent(`s${i}`, null));
+    const office: OfficeState = {
+      agents: Object.fromEntries(agents.map((a) => [a.key, a])),
+      episodeSeq: 0,
+      returned: {},
+    };
+    return renderToStaticMarkup(
+      <Scene
+        office={office}
+        seats={Object.fromEntries(agents.map((a, i) => [a.sessionId, i]))}
+        projects={{ p: "/work/atlas" }}
+        viewport={{ width: 1200, height: 800 }}
+        now={now}
+        clock={() => 10 * 60_000}
+      />,
+    );
+  };
+  const scenes = (html: string, start = 'data-window="[^"]*"') =>
+    [...html.matchAll(new RegExp(`<[a-z]+ [^>]*${start}[^>]*>`, "g"))].map(
+      (m) => /data-window-scene="([^"]*)"/.exec(m[0])![1],
+    );
+
+  it("hangs one window at one row and two at two rows, one svg each", () => {
+    expect(renderAt(local(12)).match(/<svg[^>]*data-window="/g)).toHaveLength(1);
+    expect(renderAt(local(12), 5).match(/<svg[^>]*data-window="/g)).toHaveLength(2);
+    expect(renderAt(local(12), 24).match(/<svg[^>]*data-window="/g)).toHaveLength(2);
+  });
+
+  it("exposes the hour's scene on every window and every floor light patch", () => {
+    for (let h = 0; h < 24; h++) {
+      const want = sceneFor("2026-03-09", h);
+      const html = renderAt(local(h, 20), 5);
+      expect(scenes(html), `h${h} windows`).toEqual([want, want]);
+      expect(scenes(html, 'data-part="floor-light"'), `h${h} patches`).toEqual([want, want]);
+    }
+  });
+
+  it("changes scene only at the hour boundary", () => {
+    for (let h = 0; h < 24; h++) {
+      const first = scenes(renderAt(local(h, 0, 0)));
+      for (const [mi, s] of [
+        [0, 1],
+        [30, 0],
+        [59, 59],
+      ])
+        expect(scenes(renderAt(local(h, mi, s))), `${h}:${mi}:${s}`).toEqual(first);
+      expect(first).toEqual(Array(1).fill(sceneFor("2026-03-09", h)));
+    }
+  });
+
+  it("follows a dev override, and an unknown override reads as dusk", () => {
+    setSceneOverride("snow");
+    expect(scenes(renderAt(local(12)))).toEqual(["snow"]);
+    setSceneOverride("bogus");
+    expect(scenes(renderAt(local(12)))).toEqual(["dusk"]);
+  });
+
+  it("sets the glass vars on the window element only, never on the room shell or a desk", () => {
+    const html = renderAt(local(12), 5);
+    const windows = [...html.matchAll(/<svg[^>]*data-window="[^"]*"[^>]*>/g)].map((m) => m[0]);
+    expect(windows).toHaveLength(2);
+    const sc = windowScene(sceneFor("2026-03-09", 12));
+    for (const w of windows)
+      for (const token of Object.values(sc.legend)) expect(w).toContain(`${token}:${GLASS[token]}`);
+    const root = (part: string) => new RegExp(`<svg[^>]*${part}[^>]*>`).exec(html)![0];
+    expect(root('data-part="room-shell"')).not.toContain("--glass");
+    expect(root('data-prop="DOOR"')).not.toContain("--glass");
+    expect(root('data-prop="CLOCK"')).not.toContain("--glass");
+    // The only place --glass appears in the markup is the window roots and their fills.
+    const outside = html.replace(/<svg[^>]*data-window="[^"]*"[^>]*>.*?<\/svg>/gs, "");
+    expect(outside).not.toContain("--glass");
+  });
+
+  it("tints each floor patch with the scene's horizon glass, low opacity, above the floor tiles", () => {
+    const html = renderAt(local(20), 5);
+    const sc = windowScene(sceneFor("2026-03-09", 20));
+    const patches = [...html.matchAll(/<g[^>]*data-part="floor-light"[^>]*>(.*?)<\/g>/gs)];
+    expect(patches).toHaveLength(2);
+    for (const [, inner] of patches) {
+      expect(inner).toContain(`fill="${GLASS[sc.light]}"`);
+      expect(inner).toMatch(/opacity="0\.\d+"/);
+    }
+    expect(html.indexOf('data-part="floor-light"')).toBeGreaterThan(
+      html.indexOf('data-part="room-shell"'),
+    );
+    expect(html.indexOf('data-part="floor-light"')).toBeLessThan(html.indexOf("data-desk="));
+  });
+
+  it("draws weather and clouds only for scenes that have them, clipped to the open panes", () => {
+    for (const id of WINDOW_SCENE_IDS) {
+      setSceneOverride(id);
+      const html = renderAt(local(12));
+      const sc = windowScene(id);
+      expect(/class="win-rain"/.test(html), `${id} rain`).toBe(sc.weather === "rain");
+      expect(/class="win-snow"/.test(html), `${id} snow`).toBe(sc.weather === "snow");
+      expect(/class="win-cloud-(left|right)"/.test(html), `${id} cloud`).toBe(sc.cloud !== null);
+      if (sc.weather || sc.cloud) expect(html).toContain("clip-path=");
+    }
+  });
+});
+
+describe("window css", () => {
+  type Rule = { selectors: string[]; body: string; media: string | null };
+  const parse = (text: string, media: string | null = null): Rule[] => {
+    const out: Rule[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf("{", i);
+      if (open < 0) break;
+      let depth = 1;
+      let j = open + 1;
+      while (depth > 0) depth += text[j++] === "{" ? 1 : text[j - 1] === "}" ? -1 : 0;
+      const head = text.slice(i, open).trim();
+      const body = text.slice(open + 1, j - 1);
+      if (head.startsWith("@media")) out.push(...parse(body, head));
+      else out.push({ selectors: head.split(",").map((x) => x.trim()), body, media });
+      i = j;
+    }
+    return out;
+  };
+  const rules = parse(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+  const REDUCED = "@media (prefers-reduced-motion: reduce)";
+  const loops = {
+    ".win-rain": ["win-rain", RAIN_PERIOD, "translateY", 6],
+    ".win-snow": ["win-snow", SNOW_PERIOD, "translateY", 8],
+    ".win-cloud-right": ["win-cloud-right", CLOUD_PERIOD, "translate", CLOUD_PERIOD / 2],
+    ".win-cloud-left": ["win-cloud-left", CLOUD_PERIOD, "translate", CLOUD_PERIOD / 2],
+  } as const;
+
+  it("declares each loop in one plain rule, never inside a media block", () => {
+    for (const [sel, [name]] of Object.entries(loops)) {
+      const own = rules.filter((r) => r.selectors.includes(sel));
+      const live = own.filter((r) => /animation:\s*(?!none)\S/.test(r.body));
+      expect(live, sel).toHaveLength(1);
+      expect(live[0].media, sel).toBeNull();
+      expect(live[0].selectors, sel).toEqual([sel]);
+      expect(live[0].body, sel).toMatch(
+        new RegExp(`animation:\\s*${name} [\\d.]+s steps\\(\\d+\\) infinite`),
+      );
+    }
+  });
+
+  it("steps whole 2 px cells: period over step count is 2 user units", () => {
+    for (const [sel, [name, period, fn, steps]] of Object.entries(loops)) {
+      const live = rules.find((r) => r.selectors.includes(sel) && r.media === null)!;
+      expect(Number(/steps\((\d+)\)/.exec(live.body)![1]), sel).toBe(steps);
+      expect(period / steps, sel).toBe(2);
+      const frames = css.match(new RegExp(`@keyframes ${name}\\s*{([\\s\\S]*?\\n})`))?.[1] ?? "";
+      expect(frames, sel).toContain(`${fn}(`);
+      expect(frames, sel).toMatch(/\d+px/);
+      expect(frames, sel).not.toMatch(/\d\.\d+px/);
+    }
+    const num = (name: string) =>
+      [
+        ...(css.match(new RegExp(`@keyframes ${name}\\s*{([\\s\\S]*?\\n})`))?.[1] ?? "").matchAll(
+          /(-?\d+)px/g,
+        ),
+      ].map((m) => Number(m[1]));
+    expect(num("win-rain")).toEqual([RAIN_PERIOD]);
+    expect(num("win-snow")).toEqual([SNOW_PERIOD]);
+    expect(num("win-cloud-right")).toEqual([CLOUD_PERIOD, CLOUD_PERIOD / 2]);
+    expect(num("win-cloud-left")).toEqual([CLOUD_PERIOD, -CLOUD_PERIOD / 2]);
+  });
+
+  it("switches every loop off under reduced motion, and drops rain and snow", () => {
+    for (const sel of Object.keys(loops)) {
+      const off = rules.filter((r) => r.media === REDUCED && r.selectors.includes(sel));
+      expect(off.length, sel).toBeGreaterThan(0);
+      expect(
+        off.some((r) => /animation:\s*none/.test(r.body)),
+        sel,
+      ).toBe(true);
+    }
+    for (const sel of [".win-rain", ".win-snow"])
+      expect(
+        rules.some(
+          (r) => r.media === REDUCED && r.selectors.includes(sel) && /display:\s*none/.test(r.body),
+        ),
+        sel,
+      ).toBe(true);
   });
 });

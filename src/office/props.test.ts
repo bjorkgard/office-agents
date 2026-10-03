@@ -22,18 +22,27 @@ const known = new Set([".", ...Object.keys(CELLS)]);
 const names = Object.keys(PROPS) as PropName[];
 
 describe("prop sprites", () => {
-  it("has the door, coffee station, two plants, the paper, a clock and steam", () => {
+  it("has the door, coffee station, dispenser, two plants, the paper, a clock, steam and a gurgle and two devices", () => {
     expect(names.sort()).toEqual(
       [
         "CLOCK",
         "COFFEE_MACHINE",
         "COFFEE_STATION",
         "COUNTER",
+        "DISPENSER",
         "DOOR",
+        "GURGLE",
+        "LAPTOP_DARK",
+        "LAPTOP_HALF",
+        "LAPTOP_LIT",
         "PAPER",
+        "PAPER_DESK",
         "PLANT_BUSH",
         "PLANT_TALL",
         "STEAM",
+        "TABLET_DARK",
+        "TABLET_HALF",
+        "TABLET_LIT",
       ].sort(),
     );
   });
@@ -67,10 +76,21 @@ describe("prop sprites", () => {
   it("draws the clock face and the steam wisp in the light plastic and outline tokens", () => {
     expect(PROPS.CLOCK.join("")).toMatch(/[l]/);
     expect(PROPS.STEAM.join("")).toMatch(/=/);
-    expect(PROPS.CLOCK).toHaveLength(11);
-    for (const row of PROPS.CLOCK) expect(row).toHaveLength(11);
+    expect(PROPS.CLOCK).toHaveLength(18);
+    for (const row of PROPS.CLOCK) expect(row).toHaveLength(12);
     expect(PROPS.STEAM).toHaveLength(10);
     for (const row of PROPS.STEAM) expect(row).toHaveLength(8);
+  });
+
+  it("draws the water dispenser from plastic, metal and screen tokens, 16 cells wide", () => {
+    const grid = PROPS.DISPENSER;
+    expect(grid.join("")).toMatch(/g/);
+    expect(grid.join("")).toMatch(/[m~]/);
+    expect(grid.join("")).toMatch(/c/);
+    expect(grid[0]).toHaveLength(16);
+    expect(grid).toHaveLength(36);
+    expect(PROPS.GURGLE).toHaveLength(4);
+    for (const row of PROPS.GURGLE) expect(row).toHaveLength(4);
   });
 
   it("has no hex literals in the prop source", () => {
@@ -89,14 +109,14 @@ describe("prop sprites", () => {
 describe("ambient loops", () => {
   const reduced = sceneCss.slice(sceneCss.indexOf("@media (prefers-reduced-motion: reduce)"));
 
-  it("defines steam, sway and tick loops outside the reduced-motion block", () => {
+  it("defines steam, sway, tick and gurgle loops outside the reduced-motion block", () => {
     const base = sceneCss.slice(0, sceneCss.indexOf("@media (prefers-reduced-motion: reduce)"));
-    for (const cls of [".steam", ".sway", ".clock-hand"])
+    for (const cls of [".steam", ".sway", ".clock-hand", ".gurgle"])
       expect(base, cls).toMatch(new RegExp(`\\${cls}\\s*\\{[^}]*animation:`));
   });
 
   it("turns every ambient loop off under prefers-reduced-motion", () => {
-    for (const cls of [".steam", ".sway", ".clock-hand"])
+    for (const cls of [".steam", ".sway", ".clock-hand", ".gurgle"])
       expect(reduced, cls).toMatch(new RegExp(`\\${cls}\\s*\\{[^}]*animation:\\s*none`));
   });
 });

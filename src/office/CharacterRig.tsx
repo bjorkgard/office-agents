@@ -1,5 +1,6 @@
 import { memo, useMemo, type CSSProperties } from "react";
 import { HAIR, SKIN } from "./appearance";
+import { DESK_KINDS, type DeskKind } from "./desk-kinds";
 import { ART } from "./palette";
 import {
   CELL,
@@ -104,6 +105,7 @@ function frameFor(pose: RigPose, walkFrame: 0 | 1): FrameName {
   if (pose === "seated-idle") return "SEATED_IDLE";
   if (pose === "standing") return "STANDING";
   if (pose === "standing-mug") return "STANDING_MUG";
+  if (pose === "standing-cup") return "STANDING_CUP";
   return walkFrame === 0 ? "WALK_A" : "WALK_B";
 }
 
@@ -190,7 +192,14 @@ export const DESK_WIDTH = DESK[0].length * CELL;
 export const DESK_HEIGHT = DESK.length * CELL;
 
 // The monitor is lit only while the agent works (DESIGN.md "State to look").
-export const PixelDesk = memo(function PixelDesk({ lit = true }: { lit?: boolean }) {
+export const PixelDesk = memo(function PixelDesk({
+  lit = true,
+  kind,
+}: {
+  lit?: boolean;
+  /** A desk kind with its props; omitted, the bare desk. */
+  kind?: DeskKind;
+}) {
   return (
     <svg
       width={DESK_WIDTH}
@@ -200,14 +209,14 @@ export const PixelDesk = memo(function PixelDesk({ lit = true }: { lit?: boolean
       focusable="false"
       style={STATIC_STYLE}
     >
-      <Cells grid={lit ? DESK : DESK_DIM} />
+      <Cells grid={kind ? (lit ? kind.lit : kind.dim) : lit ? DESK : DESK_DIM} />
     </svg>
   );
 });
 
-const DESK_IDS = { lit: "desk-lit", dim: "desk-dim" } as const;
+const deskId = (kind: DeskKind, lit: boolean) => `desk-${kind.id}-${lit ? "lit" : "dim"}`;
 
-// Draws each desk variant once. Mount it once per page; every SharedDesk then costs one <use>.
+// Draws each desk kind and light state once. Mount it once per page; every SharedDesk then costs one <use>.
 export const DeskDefs = memo(function DeskDefs() {
   return (
     <svg
@@ -219,19 +228,27 @@ export const DeskDefs = memo(function DeskDefs() {
       data-part="desk-defs"
     >
       <defs>
-        <g id={DESK_IDS.lit}>
-          <Cells grid={DESK} />
-        </g>
-        <g id={DESK_IDS.dim}>
-          <Cells grid={DESK_DIM} />
-        </g>
+        {DESK_KINDS.flatMap((kind) => [
+          <g key={`${kind.id}-lit`} id={deskId(kind, true)}>
+            <Cells grid={kind.lit} />
+          </g>,
+          <g key={`${kind.id}-dim`} id={deskId(kind, false)}>
+            <Cells grid={kind.dim} />
+          </g>,
+        ])}
       </defs>
     </svg>
   );
 });
 
 // Same pixels as PixelDesk, reusing the DeskDefs drawing. The root sets the palette the shared art reads.
-export const SharedDesk = memo(function SharedDesk({ lit = true }: { lit?: boolean }) {
+export const SharedDesk = memo(function SharedDesk({
+  kind,
+  lit = true,
+}: {
+  kind: DeskKind;
+  lit?: boolean;
+}) {
   return (
     <svg
       width={DESK_WIDTH}
@@ -241,7 +258,7 @@ export const SharedDesk = memo(function SharedDesk({ lit = true }: { lit?: boole
       focusable="false"
       style={STATIC_STYLE}
     >
-      <use href={`#${lit ? DESK_IDS.lit : DESK_IDS.dim}`} />
+      <use href={`#${deskId(kind, lit)}`} />
     </svg>
   );
 });
