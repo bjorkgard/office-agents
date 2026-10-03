@@ -110,6 +110,16 @@ Amended by the phase 2 and 3 review (`docs/designs/phase-2-3-ceo-review.md`, dec
 - [x] **4.14 Mockup gaps (DESIGN.md Open items).** Resolve the four gaps seen in approved mockup A: monitors lit only while working, the waving agent's shirt not close to the accent ring, no text posters, and subagents standing in a reserved slot.
   - Verify: each gap is closed in the built scene or in a recorded decision.
 
+## Phase 4b: Office life (branch `feat/office-life`)
+
+Plan and decisions: `docs/designs/office-life-ceo-review.md` (settled; do not reopen while building). Follow-ups and deferred items stay in [TODOS.md](TODOS.md), "Office life".
+
+- [x] **4b.1 Wall clock, windows and floor light.** Real local time on the clock; hour-matched window scenes (`sceneFor`), Glass tokens, floor light patch. Verify: `vp test`; `?art` sheet shows each scene; `?hour=` and `?scene=` overrides (dev only).
+- [x] **4b.2 Desk kinds, working screens, paper and devices.** Tidy and cluttered desks alternate by index; working screen lines; desk paper from timestamps; subagent laptop or tablet. Files: `src/office/desk-kinds.ts`, `paper.ts`, `devices.ts`, `DeskLayer.tsx`.
+- [x] **4b.3 Drink breaks.** Waiting parents take random, reload-stable breaks to the coffee machine or the water dispenser. Files: `src/office/breaks.ts`, `choreo.ts`.
+- [x] **4b.4 Row growth.** Rows grow on demand up to `DESK_CAP` (24 desks) and shrink after about a minute; the room eases to its new fit. Files: `shared/tuning.ts`, `src/office/iso.ts`, `scene-model.ts`.
+- [x] **4b.5 Debug hooks.** `data-*` attributes and dev-only `?scene=`, `?hour=`, `?seed=`; see DESIGN.md "Debug hooks". Files: `src/main.tsx`, `src/office/debug-hooks.test.tsx`.
+
 ## Phase 5: End to end (T7 / T13 / R4)
 
 - [ ] **5.1 Playwright and fixture.** Add Playwright as a devDependency, record a fixture transcript under `e2e/fixtures/`, add a `TUNING` override and transcript-root seam so the test needs no long waits.
