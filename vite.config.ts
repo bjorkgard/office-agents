@@ -36,7 +36,11 @@ export default defineConfig({
     ],
   },
   ...(cacheDir === undefined ? {} : { cacheDir }),
-  test: { exclude: [...configDefaults.exclude, "e2e/**/*.spec.ts"] },
+  test: {
+    exclude: [...configDefaults.exclude, "e2e/**/*.spec.ts"],
+    // Scene and art render tests exceed vitest's 5 s default on a 2-core CI runner.
+    testTimeout: 30_000,
+  },
   plugins: lazyPlugins(() => [
     react(),
     officeFeed(feedRoot === undefined ? {} : { root: feedRoot }),
