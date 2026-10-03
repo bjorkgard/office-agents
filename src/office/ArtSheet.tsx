@@ -13,7 +13,15 @@ import {
   RIG_WIDTH,
   type CharacterRigProps,
 } from "./CharacterRig";
-import { ART, SHIRTS } from "./palette";
+import { ScreenOverlay } from "./DeskLayer";
+import { DESK_KINDS, deskKindFor, type DeskKind } from "./desk-kinds";
+import { DEVICES, deviceProp, deviceRect, type Device, type DeviceLook } from "./devices";
+import { WINDOW_SCENE_IDS, activeOverrides, windowScene, type WindowSceneId } from "./decor";
+import { layoutOffice } from "./iso";
+import { DESK_CAP } from "../../shared/tuning";
+import { Clock, WindowArt } from "./RoomDecor";
+import { ART, FLOOR_LIGHT_OPACITY, GLASS, SHIRTS } from "./palette";
+import { roomShell, WINDOW_COLS, WINDOW_ROWS } from "./room";
 import { CELL } from "./pixel";
 import { PROPS, propSize, type PropName } from "./props";
 import { HAIRSTYLES, MUG_COL, SEAT_OFFSET, SOLE_ROW } from "./sprites";
@@ -30,8 +38,11 @@ const FRAMES: { label: string; props: CharacterRigProps }[] = [
   { label: "seated idle", props: { pose: "seated-idle", shirt: 0, stripe: false } },
   { label: "standing", props: { pose: "standing", shirt: 0, stripe: false } },
   { label: "coffee", props: { pose: "standing-mug", shirt: 0, stripe: false } },
+  { label: "water", props: { pose: "standing-cup", shirt: 0, stripe: false } },
 ];
 
+/** The clock tile's time, read once when the sheet loads. */
+const SHEET_NOW = Date.now();
 const PROP_NAMES = Object.keys(PROPS) as PropName[];
 
 // Coffee break: the figure stands at the counter's right end, mirrored to face it,
@@ -78,6 +89,65 @@ function Workstation({
   );
 }
 
+// A desk with its screen state: live is lit with the scrolling overlay, still is dim with the half overlay.
+function ScreenDesk({ kind, screen }: { kind: DeskKind; screen: "off" | "still" | "live" }) {
+  return (
+    <div style={{ position: "relative", width: DESK_WIDTH, height: DESK_HEIGHT }}>
+      <PixelDesk kind={kind} lit={screen === "live"} />
+      {screen !== "off" && <ScreenOverlay kind={kind} screen={screen} />}
+    </div>
+  );
+}
+
+const SCREEN_STATES = ["off", "still", "live"] as const;
+
+// A work desk as a subagent sees it: the monitor dark, the device showing the working state.
+const DEVICE_LOOKS = ["dark", "half", "lit"] as const;
+function DeviceDesk({ kind, device, look }: { kind: DeskKind; device: Device; look: DeviceLook }) {
+  const r = deviceRect(kind, device);
+  return (
+    <div style={{ position: "relative", width: DESK_WIDTH, height: DESK_HEIGHT }}>
+      <PixelDesk kind={kind} lit={false} />
+      <div style={{ position: "absolute", left: r.x * CELL, top: r.y * CELL }}>
+        <PixelProp name={deviceProp(device, look)} />
+      </div>
+    </div>
+  );
+}
+
+// 24 working desks and one raised hand at 50%: the attention check (design D3), in color and gray.
+function DeskWall({ gray }: { gray: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        alignItems: "flex-end",
+        filter: gray ? "grayscale(1)" : undefined,
+      }}
+    >
+      {Array.from({ length: DESK_CAP }, (_, i) =>
+        i === 11 ? (
+          <Tile
+            key={i}
+            label="raised hand"
+            scale={0.5}
+            width={STATION_WIDTH}
+            height={STATION_HEIGHT}
+          >
+            <Workstation pose="seated-raised-hand" seed="wall" />
+          </Tile>
+        ) : (
+          <Tile key={i} label={`desk ${i}`} scale={0.5} width={DESK_WIDTH} height={DESK_HEIGHT}>
+            <ScreenDesk kind={deskKindFor(i)} screen="live" />
+          </Tile>
+        ),
+      )}
+    </div>
+  );
+}
+
 function CoffeeBreak() {
   return (
     <div style={{ position: "relative", width: BREAK_WIDTH, height: MUG_Y + RIG_HEIGHT }}>
@@ -115,6 +185,58 @@ function Tile({
   );
 }
 
+// One window of a scene on a wall, with the floor light patch under it, taken from a real room.
+const SHEET_SHELL = roomShell(layoutOffice(8, { width: 1200, height: 800 }));
+function WindowTile({
+  id,
+  wall,
+  scale,
+}: {
+  id: WindowSceneId;
+  wall: "left" | "right";
+  scale: number;
+}) {
+  const scene = windowScene(id);
+  const w = SHEET_SHELL.windows.find((x) => x.wall === wall)!;
+  const flat = w.patch.flat();
+  const halfW = (WINDOW_COLS * CELL) / 2;
+  const halfH = (WINDOW_ROWS * CELL) / 2;
+  const x0 = Math.min(w.center.x - halfW, ...flat.map((p) => p.x));
+  const y0 = w.center.y - halfH;
+  const width = Math.max(w.center.x + halfW, ...flat.map((p) => p.x)) - x0;
+  const height = Math.max(w.center.y + halfH, ...flat.map((p) => p.y)) - y0;
+  return (
+    <Tile label={`window ${wall}, ${id}`} scale={scale} width={width} height={height}>
+      <div style={{ position: "relative", width, height }}>
+        <svg
+          width={width}
+          height={height}
+          aria-hidden="true"
+          focusable="false"
+          style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}
+        >
+          <g data-part="floor-light" data-window-scene={id} transform={`translate(${-x0} ${-y0})`}>
+            {w.patch.map((pane, i) => (
+              <polygon
+                key={i}
+                points={pane.map((p) => `${p.x},${p.y}`).join(" ")}
+                fill={GLASS[scene.light]}
+                opacity={FLOOR_LIGHT_OPACITY}
+              />
+            ))}
+          </g>
+        </svg>
+        <WindowArt
+          scene={scene}
+          wall={wall}
+          name={`sheet ${wall} ${id} ${scale}`}
+          center={{ x: w.center.x - x0, y: w.center.y - y0 }}
+        />
+      </div>
+    </Tile>
+  );
+}
+
 function Row({ scale }: { scale: number }) {
   return (
     <section style={{ marginBottom: 24 }}>
@@ -146,11 +268,62 @@ function Row({ scale }: { scale: number }) {
         </Tile>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
+        <Tile label="clock, live hands" scale={scale} {...propSize("CLOCK")}>
+          <div style={{ position: "relative" }}>
+            <Clock now={SHEET_NOW} />
+          </div>
+        </Tile>
+        {DESK_KINDS.flatMap((kind) =>
+          [true, false].map((lit) => (
+            <Tile
+              key={`${kind.id}-${lit}`}
+              label={`desk ${kind.id}, ${lit ? "lit" : "dim"}`}
+              scale={scale}
+              width={DESK_WIDTH}
+              height={DESK_HEIGHT}
+            >
+              <PixelDesk kind={kind} lit={lit} />
+            </Tile>
+          )),
+        )}
+        {DESK_KINDS.flatMap((kind) =>
+          SCREEN_STATES.map((screen) => (
+            <Tile
+              key={`${kind.id}-${screen}-screen`}
+              label={`desk ${kind.id}, screen ${screen}`}
+              scale={scale}
+              width={DESK_WIDTH}
+              height={DESK_HEIGHT}
+            >
+              <ScreenDesk kind={kind} screen={screen} />
+            </Tile>
+          )),
+        )}
+        {DEVICES.flatMap((device) =>
+          DEVICE_LOOKS.map((look) => (
+            <Tile
+              key={`${device}-${look}-desk`}
+              label={`desk tidy, ${device} ${look}`}
+              scale={scale}
+              width={DESK_WIDTH}
+              height={DESK_HEIGHT}
+            >
+              <DeviceDesk kind={DESK_KINDS[0]} device={device} look={look} />
+            </Tile>
+          )),
+        )}
         {PROP_NAMES.map((name) => (
           <Tile key={name} label={name.toLowerCase()} scale={scale} {...propSize(name)}>
             <PixelProp name={name} />
           </Tile>
         ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
+        {WINDOW_SCENE_IDS.flatMap((id) =>
+          (["left", "right"] as const).map((wall) => (
+            <WindowTile key={`${id}-${wall}`} id={id} wall={wall} scale={scale} />
+          )),
+        )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
         {HAIRSTYLES.map((style, i) => (
@@ -367,6 +540,9 @@ export default function ArtSheet() {
       }}
     >
       <h1 style={{ fontSize: 16 }}>Style gate sheet (iso pixel frames)</h1>
+      <p data-overrides style={{ fontSize: 12 }}>
+        Dev overrides: {activeOverrides().join(", ") || "none"}
+      </p>
       <label style={{ fontSize: 12 }}>
         <input type="checkbox" checked={gray} onChange={(e) => setGray(e.target.checked)} />{" "}
         grayscale pass (applies to the cases below)
@@ -377,6 +553,14 @@ export default function ArtSheet() {
       <section style={{ filter: "grayscale(1)", marginBottom: 24 }}>
         <h2 style={{ fontSize: 14 }}>Grayscale copy: the raised hand and shirts must still read</h2>
         <AgentRow agents={TWELVE} scale={0.5} label="12 agents, grayscale" />
+      </section>
+      <section style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 14 }}>
+          24 working desks and one raised hand at 50%: the hand must read first
+        </h2>
+        <DeskWall gray={false} />
+        <h2 style={{ fontSize: 14 }}>Same wall in grayscale</h2>
+        <DeskWall gray />
       </section>
       <Row scale={1} />
       <Row scale={0.5} />

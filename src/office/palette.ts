@@ -1,4 +1,4 @@
-// Mirrors the "Art palette" and "Project shirt palette" tables in DESIGN.md.
+// Mirrors the "Art palette", "Project shirt palette" and "Glass tokens" tables in DESIGN.md.
 // art.test.ts compares every hex here with DESIGN.md.
 
 export const SHIRTS = [
@@ -33,4 +33,37 @@ export const ART = {
   "--bubble-fill": "#e8ebf2",
   "--bubble-text": "#161a24",
   "--bubble-muted": "#454d63",
+} as const;
+
+/** The floor light patch under a window: its glass token at this opacity (the one glass opacity, DESIGN.md Glass tokens). */
+export const FLOOR_LIGHT_OPACITY = 0.3;
+
+// Window glass: the sky behind the wall windows, one object apart from ART so no glass colour
+// reaches a character, desk or prop root. Every value is at most as bright as --plastic.
+export const GLASS = {
+  "--glass-dusk-1": "#2a2850",
+  "--glass-dusk-2": "#64405e",
+  "--glass-dusk-3": "#8a5640",
+  "--glass-night-1": "#0f1328",
+  "--glass-night-2": "#171d38",
+  "--glass-night-3": "#222a4a",
+  "--glass-rain-1": "#2c3442",
+  "--glass-rain-2": "#394150",
+  "--glass-rain-3": "#464f5e",
+  "--glass-snow-1": "#38404f",
+  "--glass-snow-2": "#464e60",
+  "--glass-snow-3": "#545c70",
+  "--glass-overcast-1": "#343a49",
+  "--glass-overcast-2": "#3f4655",
+  "--glass-overcast-3": "#4a5162",
+  "--glass-afternoon-1": "#34506e",
+  "--glass-afternoon-2": "#546482",
+  "--glass-afternoon-3": "#7a5e3e",
+  "--glass-skyline": "#10142a",
+  "--glass-lit": "#726232",
+  "--glass-cloud-dusk": "#6a4a66",
+  "--glass-cloud-warm": "#6c5a58",
+  "--glass-cloud": "#5a6276",
+  "--glass-rain": "#5c687c",
+  "--glass-snow": "#626879",
 } as const;

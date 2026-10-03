@@ -364,6 +364,58 @@ export const STANDING_MUG: Grid = [
   "................................",
 ];
 
+// The water-break frame: STANDING_MUG with the metal mug replaced by a plain paper cup, no handle.
+export const STANDING_CUP: Grid = [
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "................................",
+  "..............;;kkk.............",
+  "............;;kkkkkkk...........",
+  "...........;kkkkkkkkkk..........",
+  "...........kkkkkkkkkkk..........",
+  "...........kkkkkkkkkkK..........",
+  "...........kkkkk3kkk3K..........",
+  "...........kkkkkxkkkxK..........",
+  "...........KkkkkxkkkxK..........",
+  "...........KKkkkkkkkkk..........",
+  "...........KKkkkkkkkkK..........",
+  "............Kkkkkkkkk...........",
+  ".............Kkk2kk2K...........",
+  "..............KKK22K............",
+  "........++s.++SKKKKS............",
+  "........sss+sssSSSSssSSS........",
+  "........+sS+sssssssss1S1........",
+  "........+sS+ssssssssS1S1..lllll.",
+  "........+sS+ssssssssS1S1..lllll.",
+  "........+sSzzzzzzzzzZ1S1kklllll.",
+  ".......+sSzzzzzzzzzzZ1SSKklllll.",
+  ".......+sSs+ssssssssS1SSK2.lll..",
+  ".......+sSs+ssssssssS1.SS..lll..",
+  ".......+sSs+sSsssssSS111...lll..",
+  ".......SSSssssSsssSsS1..........",
+  ".......kkk.SSSSSSSSSS...........",
+  ".......kkK.PPPPPPPPPP...........",
+  "........K..pppp44pppp...........",
+  "...........ppppPPPPP4...........",
+  "...........ppppPPPPP4...........",
+  "...........ppPpPPP4P4...........",
+  "...........ppPpPPP4P4...........",
+  "...........ppPpPPP4P4...........",
+  "...........ppPpPPP4P4...........",
+  "...........ppPpPPP4P4...........",
+  "...........ppPpO555P4...........",
+  "..........O555p55ll555..........",
+  "..........55ll55555555O.........",
+  "..........5555555Olllll.........",
+  "..........llllllll..............",
+  "................................",
+  "................................",
+  "................................",
+];
+
 export const FRAMES = {
   SEATED_TYPING,
   SEATED_RAISED,
@@ -372,6 +424,7 @@ export const FRAMES = {
   WALK_B,
   STANDING,
   STANDING_MUG,
+  STANDING_CUP,
 } as const;
 export type FrameName = keyof typeof FRAMES;
 export type View = "front" | "back";
@@ -384,6 +437,7 @@ export const FRAME_VIEW: Record<FrameName, View> = {
   WALK_B: "front",
   STANDING: "front",
   STANDING_MUG: "front",
+  STANDING_CUP: "front",
 };
 
 // Top-left cell of the hair and headphone layers in each frame.
@@ -395,6 +449,7 @@ export const HEAD_ANCHOR: Record<FrameName, readonly [number, number]> = {
   WALK_B: [6, 0],
   STANDING: [6, 0],
   STANDING_MUG: [6, 0],
+  STANDING_CUP: [6, 0],
 };
 
 // Hair layers over the bare head; a seed picks one. Colors follow --hair.

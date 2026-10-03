@@ -5,13 +5,17 @@ import {
   MIN_HEIGHT,
   MIN_SCALE,
   MIN_WIDTH,
+  WALL_HEIGHT,
   deskCell,
+  fitFor,
+  floorCorners,
   layoutOffice,
   placeBubbles,
   project,
   type BubbleBox,
   type PlacedBubble,
 } from "./iso";
+import { roomShell } from "./room";
 
 describe("project", () => {
   it("maps grid x,y to the screen diamond and depth to x+y", () => {
@@ -96,11 +100,13 @@ describe("layoutOffice", () => {
     expect(l.desks[0].y).toBe(l.origin.y);
     expect(l.scale).toBeGreaterThanOrEqual(MIN_SCALE);
     expect(l.scale).toBeLessThanOrEqual(1);
+    // Room px are anchored, so "inside the room" is inside the padded bounds, not 0..width.
+    const pad = (l.width - (l.bounds.maxX - l.bounds.minX)) / 2;
     for (const d of l.desks) {
-      expect(d.x).toBeGreaterThan(0);
-      expect(d.x).toBeLessThan(l.width);
-      expect(d.y).toBeGreaterThan(0);
-      expect(d.y).toBeLessThan(l.height);
+      expect(d.x).toBeGreaterThan(l.bounds.minX - pad);
+      expect(d.x).toBeLessThan(l.bounds.minX - pad + l.width);
+      expect(d.y).toBeGreaterThan(l.bounds.minY - pad);
+      expect(d.y).toBeLessThan(l.bounds.minY - pad + l.height);
     }
     const big = layoutOffice(24, { width: MIN_WIDTH, height: MIN_HEIGHT });
     expect(big.scale).toBe(MIN_SCALE);
@@ -115,6 +121,92 @@ describe("layoutOffice", () => {
         expect(Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y)).toBeGreaterThanOrEqual(
           HIT_MIN,
         );
+  });
+});
+
+describe("anchored origin (eng D2)", () => {
+  const view = { width: 1600, height: 1000 };
+  const rowsRange = [1, 2, 3, 4, 5, 6];
+  const at = (rows: number) => layoutOffice(rows * DESKS_PER_ROW, view);
+
+  it("never moves a desk in room px when a row is added, and desks[0] is the origin", () => {
+    const base = at(1);
+    for (const rows of rowsRange) {
+      const l = at(rows);
+      expect(l.rows).toBe(rows);
+      expect(l.origin).toEqual(base.origin);
+      expect(l.desks[0]).toMatchObject(l.origin);
+      for (let i = 0; i < base.desks.length; i++)
+        expect([l.desks[i].x, l.desks[i].y]).toEqual([base.desks[i].x, base.desks[i].y]);
+    }
+  });
+
+  it("keeps the room shell's back wall, door, coffee station and dispenser put", () => {
+    const base = roomShell(at(1));
+    for (const rows of rowsRange) {
+      const s = roomShell(at(rows));
+      expect(s.floor[0]).toEqual(base.floor[0]);
+      expect(s.floor[1]).toEqual(base.floor[1]);
+      expect(s.door).toEqual(base.door);
+      expect(s.coffee).toEqual(base.coffee);
+      expect(s.dispenser).toEqual(base.dispenser);
+      expect(s.plantBush).toEqual(base.plantBush);
+      expect(s.rightWall).toEqual(base.rightWall);
+    }
+  });
+
+  it("grows the bounds only outward: left and down", () => {
+    let prev = at(1).bounds;
+    for (const rows of rowsRange.slice(1)) {
+      const b = at(rows).bounds;
+      expect(b.minX).toBeLessThan(prev.minX);
+      expect(b.maxY).toBeGreaterThan(prev.maxY);
+      expect(b.maxX).toBe(prev.maxX);
+      expect(b.minY).toBe(prev.minY);
+      prev = b;
+    }
+  });
+
+  // The pre-anchor layout: origin from the left floor corner, the room box centered by CSS.
+  const SLACK = 16;
+  const old = (rows: number, v: { width: number; height: number }) => {
+    const c = floorCorners(rows);
+    const origin = { x: SLACK - c.left.x, y: SLACK - (c.top.y - WALL_HEIGHT) };
+    const width = c.right.x - c.left.x + SLACK * 2;
+    const height = c.bottom.y - (c.top.y - WALL_HEIGHT) + SLACK * 2;
+    const scale = Math.max(MIN_SCALE, Math.min(1, v.width / width, v.height / height));
+    return { origin, width, scale, margin: Math.max(0, (v.width - width * scale) / 2) };
+  };
+
+  it("lands every desk where the old layout did, on screen, for rows 1-4 and several viewports", () => {
+    const views = [
+      { width: 1600, height: 1000 },
+      { width: 1200, height: 800 },
+      { width: 900, height: 560 },
+      { width: 800, height: 500 },
+      { width: 4000, height: 3000 },
+    ];
+    for (const v of views)
+      for (const rows of [1, 2, 3, 4]) {
+        const l = layoutOffice(rows * DESKS_PER_ROW, v);
+        const o = old(rows, v);
+        expect(l.scale).toBe(o.scale);
+        expect(l.fit.scale).toBe(o.scale);
+        for (const d of l.desks) {
+          const p = project(d.col, d.row);
+          const oldX = (p.x + o.origin.x) * o.scale + o.margin;
+          const oldY = (p.y + o.origin.y) * o.scale;
+          expect(d.x * l.fit.scale + l.fit.x).toBeCloseTo(oldX, 6);
+          expect(d.y * l.fit.scale + l.fit.y).toBeCloseTo(oldY, 6);
+        }
+      }
+  });
+
+  it("fitFor centers the padded bounds and keeps the top slack", () => {
+    const b = { minX: 16, maxX: 1016, minY: 16, maxY: 516 };
+    const f = fitFor(b, 0.5, { width: 1400, height: 900 });
+    expect(f).toEqual({ scale: 0.5, x: (1400 - 1032 * 0.5) / 2, y: 0 });
+    expect(fitFor(b, 1, { width: 500, height: 900 }).x).toBe(0);
   });
 });
 
@@ -137,6 +229,34 @@ const expectNoVisibleOverlap = (out: PlacedBubble[]) => {
       expect(hit).toBe(false);
     }
 };
+
+describe("layer box extent (V9b)", () => {
+  const views = [
+    { width: 1280, height: 800 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+    { width: 800, height: 500 },
+  ];
+  it("keeps every layer box inside the room's own screen extent and the viewport", () => {
+    for (const view of views)
+      for (let rows = 1; rows <= 6; rows++) {
+        const l = layoutOffice(rows * DESKS_PER_ROW, view);
+        const margin = Math.max(0, (view.width - l.width * l.scale) / 2);
+        const roomRight = margin + l.width * l.scale;
+        // The layer and the room-shell svg share this box (both at room x 0, y 0); the
+        // overlay container is the full-width scene box, so it never leaves the viewport.
+        const box = l.box;
+        const left = l.fit.x;
+        const right = l.fit.x + box.width * l.scale;
+        const bottom = l.fit.y + box.height * l.scale;
+        const where = `${view.width}x${view.height} rows ${rows}`;
+        expect(right, where).toBeLessThanOrEqual(roomRight + 0.01);
+        expect(bottom, where).toBeLessThanOrEqual(l.scrollHeight + 0.01);
+        expect(left, where).toBeGreaterThanOrEqual(margin - 0.01);
+        if (l.scale > MIN_SCALE) expect(right, where).toBeLessThanOrEqual(view.width + 0.01);
+      }
+  });
+});
 
 describe("placeBubbles", () => {
   it("returns nothing for 0 bubbles", () => {

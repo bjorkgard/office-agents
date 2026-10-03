@@ -6,11 +6,13 @@ A local web app that shows your running Claude Code agents and subagents as peop
 
 Run it with `vp dev` and open the page. Every recently active Claude Code session appears as a character sitting at a computer (only macOS is exercised at first). Agents of the same project wear the same shirt color, and each gets a generated name and gender that stay the same across reloads.
 
-- **Working:** the character types at the desk, and the screen glows.
-- **Subagents:** they walk in and hand paper to and from the parent agent.
-- **Waiting for subagents:** the character takes a coffee break.
+- **Working:** the character types at the desk, and the screen shows scrolling lines. A waiting agent's screen stays half lit; every other screen is dark.
+- **Subagents:** they walk in, take a sheet of paper from the parent's desk (it fades when the work is done), then sit at an empty desk and work on their own laptop or tablet. When done they hand the paper back and walk out.
+- **Waiting for subagents:** the character stays at the desk and takes short, random drink breaks, to the coffee machine or the water dispenser. The schedule is the same after a reload.
 - **Needs you:** the character waves and a speech bubble appears. A chip in the top bar, a tab title count `(N)` and a dot on the tab icon show who is waiting. At first this is a heuristic (the last message ends with a question mark, or a tool call has no result for a while), so it can wave falsely or miss a request. The hooks adapter on the roadmap makes it exact.
 - **Done:** a subagent walks out when its result returns. A top-level agent stays at its desk, idle, and walks out after a quiet period.
+
+The room itself is alive too. Four desks per row, in two alternating layouts (tidy and cluttered); a row is added when subagents need desks (up to 24 desks) and goes about a minute after the demand drops, with the whole room easing to its new size. The wall clock shows the real local time. Windows on the back walls show a night, dusk, overcast, rain, snow or late-afternoon view that follows the local hour, with a patch of light on the floor. All of it is decoration: it never changes an agent's state, and with reduced motion it stands still.
 
 **What each banner means** (middle of the top bar):
 
@@ -25,7 +27,7 @@ Where to look: the `vp dev` terminal prints a feed log line, and `GET /__office/
 
 The feed reads the transcripts Claude Code already writes in `~/.claude/projects`. Those can contain file contents and secrets, so the feed runs inside the Vite dev server and is meant to refuse any request when the dev server is not bound to localhost (for example with `vp dev --host`).
 
-Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md). Visual rules: [DESIGN.md](DESIGN.md). Build order: [BUILD_TODO.md](BUILD_TODO.md). Phase 0 art check: [docs/designs/phase-0-sprite-notes.md](docs/designs/phase-0-sprite-notes.md). Third-party notices: [NOTICE](NOTICE). Deferred ideas: [TODOS.md](TODOS.md).
+Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/designs/office-agents-isometric-office.md); office-life plan: [docs/designs/office-life-ceo-review.md](docs/designs/office-life-ceo-review.md). Visual rules: [DESIGN.md](DESIGN.md). Build order: [BUILD_TODO.md](BUILD_TODO.md). Phase 0 art check: [docs/designs/phase-0-sprite-notes.md](docs/designs/phase-0-sprite-notes.md). Third-party notices: [NOTICE](NOTICE). Deferred ideas: [TODOS.md](TODOS.md).
 
 ## Roadmap
 
@@ -40,6 +42,7 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 - [x] Subagent walk-in and paper handoff
 - [x] Wave, speech bubble and tab title count
 - [x] Reduced motion, keyboard and screen reader support
+- [x] Office life: wall clock, hour-matched windows and floor light, two desk kinds, working screens, desk paper, subagent laptops and tablets, drink breaks (coffee and water dispenser), rows that grow to 24 desks, debug hooks
 - [ ] End-to-end test with a fixture transcript
 - [ ] Hooks adapter for exact attention signals
 
@@ -50,4 +53,4 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 
 ## Development
 
-This project uses [Vite+](https://viteplus.dev/guide/); install its global `vp` CLI first. Then run `vp install` and `vp dev`. Run `vp check` before committing. `vp test` runs the Vitest suite. In dev only, open `/?art` to see the character and prop style sheet (poses, desk, appearance variants, a 12-agent row at 50%); the sheet is not part of the production build. Open `/?demo` to watch a scripted tour without real sessions (arrivals, work, a wave, a subagent trip, an idle coffee break); `/?demo=12` and `/?demo=24` show a crowded room. The demo feed is dev only and is not part of the production build.
+This project uses [Vite+](https://viteplus.dev/guide/); install its global `vp` CLI first. Then run `vp install` and `vp dev`. Run `vp check` before committing. `vp test` runs the Vitest suite. In dev only, open `/?art` to see the character and prop style sheet (poses, desk, appearance variants, a 12-agent row at 50%); the sheet is not part of the production build. Open `/?demo` to watch a scripted tour without real sessions (arrivals, work, a wave, a subagent trip, an idle coffee break); `/?demo=12` and `/?demo=24` show a crowded room. The demo feed is dev only and is not part of the production build. Also dev only: `?scene=<id>` pins every window to one scene (dusk, night, rain, snow, overcast, afternoon), `?hour=<0-23>` forces the hour the window scene is chosen for, and `?seed=<text>` salts its weather variant. The scene exposes its state as `data-*` attributes for tests and bug reports (`data-rows`, `data-desks`, `data-desk-kind`, `data-screen`, `data-device`, `data-break`, `data-drink`, `data-window-scene`); see DESIGN.md, "Debug hooks".

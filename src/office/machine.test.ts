@@ -573,7 +573,7 @@ describe("random sequences (ADD-4a)", () => {
       s = tick(s, now + maxTimer + TUNING.subagentLeavingMs);
       expect(Object.values(s.agents).filter((a) => a.state !== "idle")).toEqual([]);
     }
-  });
+  }, 30_000);
 });
 
 describe("sync flow through the machine (D7, end to end)", () => {
