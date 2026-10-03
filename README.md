@@ -43,7 +43,7 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 - [x] Wave, speech bubble and tab title count
 - [x] Reduced motion, keyboard and screen reader support
 - [x] Office life: wall clock, hour-matched windows and floor light, two desk kinds, working screens, desk paper, subagent laptops and tablets, drink breaks (coffee and water dispenser), rows that grow to 24 desks, debug hooks
-- [ ] End-to-end test with a fixture transcript
+- [x] End-to-end test with fixture transcripts (Playwright, `vp run e2e`)
 - [ ] Hooks adapter for exact attention signals
 
 ### Roadmap rules
@@ -54,3 +54,5 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 ## Development
 
 This project uses [Vite+](https://viteplus.dev/guide/); install its global `vp` CLI first. Then run `vp install` and `vp dev`. Run `vp check` before committing. `vp test` runs the Vitest suite. In dev only, open `/?art` to see the character and prop style sheet (poses, desk, appearance variants, a 12-agent row at 50%); the sheet is not part of the production build. Open `/?demo` to watch a scripted tour without real sessions (arrivals, work, a wave, a subagent trip, an idle coffee break); `/?demo=12` and `/?demo=24` show a crowded room. The demo feed is dev only and is not part of the production build. Also dev only: `?scene=<id>` pins every window to one scene (dusk, night, rain, snow, overcast, afternoon), `?hour=<0-23>` forces the hour the window scene is chosen for, and `?seed=<text>` salts its weather variant. The scene exposes its state as `data-*` attributes for tests and bug reports (`data-rows`, `data-desks`, `data-desk-kind`, `data-screen`, `data-device`, `data-break`, `data-drink`, `data-window-scene`); see DESIGN.md, "Debug hooks".
+
+End-to-end tests use Playwright and live in `e2e/`. Install the browser once with `npx playwright install chromium`, then run `vp run e2e`. Each scenario (core, live, twelve, stale, empty, visual) starts its own `vp dev` on ports 5201 to 5206 (`--strictPort`, so free those ports first) with a temporary transcript folder generated at run time, so the tests never read your real `~/.claude/projects` and do not disturb a dev server on port 5173. The feed folder and build cache come from the `OFFICE_E2E_ROOT` and `OFFICE_E2E_CACHE` environment variables, which only the test harness sets. `vp test` skips the `e2e/*.spec.ts` browser specs and runs the helper tests. The GitHub Actions workflow (`.github/workflows/ci.yml`) runs `vp check`, `vp test` and the E2E suite on every push and pull request; the `@visual` screenshot case is skipped in CI until the Linux baseline from the manual `update-baselines` job is committed to `e2e/__screenshots__`.

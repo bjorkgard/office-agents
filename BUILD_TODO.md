@@ -122,12 +122,14 @@ Plan and decisions: `docs/designs/office-life-ceo-review.md` (settled; do not re
 
 ## Phase 5: End to end (T7 / T13 / R4)
 
-- [ ] **5.1 Playwright and fixture.** Add Playwright as a devDependency, record a fixture transcript under `e2e/fixtures/`, add a `TUNING` override and transcript-root seam so the test needs no long waits.
-  - Files: `package.json`, `e2e/fixtures/*`
-- [ ] **5.2 Core E2E.** Asserts `data-state` per agent, plus refused-host and empty-fixture banner cases.
+- [x] **5.1 Playwright and fixture.** Implemented in the working tree. Add Playwright as a devDependency, add a per-scenario server and transcript-root seam so the test needs no long waits. No `TUNING` override: fixture timestamps are shifted with per-scenario age offsets instead, and fixtures are generated at run time (no committed `e2e/fixtures/`).
+  - Files: `package.json`, `playwright.config.ts`, `e2e/support.ts`
+- [x] **5.2 Core E2E.** Implemented in the working tree. Asserts `data-state` per agent, plus refused-host and empty-fixture banner cases.
   - Files: `e2e/office.spec.ts`
-- [ ] **5.3 Extended E2E (T13).** Reduced motion, recolor check of `data-shirt` plus the computed shirt fill, tab title and chip order, keyboard order and tag on focus, focus after the focused agent leaves, chip scroll-into-view when many chips overflow.
+- [x] **5.3 Extended E2E (T13).** Implemented in the working tree. Reduced motion, recolor check of `data-shirt` plus the computed shirt fill, tab title and chip order, keyboard order and tag on focus, focus after the focused agent leaves, chip case: +N overflow and narrow wrap (not scroll).
   - Verify: all E2E cases pass.
+  - Note: first run `npx playwright install chromium`, then run E2E with `vp run e2e`.
+  - Note: CI skips @visual until the Linux baseline from the `update-baselines` job is committed to `e2e/__screenshots__`, then remove `--grep-invert @visual` in ci.yml.
 
 ## Phase 6: Finish
 
