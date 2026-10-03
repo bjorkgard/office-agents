@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { breakPlan, COOLDOWN_MIN_MS, pickDrink } from "./breaks";
 import { layoutOffice } from "./iso";
 import { TUNING, type Agent } from "./machine";
-import { roomShell, type Point } from "./room";
+import { COFFEE_SPOTS, roomShell, type Point } from "./room";
 import { geometryFor, SEATED_FOOT, STANDING_FOOT } from "./scene-model";
 import {
   COFFEE_DWELL_MS,
@@ -293,6 +293,16 @@ describe("coffee trips", () => {
     return out;
   };
   const walkMs = (dist(seat, cup) / WALK_SPEED) * 1000;
+  // A waiting parent's plan is timed with the longest walk over every spot, not its own spot's.
+  const plannedWalk = (g: typeof geo, desk: number, drink: "coffee" | "water") =>
+    Math.max(
+      ...Array.from({ length: COFFEE_SPOTS }, (_, i) => {
+        const to = drink === "water" ? g.waterSpot(i) : g.coffeeSpot(i);
+        return (dist(stand(g.seat(desk)), to) / WALK_SPEED) * 1000;
+      }),
+    );
+  const planFor = (seed: string, g = geo, desk = 1) =>
+    breakPlan(seed, plannedWalk(g, desk, "coffee"), plannedWalk(g, desk, "water"));
 
   it("sits idle, walks to the coffee spot, dwells with the mug, walks back and sits", () => {
     const frames = run(IDLE_BEFORE_TRIP_MS + 2 * walkMs + COFFEE_DWELL_MS + 1000);
@@ -356,7 +366,7 @@ describe("coffee trips", () => {
     // cycles are in "drinks" below).
     const waitSeed = seedWhere((s) => [0, 1, 2, 3].every((c) => pickDrink(s, c) === "coffee"));
     const wctx: TripCtx = { ...ctx, seatPose: "seated-typing", seed: waitSeed };
-    const plan = breakPlan(waitSeed, walkMs, walkMs);
+    const plan = planFor(waitSeed);
     const w = (now: number, resumed: number | null = null, since = T0) =>
       waitTrip(wctx, since, resumed, now);
     const at = (cycle: number, off: number) => T0 + plan.start(cycle) + off;
@@ -479,7 +489,7 @@ describe("coffee trips", () => {
         (s) => new Set([0, 1, 2, 3, 4, 5].map((c) => pickDrink(s, c))).size === 2,
       );
       const c: TripCtx = { ...ctx, seatPose: "seated-typing", seed };
-      const plan = breakPlan(seed, walkMs, (dist(seat, water) / WALK_SPEED) * 1000);
+      const plan = planFor(seed);
       const w = (now: number) => waitTrip(c, T0, null, now);
       for (let cycle = 0; cycle < 6; cycle++) {
         const drink = pickDrink(seed, cycle);
@@ -505,7 +515,7 @@ describe("coffee trips", () => {
         (s) => new Set([0, 1, 2, 3, 4, 5].map((c) => pickDrink(s, c))).size === 2,
       );
       const c: TripCtx = { ...ctx, seatPose: "seated-typing", seed };
-      const plan = breakPlan(seed, walkMs, waterWalkMs);
+      const plan = planFor(seed);
       const seen = new Set<string>();
       for (let cycle = 0; cycle < 6; cycle++) {
         const drink = plan.drink(cycle);
@@ -513,8 +523,9 @@ describe("coffee trips", () => {
         const walk = drink === "water" ? waterWalkMs : walkMs;
         const seatedAt = T0 + plan.start(cycle) + 2 * walk + plan.dwellMs(cycle);
         const next = T0 + plan.start(cycle + 1);
-        // the seated rest is exactly the plan's cooldown, never under 20 s
-        expect(next - seatedAt).toBeCloseTo(plan.cooldownMs(cycle), 6);
+        // the seated rest is the plan's cooldown plus the walk this spot saves, never under 20 s
+        const saved = 2 * (plannedWalk(geo, 1, drink) - walk);
+        expect(next - seatedAt).toBeCloseTo(plan.cooldownMs(cycle) + saved, 6);
         expect(next - seatedAt).toBeGreaterThanOrEqual(COOLDOWN_MIN_MS);
         // and the wake-up lands exactly on the next cycle start, from anywhere in the tail
         for (const off of [1, plan.cooldownMs(cycle) / 2, plan.cooldownMs(cycle) - 1]) {
@@ -544,7 +555,7 @@ describe("coffee trips", () => {
               seatPose: "seated-typing",
               seed: `rest${d}`,
             };
-            const plan = breakPlan(cx.seed!, walkOf("coffee"), walkOf("water"));
+            const plan = planFor(cx.seed!, g, d);
             for (let cycle = 0; cycle < 8; cycle++) {
               const seatedAt =
                 plan.start(cycle) + 2 * walkOf(plan.drink(cycle)) + plan.dwellMs(cycle);
@@ -553,6 +564,86 @@ describe("coffee trips", () => {
               expect(plan.start(cycle + 1) - seatedAt).toBeGreaterThanOrEqual(COOLDOWN_MIN_MS);
             }
           }
+        }
+      }
+    });
+  });
+
+  describe("a waiting parent's breaks do not depend on its coffee spot", () => {
+    const seed = seedWhere(
+      (s) => new Set([0, 1, 2, 3, 4, 5].map((c) => pickDrink(s, c))).size === 2,
+    );
+    const ctxAt = (desk: number, spot: number): TripCtx => ({
+      geo,
+      desk,
+      spot,
+      seatPose: "seated-typing",
+      seed,
+    });
+    const spots = [0, COFFEE_SPOTS - 1];
+    const CYCLES = 6;
+
+    it("has the same cycle starts and phase boundaries whatever the spot, over several cycles", () => {
+      const awayStarts = (spot: number) => {
+        const c = ctxAt(1, spot);
+        const out: number[] = [];
+        let prev = "seated";
+        const plan = planFor(seed);
+        for (let t = 0; t < plan.start(CYCLES); t += 25) {
+          const phase = waitTrip(c, 0, null, t).phase;
+          if (prev === "seated" && phase !== "seated") out.push(t);
+          prev = phase;
+        }
+        return out;
+      };
+      const a = awayStarts(spots[0]);
+      expect(a).toHaveLength(CYCLES);
+      expect(awayStarts(spots[1])).toEqual(a);
+      // and each of those is within one sample of the plan's own start
+      const plan = planFor(seed);
+      a.forEach((t, i) => {
+        expect(t - plan.start(i)).toBeLessThan(25);
+        expect(t - plan.start(i)).toBeGreaterThanOrEqual(0);
+      });
+    });
+
+    it("lasts exactly the plan interval in every cycle, for every spot, desk and drink", () => {
+      const seen = new Set<string>();
+      for (const desk of [0, 1, 3]) {
+        const plan = planFor(seed, geo, desk);
+        const home = stand(geo.seat(desk));
+        for (let spot = 0; spot < COFFEE_SPOTS; spot++) {
+          const c = ctxAt(desk, spot);
+          for (let cycle = 0; cycle < CYCLES; cycle++) {
+            seen.add(plan.drink(cycle));
+            const next = plan.start(cycle + 1);
+            const before = waitTrip(c, 0, null, next - 1);
+            expect(before, `d${desk} s${spot} c${cycle}`).toMatchObject({ phase: "seated" });
+            expect(dist(before, home)).toBeLessThan(1e-6);
+            const on = waitTrip(c, 0, null, next);
+            expect(on.phase).toBe("to-coffee");
+            expect(dist(on, home)).toBeLessThan(1e-6);
+            expect(dist(before, on)).toBeLessThan(1e-6);
+          }
+        }
+      }
+      expect([...seen].sort()).toEqual(["coffee", "water"]);
+    });
+
+    it("still stands at its own spot during at-coffee, for each spot", () => {
+      const plan = planFor(seed);
+      for (let spot = 0; spot < COFFEE_SPOTS; spot++) {
+        const c = ctxAt(1, spot);
+        for (let cycle = 0; cycle < CYCLES; cycle++) {
+          const drink = plan.drink(cycle);
+          const to = drink === "water" ? geo.waterSpot(spot) : geo.coffeeSpot(spot);
+          const walk = (dist(seat, to) / WALK_SPEED) * 1000;
+          const s = waitTrip(c, 0, null, plan.start(cycle) + walk + 10);
+          expect(s).toMatchObject({
+            phase: "at-coffee",
+            pose: drink === "water" ? "standing-cup" : "standing-mug",
+          });
+          expect(dist(s, to)).toBeLessThan(1e-6);
         }
       }
     });

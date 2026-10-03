@@ -1,4 +1,5 @@
 import { breakPlan, pickDrink, type Drink } from "./breaks";
+import { COFFEE_SPOTS } from "./room";
 import { SEATED_FOOT, STANDING_FOOT, type Geometry, type Point } from "./scene-model";
 import type { Agent } from "./machine";
 import { byKey } from "./selectors";
@@ -401,11 +402,23 @@ const idleTrack = (ctx: TripCtx, idleSince: number, resumed: number | null) =>
     resumed,
   );
 
+/** One-way walk time from the agent's seat to `drink`'s place at spot `spot`. */
+const walkMs = (ctx: TripCtx, drink: Drink, spot: number) =>
+  (dist(stand(ctx.geo.seat(ctx.desk)), drinkAt({ ...ctx, spot }, drink).spot) / WALK_SPEED) * 1000;
+
+/**
+ * The walk a plan is timed with: the longest over every spot, so the cycle boundaries do not
+ * depend on which spot the agent was given (which differs live and after a reload).
+ */
+const plannedWalkMs = (ctx: TripCtx, drink: Drink) => {
+  let max = 0;
+  for (let spot = 0; spot < COFFEE_SPOTS; spot++) max = Math.max(max, walkMs(ctx, drink, spot));
+  return max;
+};
+
 /** One break after another, from the plan: cycle `i` is its own finite set of legs. */
 function waitPlan(ctx: TripCtx) {
-  const seat = stand(ctx.geo.seat(ctx.desk));
-  const walkTo = (drink: Drink) => (dist(seat, drinkAt(ctx, drink).spot) / WALK_SPEED) * 1000;
-  return breakPlan(ctx.seed ?? "", walkTo("coffee"), walkTo("water"));
+  return breakPlan(ctx.seed ?? "", plannedWalkMs(ctx, "coffee"), plannedWalkMs(ctx, "water"));
 }
 
 function waitTrack(ctx: TripCtx, resumed: number | null): Track {
@@ -413,7 +426,13 @@ function waitTrack(ctx: TripCtx, resumed: number | null): Track {
   const cycleOf = (e: number) => {
     const { cycle, start } = plan.locate(e);
     const drink = plan.drink(cycle);
-    return { start, segs: tripSegs(ctx, drink, 0, plan.dwellMs(cycle), plan.cooldownMs(cycle)) };
+    // The real walks are shorter than the planned ones: the seated cooldown absorbs the
+    // difference, so the cycle lasts exactly its plan interval.
+    const slack = 2 * (plannedWalkMs(ctx, drink) - walkMs(ctx, drink, ctx.spot));
+    return {
+      start,
+      segs: tripSegs(ctx, drink, 0, plan.dwellMs(cycle), plan.cooldownMs(cycle) + slack),
+    };
   };
   return withResume(
     ctx,

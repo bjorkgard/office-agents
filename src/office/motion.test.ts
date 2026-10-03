@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { COFFEE_DWELL_MS, IDLE_BEFORE_TRIP_MS, RETURN_CAP_MS, WALK_SPEED } from "./choreo";
+import {
+  COFFEE_DWELL_MS,
+  IDLE_BEFORE_TRIP_MS,
+  RETURN_CAP_MS,
+  WALK_SPEED,
+  waitTrip,
+} from "./choreo";
 import { breakPlan, pickDrink } from "./breaks";
 import { layoutOffice } from "./iso";
 import { agentKey, type Agent } from "./machine";
@@ -17,6 +23,7 @@ import {
   type Frame,
   type Motion,
   type MotionInput,
+  type Trip,
 } from "./motion";
 import { COFFEE_SPOTS } from "./room";
 import { geometryFor, SEATED_FOOT, STANDING_FOOT } from "./scene-model";
@@ -285,9 +292,20 @@ describe("coffee trips", () => {
     const seat = stand(input(others, seats).geo.seat(0));
     const cup = input(others, seats).geo.coffeeSpot(trip.spot);
     const walk = (Math.hypot(seat.x - cup.x, seat.y - cup.y) / WALK_SPEED) * 1000;
-    const wspot = input(others, seats).geo.waterSpot(trip.spot);
-    const waterWalk = (Math.hypot(seat.x - wspot.x, seat.y - wspot.y) / WALK_SPEED) * 1000;
-    const plan = breakPlan(parent.key, walk, waterWalk);
+    // The plan is timed with the longest walk over every spot, whichever spot the trip got.
+    const g0 = input(others, seats).geo;
+    const longest = (spotOf: (i: number) => { x: number; y: number }) =>
+      Math.max(
+        ...Array.from(
+          { length: COFFEE_SPOTS },
+          (_, i) => (Math.hypot(seat.x - spotOf(i).x, seat.y - spotOf(i).y) / WALK_SPEED) * 1000,
+        ),
+      );
+    const plan = breakPlan(
+      parent.key,
+      longest((i) => g0.coffeeSpot(i)),
+      longest((i) => g0.waterSpot(i)),
+    );
     const at = (c: number, off: number) => NOW + plan.start(c) + off;
     // Each cycle picks its drink and is timed with that drink's own walk.
     const water = (c: number) => pickDrink(parent.key, c) === "water";
@@ -673,6 +691,52 @@ describe("coffee spots", () => {
     expect(t.size).toBe(COFFEE_SPOTS);
     expect(new Set([...t.values()].map((x) => x.spot)).size).toBe(COFFEE_SPOTS);
     expect(Math.max(...[...t.values()].map((x) => x.spot))).toBe(COFFEE_SPOTS - 1);
+  });
+});
+
+describe("waiting parents after a reload", () => {
+  it("keeps every cycle start whichever spot arrival order gave the agent", () => {
+    const wait = (id: string) =>
+      agent(id, null, {
+        state: "waiting-on-subagents",
+        waitingOn: ["a"],
+        openTools: { a: { startedAt: NOW - 30_000, isSubagent: true } },
+      });
+    const A = wait("sA");
+    const B = wait("sB");
+    const seats = { sA: 0, sB: 2 };
+    const g = geometryFor(layoutOffice(3, view));
+    // live: B was seen first (spot 0), A second; reload: empty prev, key order (A spot 0)
+    const live = updateTrips(updateTrips(new Map(), [B], seats, NOW), [A, B], seats, NOW);
+    const reload = updateTrips(new Map(), [A, B], seats, NOW);
+    expect(live.get(A.key)!.spot).not.toBe(reload.get(A.key)!.spot);
+    expect(live.get(B.key)!.spot).not.toBe(reload.get(B.key)!.spot);
+    const starts = (a: Agent, trips: Map<string, Trip>, desk: number) => {
+      const c = {
+        geo: g,
+        desk,
+        spot: trips.get(a.key)!.spot,
+        seatPose: "seated-typing" as const,
+        seed: a.key,
+      };
+      const since = trips.get(a.key)!.since;
+      const out: number[] = [];
+      let prev = "seated";
+      for (let t = 0; t < 400_000; t += 25) {
+        const phase = waitTrip(c, since, null, since + t).phase;
+        if (prev === "seated" && phase !== "seated") out.push(t);
+        prev = phase;
+      }
+      return out;
+    };
+    for (const [a, desk] of [
+      [A, 0],
+      [B, 2],
+    ] as const) {
+      const s = starts(a, live, desk);
+      expect(s.length).toBeGreaterThan(3);
+      expect(starts(a, reload, desk)).toEqual(s);
+    }
   });
 });
 
