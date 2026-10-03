@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.0.0] - 2026-10-03
+
+### Added
+
+- The room feels alive. The wall clock now shows the real local time, and the windows show a night, dusk, rain, snow, overcast or afternoon view that follows the hour, with clouds, rain or snow drifting past and a faint patch of light on the floor.
+- Desks come in two layouts, and every working agent's monitor shows scrolling lines. A waiting agent's screen stays half lit and an idle agent's screen goes dark, so you can read the room at a glance.
+- When a parent hands work to a subagent, a sheet of paper appears on its desk and fades away when the work is done. Subagents work on a laptop or a tablet.
+- A waiting parent takes short, random breaks, now to a coffee machine or a new water dispenser (the drink changes the mug it carries), then goes back to its desk and takes another break later. Reloading the page keeps the same schedule.
+- The room grows a row when many subagents run at once, up to 24 desks. Extra helpers stand beside their parent or queue at the door, and the room eases to its new size and shrinks again after about a minute.
+- Debug hooks for tests and bug reports: `data-rows`, `data-desks`, `data-desk-kind`, `data-screen`, `data-device`, `data-break`, `data-drink` and `data-window-scene`, plus development-only `?scene=`, `?hour=` and `?seed=` overrides, shown on the `?art` style sheet.
+
+### Changed
+
+- Name tags, hit areas and speech bubbles now ease with the room when it resizes instead of jumping.
+- The style sheet at `?art` shows every new item at full and half size, including a 24-desk wall.
+
+### Fixed
+
+- The clock's second hand and the screen stripes now use the right colours (their colour variables were not defined where they were drawn).
+- A long timer for the desk paper can no longer fire immediately and re-render the room in a loop after a wall-clock change.
+
 ## [0.2.0.0] - 2026-10-02
 
 ### Added

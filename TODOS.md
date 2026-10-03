@@ -92,6 +92,172 @@
 **Priority:** P3
 **Depends on:** Bubble layout and hit-area spacing (M9) and the M10 profiling timings
 
+## Office life (make the room feel alive)
+
+Nine visual updates from the user, 2026-10-02. Goal: the room should never look dead. Order after the CEO review (docs/designs/office-life-ceo-review.md, 2026-10-02): V8, V6, V3, V2, V5, V7, V9, V4, V1, behind a behavior-preserving prep refactor of `Scene.tsx` and `planMotion`. V6 comes first among the desk items because it defines the desk-kind table (screen rect, paper slot, device slot) that V2, V3 and V4 consume; V9 anchors room coordinates so a new row does not move desks, and ships only with the M10 measurements.
+
+### Office life follow-ups from the 0.3.0.0 /ship review (2026-10-03)
+
+Skipped by the user at ship time; each is informational and has a file reference.
+
+#### M10: browser pass for row growth and the eased fit
+
+**What:** In Chrome and Safari at 12 and 24 agents, write down frame timings, Recalculate Style cost of a row change, Safari hit area at 50% scale, and tag, bubble and hit-area alignment during the ease. Record the numbers in DESIGN.md.
+
+**Why:** The plan requires the numbers before row growth is called done; nobody measured them (the /ship run accepted this risk).
+
+**Context:** Overlay positions use registered `--fit-*` custom properties, transitioned in `scene.css` (`.scene-overlay`). Also check the 5 s test timeouts under load, and the D4 style-sheet passes (24-agent room, grayscale, shadows-off) in `?art`.
+
+**Effort:** S (human ~1h)
+**Priority:** P1
+**Depends on:** None
+
+#### Frame cost and caches in the break and paper code
+
+**What:** Cache per-cycle trip segments so a waiting parent builds its timeline once per frame (`choreo.ts:381`), evict one plan instead of clearing all (`breaks.ts:112`), group subagents by session once (`paper.ts:139`), and memoize `DeskLayer`, `RoomDecor` and `RoomShell` (`Scene.tsx:300`).
+
+**Why:** Avoids garbage and re-render work with 24 waiting parents; unmeasured, so do it only if M10 shows pressure.
+
+**Context:** `settled` also keeps a rAF loop for the first 2 s of idle (`motion.ts:183`); `nextChange` already knows the wake time.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** M10 browser pass
+
+#### Reload-stable breaks and spot assignment
+
+**What:** A tool result resets `openTools[*].startedAt` (`machine.ts:252`) and coffee spots go out in key order on reload (`motion.ts:141`), so a reload can land mid-wait on a different break point. Record a stable `waitSince` on the agent and pick spots in that order.
+
+**Why:** The design promises that a reload resumes the same schedule.
+
+**Context:** Cosmetic and rare. Also: a very old transcript timestamp fills up to about 100,000 plan cycles inside render and stops breaks past the 30-day clamp (`motion.ts:93`, `breaks.ts:88`).
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+#### Clock and room robustness
+
+**What:** After a backward wall-clock step, `stepRowHold` keeps extra rows (`scene-model.ts:132`) and `desk-pop` stays on (`Scene.tsx:213`): reset `since` when `now < since`. A subagent first seen at `DESK_CAP` stays queued for life (`choreo.ts:159`), the desk clamp draws an out-of-range desk on the last desk (`scene-model.ts:153`), and seat indexes above 24 still grow the room (`scene-model.ts:86`). Cap `?seed` length in `main.tsx` (DEV only). Fix the stale `assignWorkDesks` doc, "rooms never grow" (`choreo.ts:135`).
+
+**Why:** Edge cases and doc drift from the final /ship review passes.
+
+**Context:** Also in this group: resize rebuilds geometry and restarts every character loop (`Scene.tsx:214`, key the geometry on rows only), the scene height snaps while content eases on shrink (`Scene.tsx:446`), the desk paper blinks if a new span starts mid-fade (`DeskLayer.tsx:111`), and `@property`-less browsers snap the overlay while the room eases (`scene.css:19`).
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+#### Accessibility of the scene root and tags
+
+**What:** Give the scene root a `role` so its label is exposed, and `aria-hidden` on the `.tag` divs (each hit button already names the agent).
+
+**Why:** Screen readers ignore `aria-label` on a plain div and may read each agent twice (`Scene.tsx:439`).
+
+**Context:** From the design specialist in the final review pass; not run through a screen reader.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+#### Stronger tests for the office-life items
+
+**What:** Slat geometry test is presence-only (`decor.test.ts:539`), overflow test does not assert standing and queue slots (`Scene.test.tsx:546`), loose `+1` match (`Scene.test.tsx:145`), tautological counter (`motion.test.ts:451`), DST tests skip under UTC, heavy Scene renders risk the 5 s timeout, and Scene's `layout.box`, desk pop-in and the rAF loop wiring have no direct test. A browser test for the `Character` loop would close the last two.
+
+**Why:** Several tests would still pass if the thing they name broke.
+
+**Context:** Repo-wide sweep: run /test-audit. `overlayPoints` is now a test oracle only (`motion.ts`); test `overlayCalc` output directly.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### Deferred from the Office life CEO review (2026-10-02)
+
+#### Per-tool-kind screen content (follow-up to V3)
+
+**What:** Screens show what the agent is doing (read, edit, shell, search) instead of one generic animation.
+
+**Why:** A glance tells reading from editing from running a shell.
+
+**Context:** `shared/events.ts` carries only a tool id and `isSubagent`, by the privacy rule. Needs a closed enum kind (read, edit, shell, search, other) mapped in `server/normalize.ts` from the tool name (the raw name never leaves the server; see "Fixture id salt and tool-name allowlist"), the `parseAgentEvent` spec, fixtures, a leak test, and four screen variants in the V3 overlay. The hooks adapter could supply the kind instead.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P3
+**Depends on:** V3
+
+#### Idle fillers at the desk (follow-up to V5)
+
+**What:** A waiting parent seated between breaks stretches, looks around, sips from the mug or checks a phone.
+
+**Why:** The seated parent keeps moving between coffee trips.
+
+**Context:** 2 to 4 new seated frames drawn by hand in `src/office/sprites.ts` (the grid generator is not in the repo), wired through `poses.ts`, `swap.ts`, `loopOf` in `Character.tsx` and `art.test.ts`. The sip filler can reuse the V7 drink prop.
+
+**Effort:** M (human ~1 day / CC ~45min)
+**Priority:** P3
+**Depends on:** V5, V7
+
+#### Desk status light
+
+**What:** A small lit dot on each desk: amber while the agent waits, green while it works, off when idle.
+
+**Why:** Waiting is visible at a glance at 50% scale, where tags and bubbles are small.
+
+**Context:** A fourth waiting cue next to ring, bubble and tag wave (DESIGN 8B), so check it adds value. Draw it as a CSS overlay beside the V3 screen overlay, positioned from the desk-kind table. Token colors only; the green may need a new art token. Steady, not pulsing, under reduced motion.
+
+**Effort:** S (human ~3h / CC ~20min)
+**Priority:** P4
+**Depends on:** V6, V3
+
+#### Paper tray count on desks
+
+**What:** A tray on each desk fills with up to 3 sheets as the session's subagents return.
+
+**Why:** A persistent sign of how much finished subagent work a parent got back.
+
+**Context:** New per-session counter in `src/office/machine.ts`, rebuilt from the snapshot replay so a reload keeps it; the tray slot is one more entry in the V6 desk-kind table. Check resumed sessions and resets so the count cannot disagree with reality.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P4
+**Depends on:** V2, V6
+
+#### Floor robot patrol
+
+**What:** A small pixel robot slides along a seeded lane in the aisle, parked under reduced motion.
+
+**Why:** Ambient motion when every agent is still.
+
+**Context:** CSS-only motion so no animation loop runs. The lane must stay clear of desks (`deskFootprint` in `room.ts`), and the free aisle changes as V9 adds rows, so decide the lane after V9. Stack by feet like floor props (`floorProp` in `Scene.tsx`).
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P4
+**Depends on:** V9
+
+#### Door ajar frame on arrivals and departures
+
+**What:** A second hand-drawn door frame shows while a subagent comes in or goes out.
+
+**Why:** Arrivals and departures visibly use the door.
+
+**Context:** New `DOOR_AJAR` grid, 20x60 cells, sized like `DOOR` and anchored at `WALL_ANCHOR.DOOR`. A pure `doorOpen(agents, now)` from `arrivedAt` and `leftAt` windows. Scene renders on events and a 15 s tick only, so a timer or the existing frame loop must close the door again. Static under reduced motion.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P4
+**Depends on:** None
+
+#### Wall dressing: bookshelf and picture-only posters
+
+**What:** A bookshelf and framed wall pictures, as in the picked mockup variant B (`~/.gstack/projects/office-agents/designs/office-life-windows-20261002/variant-B.png`).
+
+**Why:** Makes the room feel lived in.
+
+**Context:** From the design review (2026-10-02). No text anywhere in the room (DESIGN.md Principle 4), so posters are abstract pictures. The right wall is crowded (clock, counter, dispenser, windows), so place by the `WALL_LAYOUT` table and its no-overlap test. Pixel grid at 2px cells, existing tokens only, at least 2 cells for line features, check at 50% on the `?art` sheet.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P4
+**Depends on:** WALL_LAYOUT table (CEO T1), V1
+
 ## Feed hardening
 
 ### Verify the normalizer against real transcripts
@@ -435,3 +601,120 @@
 **Depends on:** None
 
 ## Completed
+
+### V1: Windows with a random outside world
+
+**What:** Windows on the walls showing a random outside scene per session (day, dusk, night, rain, snow, clouds, a passing bird or plane).
+
+**Why:** Gives the room a sense of place and time passing even when no agent moves.
+
+**Context:** Idea: pick the scene once per load, then let it change slowly; optionally follow the real local time of day, with a manual override in the dev style sheet. Draw the scene inside the window clip path so it stays flat vector like the rest. Respect `prefers-reduced-motion` (static sky, no rain). Keep the glass light off the characters, or add a faint light patch on the floor for depth.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P3
+**Depends on:** None
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V2: Handoff paper lands on the desk, not the screen
+
+**What:** When a subagent leaves the paper, it ends up lying on the desk surface, not on the monitor.
+
+**Why:** The paper currently reads as pasted on the screen; the desk is where a physical handoff would rest.
+
+**Context:** Re-anchor the paper end position to a desk-top slot (per desk type, see V6) and draw it in desk perspective. Idea: the paper stays visible until the parent agent picks it up, then fades or is filed in a tray.
+
+**Effort:** S (human ~3h / CC ~20min)
+**Priority:** P1
+**Depends on:** None (re-check anchor after V6 and V9)
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V3: Animate every active screen
+
+**What:** Every screen on an active (working) desk shows animation: scrolling code lines, a blinking cursor, a spinner or test bars. Idle screens go dark or show a screensaver.
+
+**Why:** A lit, moving screen is the strongest "someone is working here" cue.
+
+**Context:** Idea: vary the content by tool kind (read, edit, shell, search) so a glance shows what the agent is doing. Use CSS animations on shared symbols, not per-frame JS, to stay inside the DOM budget (see "Share character drawings via symbols"). Reduced-motion path: a static lit screen.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P1
+**Depends on:** None
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V4: Visible subagent typing on varied devices
+
+**What:** Subagents show a typing pose on their own device: laptop, tablet or desktop monitor, chosen per agent.
+
+**Why:** Parent and subagent are told apart at a glance, and the room gets variety.
+
+**Context:** Idea: parent agents keep the full desk monitor; subagents get a laptop or iPad-style tablet (propped or flat) so the extra desks V9 spawns stay small. Needs a typing pose variant for each device (hands position differs for a tablet). Device is picked from a stable hash of the agent id so it never flips between renders. Screens animate per V3.
+
+**Effort:** M (human ~1 day / CC ~45min)
+**Priority:** P2
+**Depends on:** V3, V9
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V5: Parent agent coffee break is short and random
+
+**What:** A waiting parent agent walks to the coffee station only for a random 5 to 20 seconds, then returns to the desk and keeps waiting there (idle at the desk, not stuck at the machine).
+
+**Why:** Today waiting reads as endless coffee drinking, which looks wrong when a subagent runs for minutes.
+
+**Context:** Idea: after the return, a cooldown (random 20 to 60s) before the next break, and idle fillers at the desk in between (stretch, look around, sip a mug already on the desk, phone check). Keep the random source seedable so tests are deterministic, and keep `machine.ts` free of timers (`now` is passed in). Break choice also feeds V7.
+
+**Effort:** M (human ~1 day / CC ~30min)
+**Priority:** P1
+**Depends on:** None
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V6: Two desk types with different props
+
+**What:** Two desk designs (for example a tidy desk with plant and lamp, and a cluttered desk with mug, books and sticky notes), assigned per seat.
+
+**Why:** Identical desks make the room look generated.
+
+**Context:** Idea: add small per-desk personality props (plant, photo frame, figurine, headphones). Assign by seat index, not random per render, so desks do not change on re-layout. Draw as shared symbols (desk is already shared, R5). Must leave a clear desk-top slot for the paper (V2) and a spot for the device (V4).
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P2
+**Depends on:** None
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V7: Water dispenser and random coffee or water choice
+
+**What:** Add a water dispenser to the office. When an agent takes a break, pick coffee or water at random (weighted, for example 60/40), with a matching walk, drink pose and prop (mug or paper cup).
+
+**Why:** Variety in breaks; one extra prop makes the pantry corner feel real.
+
+**Context:** Idea: a small queue spot at each station so two agents do not stack on one tile, and a short gurgle bubble animation on the dispenser. Place it next to the coffee station (placement settled in step 4.10). Seedable random for tests.
+
+**Effort:** M (human ~1 day / CC ~40min)
+**Priority:** P2
+**Depends on:** V5
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V8: Wall clock that looks like a clock
+
+**What:** Fix the wall clock: it is off perspective and shows nothing. Draw a round face with hour marks, hands and a second hand, skewed onto the wall plane, showing the real local time.
+
+**Why:** A broken-looking prop undermines the whole scene; a ticking clock is cheap, constant life.
+
+**Context:** Idea: draw the face flat in a group, then apply the wall plane transform so the perspective matches the other wall items; update hands once per second (or once per minute with a smooth second hand via CSS). Reduced-motion: update once per minute, no sweep. Add to the dev style sheet for a visual check at 50% scale.
+
+**Effort:** S (human ~3h / CC ~20min)
+**Priority:** P1
+**Depends on:** None
+**Completed:** v0.3.0.0 (2026-10-03)
+
+### V9: Every subagent gets a desk; spawn desks on demand
+
+**What:** No agent stands. When subagents arrive and no desk is free, add desks (and move the layout) so each one sits; remove extra desks when subagents finish.
+
+**Why:** Standing agents look like a bug and break the "everyone is working" read.
+
+**Context:** Idea: grow the room in rows or a second cluster, with a smooth desk-appear animation (drop in, or slide in with a light pop) and a cap with a graceful fallback (for example shrink the scene scale, then add a second room row) so 24 agents still fit. Desk count follows live agent count with a short hysteresis so desks do not flicker in and out. Check hit-area spacing (M9) and the DOM budget at 12 and 24 agents (M10).
+
+**Effort:** L (human ~2 days / CC ~1.5h)
+**Priority:** P1
+**Depends on:** Bubble layout and hit-area spacing (M9)
+**Completed:** v0.3.0.0 (2026-10-03)
