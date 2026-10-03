@@ -22,7 +22,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+      # package.json devEngines requires npm 12.2.0 and the runner ships older npm; install it
+      # outside the repo before any npm command runs in it (so also no `cache: npm` above).
+      - run: cd "$RUNNER_TEMP" && npm install -g npm@12.2.0
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - run: npm ci
       - run: npx vp check
       - run: npx vp test
@@ -56,7 +63,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+      # package.json devEngines requires npm 12.2.0 and the runner ships older npm; install it
+      # outside the repo before any npm command runs in it (so also no `cache: npm` above).
+      - run: cd "$RUNNER_TEMP" && npm install -g npm@12.2.0
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
       - run: npm ci
       - name: Read Playwright version
         id: pw
