@@ -19,5 +19,13 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "shared", "server", "src/css.test.ts", "src/design-md.ts"]
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts",
+    "e2e",
+    "shared",
+    "server",
+    "src/css.test.ts",
+    "src/design-md.ts"
+  ]
 }

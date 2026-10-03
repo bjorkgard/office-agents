@@ -1,6 +1,6 @@
 {
   "name": "office-agents",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "tsc -b && vp build",
     "lint": "vp lint",
     "preview": "vp preview",
+    "e2e": "playwright test",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

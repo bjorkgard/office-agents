@@ -1,6 +1,10 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig, lazyPlugins } from "vite-plus";
+import { configDefaults } from "vite-plus/test/config";
+import { officeEnv } from "./e2e/support.ts";
 import { officeFeed } from "./server/feed-plugin.ts";
+
+const { root: feedRoot, cacheDir } = officeEnv(process.env);
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -31,5 +35,10 @@ export default defineConfig({
       },
     ],
   },
-  plugins: lazyPlugins(() => [react(), officeFeed()]),
+  ...(cacheDir === undefined ? {} : { cacheDir }),
+  test: { exclude: [...configDefaults.exclude, "e2e/**/*.spec.ts"] },
+  plugins: lazyPlugins(() => [
+    react(),
+    officeFeed(feedRoot === undefined ? {} : { root: feedRoot }),
+  ]),
 });
