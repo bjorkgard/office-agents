@@ -385,6 +385,42 @@ describe("fixture leak check (ET5)", () => {
     expect(sanitizeFileName("agent-abc123.meta.json")).toBe(`agent-${hashId("abc123")}.meta.json`);
     expect(sanitizeFileName("sess-1.jsonl")).toBe(`${hashId("sess-1")}.jsonl`);
   });
+
+  it("a salt changes every hash but keeps links between ids within one run", () => {
+    expect(hashId("abc123", "pepper")).not.toBe(hashId("abc123"));
+    expect(hashId("abc123", "pepper")).toBe(hashId("abc123", "pepper"));
+    expect(hashId("abc123", "pepper")).not.toBe(hashId("abc123", "salt"));
+    const line = (extra: object) =>
+      JSON.stringify({ type: "assistant", sessionId: "s", agentId: "a1", ...extra });
+    const use = {
+      message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash" }] },
+    };
+    const res = {
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1" }] },
+    };
+    const out = sanitizeTranscript([line(use), line(res)].join("\n"), "pepper");
+    expect(out).toContain(`"id":"${hashId("t1", "pepper")}"`);
+    expect(out).toContain(`"tool_use_id":"${hashId("t1", "pepper")}"`);
+    expect(out).toContain(`"agentId":"${hashId("a1", "pepper")}"`);
+    expect(out).not.toContain(hashId("t1"));
+    expect(sanitizeFileName("agent-abc123.jsonl", "pepper")).toBe(
+      `agent-${hashId("abc123", "pepper")}.jsonl`,
+    );
+  });
+
+  it("maps a tool name outside the known list to a fixed placeholder", () => {
+    const line = (name: string) =>
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "tool_use", id: "t", name }] },
+      });
+    const names = (name: string) =>
+      JSON.parse(sanitizeTranscript(line(name)).trim()).message.content[0].name;
+    expect(names("Bash")).toBe("Bash");
+    expect(names("SendMessage")).toBe("SendMessage");
+    expect(names("mcp__acme-payroll__fire_jane")).toBe("x");
+    expect(names("jane-doe-deploy")).toBe("x");
+  });
 });
 
 describe("over-long cwd", () => {
