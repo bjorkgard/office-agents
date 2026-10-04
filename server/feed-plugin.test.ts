@@ -1200,6 +1200,41 @@ describe("feed", () => {
     expect(feed.status().filesTracked).toBe(0);
   });
 
+  it("resends the seat after gone when a top-level file is truncated", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const feed = createFeed({ root, log: () => {} });
+    await feed.scanOnce();
+    const { res } = call(feed, fakeReq("/__office/events"));
+    truncateSync(file, 0);
+    writeFileSync(file, lines[0] + "\n");
+    await feed.scanOnce();
+    const types = res.written.map(frame).map((f) => f.type);
+    expect(types.indexOf("seat")).toBeGreaterThan(types.indexOf("gone"));
+    expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([
+      { type: "seat", sessionId: sessionOf("top-live"), desk: 0 },
+    ]);
+    expect(snapshotOf(feed).seats).toEqual({ [sessionOf("top-live")]: 0 });
+  });
+
+  it("sends no seat when a subagent file is truncated", async () => {
+    const session = sessionOf("sub-live");
+    putTop("p1", "top-live", undefined, session);
+    const sub = putSub("p1", "sub-live");
+    const feed = createFeed({ root, log: () => {} });
+    await feed.scanOnce();
+    const { res } = call(feed, fakeReq("/__office/events"));
+    const first = readFileSync(sub, "utf8").split("\n")[0];
+    truncateSync(sub, 0);
+    writeFileSync(sub, first + "\n");
+    await feed.scanOnce();
+    expect(gones(res)).toEqual([
+      { type: "gone", sessionId: session, agentId: agentOf("sub-live") },
+    ]);
+    expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([]);
+    expect(snapshotOf(feed).seats).toEqual({ [session]: 0 });
+  });
+
   it("purges the ring and sends gone when a file is truncated", async () => {
     const lines = fixtureLines("top-live");
     const file = putTop("p1", "top-live", lines.join("\n") + "\n");

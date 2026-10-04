@@ -918,7 +918,13 @@ export function createFeed(options: FeedOptions = {}) {
       if (file.agentId === null) releaseSeat(seats, file.sessionId);
       forget(file);
     },
-    onReset: forget,
+    onReset(file) {
+      forget(file);
+      // `gone` made clients drop the seat, but the table keeps it, so the replayed
+      // agent_started would not announce it again.
+      const desk = file.agentId === null ? seats.bySession.get(file.sessionId) : undefined;
+      if (desk !== undefined) send({ type: "seat", sessionId: file.sessionId, desk });
+    },
   });
 
   function status() {
