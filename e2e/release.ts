@@ -547,6 +547,8 @@ async function perf(): Promise<number> {
 // ---- hero -----------------------------------------------------------------------------
 
 export const HERO_PATH = join(import.meta.dirname, "..", "docs", "hero.png");
+/** Agents in the core fixture scene (e2e/office.spec.ts @visual). */
+const HERO_AGENTS = 4;
 const HERO_QUERY = "/?hour=14&seed=e2e&scene=afternoon";
 
 /** Playwright looks for browsers under $HOME; find them via the account's home so a different HOME still works. */
@@ -576,7 +578,13 @@ export async function hero(root: string = makeRunRoot(), out: string = HERO_PATH
         reducedMotion: "reduce",
       });
       await page.goto(office.url + HERO_QUERY);
-      await page.waitForSelector(".agent[data-state]", { state: "attached", timeout: SMOKE_MS });
+      // The core scene draws four agents (e2e/office.spec.ts @visual); the feed's first scan can
+      // deliver them one by one, so wait for all of them before the picture is taken.
+      await page.waitForFunction(
+        (n) => document.querySelectorAll(".agent[data-state]").length >= n,
+        HERO_AGENTS,
+        { timeout: SMOKE_MS },
+      );
       await page.evaluate(() => document.fonts.ready);
       mkdirSync(dirname(out), { recursive: true });
       await page.screenshot({ path: out });
