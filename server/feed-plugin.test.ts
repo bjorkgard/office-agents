@@ -196,6 +196,22 @@ describe("tailer", () => {
     expect(reads).toBe(5);
   });
 
+  it("a record claiming another session keeps the file's own session id", async () => {
+    putTop(
+      "p1",
+      "top-live",
+      readFileSync(join(fixtures, "top-live.jsonl"), "utf8").replaceAll(
+        sessionOf("top-live"),
+        "spoofed",
+      ),
+      "real-session",
+    );
+    const { t, events } = tailer();
+    await t.scanOnce();
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.sessionId === "real-session")).toBe(true);
+  });
+
   it("a throwing consumer does not deny the file", async () => {
     const file = putTop("p1", "top-live");
     let throwNext = true;
@@ -221,6 +237,107 @@ describe("tailer", () => {
     appendFileSync(file, fixtureLines("top-live")[2] + "\n");
     await t.scanOnce();
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it("a throwing line costs one line and logs once per file", async () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const boom = line(
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          stop_reason: "tool_use",
+          content: [
+            { type: "tool_use", id: "BOOM", name: "Agent", input: { run_in_background: true } },
+          ],
+        },
+      },
+      1,
+    );
+    const ok = (n: number) => line({ type: "user", message: { role: "user", content: "x" } }, n);
+    putTop("p1", "top-live", [ok(0), boom, ok(2), boom, ok(3)].join("\n") + "\n", "ps");
+    const set: typeof Map.prototype.set = Reflect.get(Map.prototype, "set");
+    Map.prototype.set = function (this: Map<unknown, unknown>, k: unknown, v: unknown) {
+      if (k === "BOOM") throw new Error("launch bug");
+      return set.call(this, k, v);
+    } as typeof Map.prototype.set;
+    const { t, events, logs } = tailer();
+    try {
+      await t.scanOnce();
+    } finally {
+      Map.prototype.set = set;
+    }
+    expect(events.length).toBeGreaterThan(0);
+    expect(t.status().drift.normalizer_error).toBe(2);
+    expect(logs.filter((l) => l.includes("normalizing failed"))).toHaveLength(1);
+    expect(logs.join("\n")).not.toContain('x"');
+  });
+
+  it("fills parentAgentId from a tracked launcher file, else null", async () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const launcher = [
+      line(
+        {
+          type: "assistant",
+          agentId: "amid",
+          message: {
+            role: "assistant",
+            stop_reason: "tool_use",
+            content: [
+              { type: "tool_use", id: "tu2", name: "Agent", input: { run_in_background: true } },
+            ],
+          },
+        },
+        1,
+      ),
+      line(
+        {
+          type: "user",
+          agentId: "amid",
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2" }] },
+          toolUseResult: { status: "async_launched", agentId: "kid" },
+        },
+        2,
+      ),
+    ];
+    const child = (id: string) =>
+      line(
+        {
+          type: "assistant",
+          agentId: id,
+          message: { role: "assistant", stop_reason: "tool_use", content: [] },
+        },
+        3,
+      );
+    putTop("p1", "top-live", line({ type: "user", message: { content: "x" } }, 0) + "\n", "ps");
+    const dir = join(root, "p1", "ps", "subagents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "agent-amid.jsonl"), launcher.join("\n") + "\n");
+    let skew = 0;
+    const { t, events } = tailer({ now: () => Date.now() + skew });
+    await t.scanOnce();
+    skew = 10_000; // past the tree-walk throttle so the new files are found
+    writeFileSync(join(dir, "agent-kid.jsonl"), child("kid") + "\n");
+    writeFileSync(join(dir, "agent-stray.jsonl"), child("stray") + "\n");
+    await t.scanOnce();
+    const started = (id: string) =>
+      events.find((e) => e.kind === "agent_started" && e.agentId === id);
+    expect(started("kid")).toMatchObject({ parentAgentId: "amid" });
+    expect(started("stray")).toMatchObject({ parentAgentId: null });
   });
 
   it("runs a later scan after a scan rejects while a follow-up was queued", async () => {

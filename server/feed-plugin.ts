@@ -320,10 +320,22 @@ export function createTailer(opts: TailerOptions) {
     return out;
   }
 
-  const failed = (key: "consumer_error" | "normalizer_error", what: string, e: unknown): void => {
+  const failed = (
+    key: "consumer_error" | "normalizer_error",
+    what: string,
+    e: unknown,
+    file?: Tracked,
+  ): void => {
     ownDrift[key] = (ownDrift[key] ?? 0) + 1;
-    if (ownDrift[key] === 1) log(`${what} failed: ${String(e)}`);
+    if (file === undefined) {
+      if (ownDrift[key] === 1) log(`${what} failed: ${String(e)}`);
+    } else if (!loggedNormalizer.has(file)) {
+      loggedNormalizer.add(file);
+      log(`${what} failed: ${String(e)}`);
+    }
   };
+  /** Files whose normalizer failure was already logged: once per file, not per tailer. */
+  const loggedNormalizer = new WeakSet<Tracked>();
 
   /** Events of the scan in progress, per file; flushed merged by ts so a parent's handoff
    * `back` never precedes its child's own events, whichever file was read first. */
@@ -368,13 +380,34 @@ export function createTailer(opts: TailerOptions) {
     deliver();
   }
 
+  /** Session id comes from the path, never the record body; a parent is looked up among the
+   * session's other files' launches (a top-level parent has no agentId, so that stays null). */
+  function stateFor(
+    file: Omit<Tracked, "state" | "offset" | "pending" | "discarding" | "cold">,
+  ): NormalizerState {
+    return createNormalizerState({
+      projectId: file.projectId,
+      subagent: file.agentId !== null,
+      sessionId: file.sessionId,
+      parentOf: (agentId) => {
+        for (const t of tracked.values()) {
+          if (t.sessionId !== file.sessionId || t.path === file.path) continue;
+          for (const l of t.state.launches.values()) if (l.agentId === agentId) return l.by;
+        }
+        return null;
+      },
+    });
+  }
+
   function emit(file: Tracked, lines: string[]): void {
     // A normalizer exception must not look like a read error and deny the file.
     try {
-      const events = normalizeBatch(file.state, lines);
+      const events = normalizeBatch(file.state, lines, (e) =>
+        failed("normalizer_error", "normalizing", e, file),
+      );
       if (events.length > 0) buckets.set(file, [...(buckets.get(file) ?? []), ...events]);
     } catch (e) {
-      failed("normalizer_error", "normalizing", e);
+      failed("normalizer_error", "normalizing", e, file);
     }
   }
 
@@ -447,10 +480,7 @@ export function createTailer(opts: TailerOptions) {
       else if (stat.size < file.offset) {
         // Truncated: reset offset and state; the agent is re-synthesized.
         addDrift(retiredDrift, file.state.drift);
-        file.state = createNormalizerState({
-          projectId: file.projectId,
-          subagent: file.agentId !== null,
-        });
+        file.state = stateFor(file);
         file.offset = 0;
         file.pending = Buffer.alloc(0);
         file.discarding = false;
@@ -480,7 +510,7 @@ export function createTailer(opts: TailerOptions) {
         }
         tracked.set(c.path, {
           ...c,
-          state: createNormalizerState({ projectId: c.projectId, subagent: c.agentId !== null }),
+          state: stateFor(c),
           offset: 0,
           pending: Buffer.alloc(0),
           discarding: false,

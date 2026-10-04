@@ -24,13 +24,17 @@ export type NormalizerState = {
   projectId: string;
   /** True for `<session>/subagents/agent-<id>.jsonl`. */
   subagent: boolean;
+  /** The session the file belongs to (from its path); a record's own sessionId never overrides it. */
+  sessionId: string | null;
+  /** Which agent launched `agentId`, when the owner of the launch is known; null otherwise. */
+  parentOf: ((agentId: string) => string | null) | null;
   drift: Partial<Record<DriftReason, number>>;
   /** True once agent_started was emitted for this file. */
   started: boolean;
   /** Discard emitted events while replaying a finished file's tail. */
   suppress: boolean;
   /** Agent/Task tool_use id -> launch facts. */
-  launches: Map<string, { sync: boolean; agentId: string | null }>;
+  launches: Map<string, { sync: boolean; agentId: string | null; by: string | null }>;
   /** SendMessage tool_use id -> the known agent it resumes. */
   resumes: Map<string, string>;
   /** `task-id|tool-use-id` of completions already emitted. */
@@ -42,10 +46,14 @@ export type NormalizerState = {
 export function createNormalizerState(opts: {
   projectId: string;
   subagent: boolean;
+  sessionId?: string;
+  parentOf?: (agentId: string) => string | null;
 }): NormalizerState {
   return {
     projectId: opts.projectId,
     subagent: opts.subagent,
+    sessionId: opts.sessionId ?? null,
+    parentOf: opts.parentOf ?? null,
     drift: {},
     started: false,
     suppress: false,
@@ -93,7 +101,7 @@ const asStr = (v: unknown): string | null => (typeof v === "string" && v.length 
 function buildCtx(state: NormalizerState, rec: Json): Ctx | "bad_timestamp" | "bad_shape" {
   const ts = typeof rec.timestamp === "string" ? Date.parse(rec.timestamp) : NaN;
   if (Number.isNaN(ts)) return "bad_timestamp";
-  const sessionId = asStr(rec.sessionId);
+  const sessionId = state.sessionId ?? asStr(rec.sessionId);
   if (sessionId === null || (state.subagent && asStr(rec.agentId) === null)) return "bad_shape";
   return { state, rec, ts, sessionId, cwd: typeof rec.cwd === "string" ? rec.cwd : "" };
 }
@@ -141,8 +149,13 @@ function started(ctx: Ctx): AgentEvent[] {
   return emit(state, ctx, ownAgentId(ctx), {
     kind: "agent_started",
     projectPath: ctx.cwd.slice(0, MAX_STRING_LENGTH),
-    parentAgentId: null,
+    parentAgentId: parentOfOwn(ctx),
   });
+}
+
+function parentOfOwn(ctx: Ctx): string | null {
+  const own = ownAgentId(ctx);
+  return own === null || ctx.state.parentOf === null ? null : ctx.state.parentOf(own);
 }
 
 function handoff(ctx: Ctx, toAgentId: string, direction: "out" | "back"): AgentEvent[] {
@@ -183,7 +196,7 @@ const onAssistant: Handler = (ctx) => {
     const input = isObj(b.input) ? b.input : {};
     if (isSubagent) {
       const sync = input.run_in_background === false;
-      remember(state.launches, id, { sync, agentId: null });
+      remember(state.launches, id, { sync, agentId: null, by: agentId });
       if (sync) out.push(...emit(state, ctx, agentId, { kind: "waiting_on_subagents" }));
     } else if (name === "SendMessage") {
       const to = asStr(input.to);
@@ -210,21 +223,45 @@ const onAssistant: Handler = (ctx) => {
   return out;
 };
 
+/**
+ * The toolUseResult entry belonging to one tool_result block. An array is matched by
+ * tool_use_id, else by position; a lone object is the answer only for a single-block record
+ * (or when it names that block), since it cannot be told apart otherwise.
+ */
+function resultFor(raw: unknown, id: string, ids: string[]): Json | null {
+  const named = (e: Json, i: string) => e.tool_use_id === i || e.toolUseId === i;
+  if (Array.isArray(raw)) {
+    const entries = raw.filter(isObj);
+    const own = entries.find((e) => named(e, id));
+    if (own !== undefined) return own;
+    // Position only pairs entries that name no block with blocks no entry names.
+    const unnamed = entries.filter((e) => e.tool_use_id === undefined && e.toolUseId === undefined);
+    const open = ids.filter((i) => !entries.some((e) => named(e, i)));
+    return unnamed.length === open.length ? (unnamed[open.indexOf(id)] ?? null) : null;
+  }
+  if (!isObj(raw)) return null;
+  const given = raw.tool_use_id ?? raw.toolUseId;
+  return given === id || (given === undefined && ids.length === 1) ? raw : null;
+}
+
 const onUser: Handler = (ctx) => {
   const { state, rec } = ctx;
   const blocks = contentBlocks(rec);
   if (blocks === null) return "bad_shape";
   const agentId = ownAgentId(ctx);
-  const result = isObj(rec.toolUseResult) ? rec.toolUseResult : null;
   const out: AgentEvent[] = [];
   // Validate every block before touching state, so a bad one drops the record whole.
   if (blocks.some((b) => b.type === "tool_result" && asStr(b.tool_use_id) === null)) {
     return "bad_shape";
   }
+  const ids = blocks
+    .filter((b) => b.type === "tool_result")
+    .map((b) => asStr(b.tool_use_id) as string);
   let results = 0;
   for (const b of blocks) {
     if (b.type !== "tool_result") continue;
     const id = asStr(b.tool_use_id) as string;
+    const result = resultFor(rec.toolUseResult, id, ids);
     results++;
     const launch = state.launches.get(id);
     out.push(
@@ -346,16 +383,31 @@ function lastRecord(lines: string[]): Json | null {
  * end_turn: a subagent file emits nothing; a top-level file emits agent_started plus done
  * only when its last text ends with a question; unfinished files arrive normally.
  */
-export function normalizeBatch(state: NormalizerState, lines: string[]): AgentEvent[] {
-  if (state.batched || lines.length === 0) return lines.flatMap((l) => normalize(state, l));
+export function normalizeBatch(
+  state: NormalizerState,
+  lines: string[],
+  onError: (e: unknown) => void = (e) => {
+    throw e;
+  },
+): AgentEvent[] {
+  // One bad line costs one line: its exception goes to onError and the batch carries on.
+  const normalizeLine = (l: string): AgentEvent[] => {
+    try {
+      return normalize(state, l);
+    } catch (e) {
+      onError(e);
+      return [];
+    }
+  };
+  if (state.batched || lines.length === 0) return lines.flatMap(normalizeLine);
   state.batched = true;
   const last = lastRecord(lines);
   const message = last !== null && isObj(last.message) ? last.message : null;
   const finished = last?.type === "assistant" && message?.stop_reason === "end_turn";
-  if (!finished) return lines.flatMap((l) => normalize(state, l));
+  if (!finished) return lines.flatMap(normalizeLine);
 
   state.suppress = true;
-  for (const l of lines) normalize(state, l); // rebuild launch/dedupe state silently
+  for (const l of lines) normalizeLine(l); // rebuild launch/dedupe state silently
   state.suppress = false;
   if (state.subagent) return [];
 
