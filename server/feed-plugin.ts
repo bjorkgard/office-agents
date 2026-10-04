@@ -14,7 +14,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { constants } from "node:fs";
 import { open, readdir as fsReaddir, lstat as fsLstat } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
@@ -22,6 +22,8 @@ import { ATTENTION_STALE_MS, DESKS_PER_ROW } from "../shared/tuning.ts";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, normalizeBatch } from "./normalize.ts";
 import type { NormalizerState } from "./normalize.ts";
+import { hookToEvents } from "./hooks-adapter.ts";
+import { defaultHookDir, newHookToken, removeDiscovery, writeDiscovery } from "./hook-discovery.ts";
 
 const ACTIVE_SCAN_MS = 1000;
 const TREE_WALK_MS = 5000;
@@ -43,6 +45,9 @@ const RECENT_PER_AGENT = 40;
 // Per map, so a parent that fanned out to a few hundred children keeps every back.
 const ESSENTIAL_PER_AGENT = 200;
 const SNAPSHOT_CAP = 2000;
+// Children ever handed back, remembered past the ring's own eviction so a late hook cannot
+// bring one back as a ghost.
+const MAX_RETURNED_SEEN = 10_000;
 const DRIFT_LOG_MS = 60_000;
 const MAX_SSE_CLIENTS = 8;
 const MAX_CLIENT_BACKLOG_BYTES = 1024 * 1024;
@@ -50,6 +55,18 @@ const DRAIN_TIMEOUT_MS = 10_000;
 // An SSE comment frame this often makes a dead peer fail the write and drop its slot.
 const HEARTBEAT_MS = 15_000;
 const MAX_LOGGED_HEADER = 64;
+// POST /__office/hook: body cap, and events accepted per second per session and overall. A
+// window is one second; what exceeds it is dropped (still answered 204), not queued.
+/** The hook script (hooks/office-hook.mjs) posts here; a test pins that it agrees. */
+export const HOOK_ROUTE = "/__office/hook";
+export const HOOK_MAX_BODY_BYTES = 64 * 1024;
+export const HOOK_SESSION_PER_SEC = 20;
+export const HOOK_TOTAL_PER_SEC = 100;
+// A body that has not finished by then is dropped, so a stalled one cannot hold the socket.
+export const HOOK_BODY_TIMEOUT_MS = 5000;
+export const HOOK_WINDOW_MS = 1000;
+const HOOK_MAX_SESSIONS = 1000;
+const HOOK_LOG_MS = 5000;
 // A replaced file is told from a grown one by its inode and this many leading bytes.
 const HEAD_BYTES = 256;
 // Open without following a leaf symlink and without blocking on a FIFO or device.
@@ -683,6 +700,7 @@ type AgentRing = {
 export function createSnapshotRing() {
   const agents = new Map<string, AgentRing>();
   const order = new WeakMap<AgentEvent, number>();
+  const returnedSeen = new Set<string>();
   let seq = 0;
   let total = 0;
   const keyOf = (sessionId: string, agentId: string | null) => `${sessionId}\u0000${agentId ?? ""}`;
@@ -725,7 +743,9 @@ export function createSnapshotRing() {
     const asking =
       (event.kind === "done" && event.endsWithQuestion) || event.kind === "needs_attention";
     // Only a question or a handoff leaves the question standing; any other event is activity.
-    if (!asking && event.kind !== "handoff") r.question = null;
+    // An exact needs_attention outlives activity no newer than its waitingSince (machine.ts clearAttention).
+    const outlived = r.question?.kind === "needs_attention" && event.ts <= r.question.waitingSince;
+    if (!asking && event.kind !== "handoff" && !outlived) r.question = null;
     if (asking) {
       r.question = event;
       r.openTools.clear();
@@ -745,6 +765,12 @@ export function createSnapshotRing() {
       r.unresolved.set(event.toAgentId, event);
       capped(r.unresolved);
     } else if (event.kind === "handoff") {
+      const seen = keyOf(event.sessionId, event.toAgentId);
+      returnedSeen.delete(seen); // re-insert last: the first key is the oldest
+      returnedSeen.add(seen);
+      if (returnedSeen.size > MAX_RETURNED_SEEN) {
+        returnedSeen.delete(returnedSeen.values().next().value as string);
+      }
       r.unresolved.delete(event.toAgentId);
       r.returned.delete(event.toAgentId); // re-insert last: the first key is the oldest
       r.returned.set(event.toAgentId, event);
@@ -793,6 +819,13 @@ export function createSnapshotRing() {
       total -= sizeOf(r);
       agents.delete(key);
     },
+    has(sessionId: string, agentId: string | null): boolean {
+      return agents.has(keyOf(sessionId, agentId));
+    },
+    /** True when a parent handed this child back, even if the ring has since evicted it. */
+    wasReturned(sessionId: string, agentId: string): boolean {
+      return returnedSeen.has(keyOf(sessionId, agentId));
+    },
     /** Every retained event, ordered by ts (arrival order breaks ties). */
     events(): AgentEvent[] {
       const out: AgentEvent[] = [];
@@ -815,7 +848,8 @@ export function createSnapshotRing() {
 // ---- feed (tailer + SSE + seats + routes) ---------------------------------------------
 
 type Req = Pick<IncomingMessage, "url" | "method" | "headers" | "socket"> & {
-  on?: (event: "close", cb: () => void) => unknown;
+  on?: (event: string, cb: (arg: Buffer) => void) => unknown;
+  destroy?: () => unknown;
 };
 type Res = Pick<ServerResponse, "writeHead" | "write" | "end" | "statusCode" | "setHeader"> & {
   on?: (event: "close" | "drain" | "error", cb: () => void) => unknown;
@@ -831,6 +865,8 @@ export type FeedOptions = {
   intervalMs?: number;
   setIntervalFn?: (fn: () => void, ms: number) => unknown;
   clearIntervalFn?: (handle: unknown) => void;
+  /** Enables POST /__office/hook; requests must carry it in `x-office-token`. */
+  hookToken?: string;
 };
 
 export function createFeed(options: FeedOptions = {}) {
@@ -949,6 +985,134 @@ export function createFeed(options: FeedOptions = {}) {
     res.end(body);
   }
 
+  // ---- hook route ----
+
+  const hookTokenDigest =
+    options.hookToken === undefined
+      ? null
+      : createHash("sha256").update(options.hookToken).digest();
+  const hookLogged = new Map<string, number>();
+  const hookSessions = new Map<string, { start: number; count: number }>();
+  let hookTotal = { start: Number.NEGATIVE_INFINITY, count: 0 };
+
+  /** One line per reason per HOOK_LOG_MS, so a flood of bad requests cannot flood the log. */
+  function hookLog(reason: string, detail = ""): void {
+    const at = now();
+    if (at - (hookLogged.get(reason) ?? Number.NEGATIVE_INFINITY) < HOOK_LOG_MS) return;
+    hookLogged.set(reason, at);
+    log(`hook ${reason}${detail}`);
+  }
+
+  function tokenOk(header: string | string[] | undefined): boolean {
+    if (hookTokenDigest === null || typeof header !== "string") return false;
+    return timingSafeEqual(createHash("sha256").update(header).digest(), hookTokenDigest);
+  }
+
+  /** True when the event fits both the session's and the overall window. */
+  function hookAdmit(sessionId: string): boolean {
+    const at = now();
+    if (at - hookTotal.start >= HOOK_WINDOW_MS) hookTotal = { start: at, count: 0 };
+    let w = hookSessions.get(sessionId);
+    if (w === undefined || at - w.start >= HOOK_WINDOW_MS) {
+      if (w === undefined && hookSessions.size >= HOOK_MAX_SESSIONS) {
+        hookSessions.delete(hookSessions.keys().next().value as string);
+      }
+      w = { start: at, count: 0 };
+      hookSessions.set(sessionId, w);
+    }
+    if (w.count >= HOOK_SESSION_PER_SEC || hookTotal.count >= HOOK_TOTAL_PER_SEC) return false;
+    w.count++;
+    hookTotal.count++;
+    return true;
+  }
+
+  function ingestHook(payload: unknown): void {
+    for (const event of hookToEvents(payload, { now: now() })) {
+      // The tailer announces the same subagent from its transcript, with its real parent; a hook
+      // start for a known agent would overwrite that, and a stop for an unknown one would make a
+      // ghost entry. Both are dropped; the hook only fills in what the tailer has not seen yet.
+      // A child already handed back is finished: a late hook must not revive it either (start or
+      // attention), even after the ring evicted it.
+      const known = event.agentId !== null && ring.has(event.sessionId, event.agentId);
+      const returned = event.agentId !== null && ring.wasReturned(event.sessionId, event.agentId);
+      if (event.kind === "agent_started" && (known || returned)) continue;
+      if (event.kind === "done" && (!known || returned)) continue;
+      if (event.kind === "needs_attention" && returned) continue;
+      if (!hookAdmit(event.sessionId)) {
+        hookLog("rate limited");
+        continue;
+      }
+      ring.add(event);
+      send({ type: "event", event });
+    }
+  }
+
+  function handleHook(req: Req, res: Res): void {
+    const empty = (code: number) => {
+      res.statusCode = code;
+      res.end();
+    };
+    if (hookTokenDigest === null) {
+      reply(res, 404, "text/plain; charset=utf-8", "not found\n");
+    } else if (req.method !== "POST") {
+      empty(405);
+    } else if (!tokenOk(req.headers["x-office-token"])) {
+      hookLog("refused (401)");
+      empty(401);
+    } else if (!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"] ?? ""))) {
+      hookLog("refused (415)", ` content-type=${loggable(req.headers["content-type"])}`);
+      empty(415);
+    } else if (Number(req.headers["content-length"]) > HOOK_MAX_BODY_BYTES) {
+      hookLog("refused (413)");
+      empty(413);
+      req.destroy?.();
+    } else {
+      readHookBody(req, empty);
+    }
+  }
+
+  function readHookBody(req: Req, empty: (code: number) => void): void {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let over = false;
+    const stalled = setTimeout(() => {
+      over = true;
+      chunks.length = 0;
+      hookLog("refused (408)");
+      empty(408);
+      req.destroy?.();
+    }, HOOK_BODY_TIMEOUT_MS);
+    stalled.unref();
+    req.on?.("data", (chunk) => {
+      if (over) return;
+      size += chunk.length;
+      if (size > HOOK_MAX_BODY_BYTES) {
+        over = true;
+        clearTimeout(stalled);
+        chunks.length = 0;
+        hookLog("refused (413)");
+        empty(413);
+        req.destroy?.();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on?.("end", () => {
+      clearTimeout(stalled);
+      if (over) return;
+      try {
+        ingestHook(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      } catch {
+        hookLog("ignored an unparseable payload");
+      }
+      empty(204);
+    });
+    req.on?.("error", () => {
+      clearTimeout(stalled);
+      if (!over) hookLog("request failed");
+    });
+  }
+
   /** Connect-style handler: non-/__office URLs go to next() untouched. */
   function handle(req: Req, res: Res, next: () => void): void {
     const url = req.url ?? "";
@@ -963,6 +1127,10 @@ export function createFeed(options: FeedOptions = {}) {
         `refused ${loggable(path)} (${refusal}): host=${loggable(req.headers.host)} remote=${loggable(req.socket.remoteAddress)}`,
       );
       reply(res, 403, "text/plain; charset=utf-8", "forbidden: office feed is loopback only\n");
+      return;
+    }
+    if (path === HOOK_ROUTE) {
+      handleHook(req, res);
       return;
     }
     if (req.method !== "GET") {
@@ -1023,10 +1191,19 @@ export function createFeed(options: FeedOptions = {}) {
     stopHeartbeat();
   }
 
-  return { handle, start, stop, scanOnce, status, clients, seats };
+  return {
+    handle,
+    start,
+    stop,
+    scanOnce,
+    status,
+    clients,
+    seats,
+    hookSessionCount: () => hookSessions.size,
+  };
 }
 
-export function officeFeed(options: FeedOptions = {}): Plugin {
+export function officeFeed(options: FeedOptions & { hookDir?: string } = {}): Plugin {
   return {
     name: "office-feed",
     apply: "serve",
@@ -1034,12 +1211,45 @@ export function officeFeed(options: FeedOptions = {}): Plugin {
       // Vitest runs a serve-mode Vite server too; it must not scan the real transcripts.
       if (server.config.mode === "test") return;
       try {
+        const { hookDir, ...feedOptions } = options;
+        const token = feedOptions.hookToken ?? newHookToken();
+        const dir = hookDir ?? defaultHookDir();
         const feed = createFeed({
           log: (line) => server.config.logger.warn(line),
-          ...options,
+          ...feedOptions,
+          hookToken: token,
         });
         server.middlewares.use((req, res, next) => feed.handle(req, res, next));
-        server.httpServer?.once("close", () => feed.stop());
+        const http = server.httpServer;
+        // The hook script finds the port and token here; the file lives as long as the feed.
+        const publish = () => {
+          const addr = http?.address();
+          if (typeof addr !== "object" || addr === null) return;
+          try {
+            writeDiscovery(dir, { port: addr.port, token, address: addr.address });
+          } catch (e) {
+            server.config.logger.warn(`[office] hook discovery file not written: ${String(e)}`);
+          }
+        };
+        const unpublish = () => removeDiscovery(dir, token);
+        http?.on("listening", publish);
+        if (http?.listening) publish();
+        // Node's default SIGINT exit skips "exit", so Ctrl-C would leave the file. Remove it,
+        // drop this listener, and raise the signal again: the process then ends exactly as it
+        // would without us (signal-exit, which Vite's tooling loads, re-kills only once it is the
+        // sole listener). SIGTERM is Vite's: its handler exits through "exit".
+        const onSigint = () => {
+          unpublish();
+          process.kill(process.pid, "SIGINT");
+        };
+        process.once("SIGINT", onSigint);
+        process.once("exit", unpublish);
+        http?.once("close", () => {
+          feed.stop();
+          unpublish();
+          process.off("exit", unpublish);
+          process.off("SIGINT", onSigint);
+        });
         feed.start();
       } catch (e) {
         server.config.logger.warn(`[office] feed disabled: ${String(e)}`);

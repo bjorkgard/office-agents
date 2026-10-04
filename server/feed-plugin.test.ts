@@ -1293,6 +1293,42 @@ describe("feed", () => {
     expect(hasBack).toBe(true);
   });
 
+  describe("returned-child memory bound", () => {
+    // MAX_RETURNED_SEEN in feed-plugin.ts is 10_000.
+    const CAP = 10_000;
+    const back = (sessionId: string, ts: number): AgentEvent => ({
+      sessionId,
+      projectId: "p1",
+      agentId: null,
+      ts,
+      kind: "handoff",
+      fromAgentId: null,
+      toAgentId: "kid",
+      direction: "back",
+    });
+
+    it("forgets the oldest returned child once more than the cap are remembered", () => {
+      const ring = createSnapshotRing();
+      for (let i = 0; i < CAP + 5; i++) ring.add(back(`s${i}`, 1_800_000_000_000 + i));
+      expect(ring.wasReturned("s0", "kid")).toBe(false);
+      expect(ring.wasReturned("s4", "kid")).toBe(false);
+      expect(ring.wasReturned("s5", "kid")).toBe(true);
+      expect(ring.wasReturned(`s${CAP + 4}`, "kid")).toBe(true);
+    });
+
+    it("keeps a child that was handed back again recently (LRU re-insert)", () => {
+      const ring = createSnapshotRing();
+      let ts = 1_800_000_000_000;
+      ring.add(back("old", ts++));
+      for (let i = 0; i < CAP - 1; i++) ring.add(back(`s${i}`, ts++));
+      ring.add(back("old", ts++)); // now the newest again
+      ring.add(back("extra1", ts++));
+      ring.add(back("extra2", ts++));
+      expect(ring.wasReturned("old", "kid")).toBe(true);
+      expect(ring.wasReturned("s0", "kid")).toBe(false);
+    });
+  });
+
   describe("ring essentials", () => {
     const at = { sessionId: "e-s", projectId: "p1" } as const;
     const started = (agentId: string | null): AgentEvent => ({
@@ -1370,6 +1406,72 @@ describe("feed", () => {
       const events = ring.events();
       expect(events.length).toBeLessThanOrEqual(2000);
       expect(events.filter((e) => e.agentId === "q-2999")).toHaveLength(2);
+    });
+
+    describe("standing needs_attention", () => {
+      const attn = (ts: number): AgentEvent => ({
+        ...at,
+        agentId: null,
+        ts,
+        kind: "needs_attention",
+        waitingSince: 10_000,
+        episodeId: "e1",
+      });
+      const start = (ts: number): AgentEvent => tool(ts, "t1", "start");
+      const survives = (ring: ReturnType<typeof createSnapshotRing>) =>
+        ring.events().some((e) => e.kind === "needs_attention");
+
+      it("keeps it through activity older than its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add(start(9_900));
+        expect(survives(ring)).toBe(true);
+      });
+
+      it("keeps it through activity at exactly its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add({ ...at, agentId: null, ts: 10_000, kind: "working" });
+        expect(survives(ring)).toBe(true);
+      });
+
+      it("drops it on activity newer than its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add(start(10_001));
+        expect(survives(ring)).toBe(false);
+      });
+
+      it("still prefers evicting agents without a standing question", () => {
+        const ring = createSnapshotRing();
+        ring.add(started("asker"));
+        ring.add({ ...attn(10_000), agentId: "asker" });
+        ring.add({ ...at, agentId: "asker", ts: 9_900, kind: "working" });
+        crowd(ring, 80, 40);
+        expect(ring.events().some((e) => e.kind === "needs_attention")).toBe(true);
+      });
+
+      // The machine side of this live == replay equivalence is covered by src/office/machine.test.ts
+      // ("activity not newer than the episode's waitingSince does not end it, live or replay").
+      it("replays the standing episode through older activity and drops it on newer", () => {
+        const ring = createSnapshotRing();
+        ring.add({ ...started(null), ts: 0 });
+        ring.add({ ...at, agentId: null, ts: 0, kind: "working" });
+        ring.add(attn(10_000));
+        ring.add(start(9_900));
+        const standing = ring.events().filter((e) => e.kind === "needs_attention");
+        expect(standing).toHaveLength(1);
+        expect(standing[0]).toMatchObject({
+          kind: "needs_attention",
+          episodeId: "e1",
+          waitingSince: 10_000,
+        });
+        ring.add(start(10_001));
+        expect(survives(ring)).toBe(false);
+      });
     });
 
     it("keeps a waiting marker through 100 events and drops it when the tool ends", () => {
@@ -1745,7 +1847,7 @@ describe("plugin", () => {
       configFile: false,
       root: repo,
       logLevel: "silent",
-      plugins: [react(), officeFeed({ root, log: () => {} })],
+      plugins: [react(), officeFeed({ root, log: () => {}, hookDir: join(root, "hook") })],
       server: { port: 0, host: "127.0.0.1", hmr: false, watch: null },
       optimizeDeps: { noDiscovery: true, include: [] },
     });
