@@ -120,18 +120,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** None
 
-#### Accessibility of the scene root and tags
-
-**What:** Give the scene root a `role` so its label is exposed, and `aria-hidden` on the `.tag` divs (each hit button already names the agent).
-
-**Why:** Screen readers ignore `aria-label` on a plain div and may read each agent twice (`Scene.tsx:439`).
-
-**Context:** From the design specialist in the final review pass; not run through a screen reader.
-
-**Effort:** S
-**Priority:** P2
-**Depends on:** None
-
 #### Stronger tests for the office-life items
 
 **What:** Slat geometry test is presence-only (`decor.test.ts:539`), overflow test does not assert standing and queue slots (`Scene.test.tsx:546`), loose `+1` match (`Scene.test.tsx:145`), tautological counter (`motion.test.ts:451`), DST tests skip under UTC, heavy Scene renders risk the 5 s timeout, and Scene's `layout.box`, desk pop-in and the rAF loop wiring have no direct test. A browser test for the `Character` loop would close the last two.
@@ -316,18 +304,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** Verify the normalizer against real transcripts
 
-### Use Map or Object.create(null) for id-keyed objects in the machine
-
-**What:** `src/office/machine.ts` keys plain objects by transcript ids (`agents`, `returned`, `openTools`, `unresolved`).
-
-**Why:** An id such as `__proto__` or `constructor` can collide with prototype members.
-
-**Context:** Ids pass the string guard only, not a charset check.
-
-**Effort:** S (human ~1h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
 ### Anchor the task-notification match in the normalizer
 
 **What:** `onQueueOperation` in `server/normalize.ts` tests whether the content includes the task-notification tag anywhere.
@@ -365,30 +341,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Depends on:** None
 
 ## Phase 4 review follow-ups
-
-### Server resends `seat` after a transcript reset
-
-**What:** After `onReset` (truncated transcript) the server keeps the seat but the client deletes it, so the replayed agent stays unseated at the door until the stream reconnects. Have the server resend `seat` after `onReset`.
-
-**Why:** A fresh snapshot shows a different office than the live view.
-
-**Context:** Split from "Client ignores `gone` frames for subagents" (client half DONE, see ARCHIVE.md). Touches the D12 replay contract; found in the Phase 4 /ship review.
-
-**Effort:** S (human ~2h / CC ~20min)
-**Priority:** P2
-**Depends on:** None
-
-### Replay clocks every event at its own `ts` with no future cap
-
-**What:** `src/office/machine.ts:205` passes `e.ts` as the clock during replay. One far-future `ts` expires every other agent in the snapshot, and the agent with the future `ts` never expires.
-
-**Why:** Clock skew or an odd transcript line can blank the office on reconnect. The live path and the handoff-back branch already use `Math.min(ts, now)`.
-
-**Context:** Use `Math.min(e.ts, now)` in `applyEvents` replay and optionally clamp in the server normalizer. Add a test with a future-dated event.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P2
-**Depends on:** None
 
 ### Feed server hardening: truncation detection and tracked-file cap
 
