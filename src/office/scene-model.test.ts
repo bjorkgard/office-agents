@@ -11,6 +11,7 @@ import { CELL } from "./pixel";
 import { DESK, FRAMES, HEAD_ANCHOR } from "./sprites";
 import {
   assignShirts,
+  shirtOf,
   deskCountFor,
   deskDemand,
   deskZ,
@@ -124,6 +125,24 @@ describe("assignShirts", () => {
     expect(again.b).toEqual(a.b);
     expect(again.c).not.toEqual(a.a);
     expect(again.c).not.toEqual(a.b);
+  });
+
+  it("treats session ids like __proto__ and constructor as plain data", () => {
+    const ids = ["__proto__", "constructor", "toString", "hasOwnProperty"];
+    const a = assignShirts({}, ids);
+    expect(Object.getPrototypeOf(a)).toBe(Object.prototype);
+    expect(Object.keys(a).sort()).toEqual([...ids].sort());
+    for (const id of ids) {
+      const shirt = shirtOf(a, id);
+      expect(typeof shirt?.index).toBe("number");
+      expect(Object.hasOwn(a, id)).toBe(true);
+    }
+    const again = assignShirts(a, ids);
+    expect(Object.getPrototypeOf(again)).toBe(Object.prototype);
+    for (const id of ids) expect(shirtOf(again, id)).toEqual(shirtOf(a, id));
+    expect(shirtOf({}, "constructor")).toBeUndefined();
+    expect(shirtOf({}, "__proto__")).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("drops inactive sessions", () => {

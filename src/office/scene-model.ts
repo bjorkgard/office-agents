@@ -49,11 +49,25 @@ export function assignShirts(
   active: readonly string[],
 ): Record<string, ShirtChoice> {
   const next: Record<string, ShirtChoice> = {};
-  for (const id of active) if (prev[id]) next[id] = prev[id];
   for (const id of active) {
-    if (!next[id]) next[id] = pickShirt(id, Object.values(next));
+    const kept = shirtOf(prev, id);
+    if (kept) setOwn(next, id, kept);
+  }
+  for (const id of active) {
+    if (!shirtOf(next, id)) setOwn(next, id, pickShirt(id, Object.values(next)));
   }
   return next;
+}
+
+/** A session's own shirt; an id like `constructor` never reaches the prototype. */
+export const shirtOf = (
+  shirts: Record<string, ShirtChoice>,
+  id: string,
+): ShirtChoice | undefined => (Object.hasOwn(shirts, id) ? shirts[id] : undefined);
+
+/** Own-key write, so an id like `__proto__` is data and not the prototype setter. */
+function setOwn(o: Record<string, ShirtChoice>, key: string, value: ShirtChoice): void {
+  Object.defineProperty(o, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
 /** Highest seat of a present agent plus one (a leaver keeps its seat while it walks out). */

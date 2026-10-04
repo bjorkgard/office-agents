@@ -47,6 +47,7 @@ import { RoomDecor } from "./RoomDecor";
 import { roomShell, type RoomShell as RoomShellGeometry } from "./room";
 import {
   assignShirts,
+  shirtOf,
   DESK_POP_MS,
   deskCountFor,
   sceneDemand,
@@ -113,7 +114,7 @@ function sameShirts(a: Record<string, ShirtChoice>, b: Record<string, ShirtChoic
   const keys = Object.keys(a);
   return (
     keys.length === Object.keys(b).length &&
-    keys.every((k) => b[k]?.index === a[k].index && b[k]?.stripe === a[k].stripe)
+    keys.every((k) => shirtOf(b, k)?.index === a[k].index && shirtOf(b, k)?.stripe === a[k].stripe)
   );
 }
 
@@ -507,7 +508,7 @@ export function Scene({
         {agents.map((a) => {
           const p = placed.get(a.key);
           if (!p) return null;
-          const shirt = nextShirts[a.sessionId] ?? null;
+          const shirt = shirtOf(nextShirts, a.sessionId) ?? null;
           return (
             <Character
               key={a.key}
