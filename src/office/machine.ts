@@ -141,7 +141,7 @@ function touch(
     a = arrive(sessionId, agentId, projectId, now);
     s.agents[key] = a;
   } else {
-    a.lastEventAt = now;
+    a.lastEventAt = Math.max(a.lastEventAt, now); // a delayed event must not rewind liveness
   }
   return a;
 }
@@ -244,6 +244,22 @@ function waitsOn(
   return !!a && Object.keys(a.unresolved).some((id) => waitsOn(s, sessionId, id, target, seen));
 }
 
+/** Sends a returned child out and remembers it, so its late events cannot resurrect it. */
+function walkOut(
+  s: OfficeState,
+  key: string,
+  child: Agent | undefined,
+  ts: number,
+  now: number,
+): void {
+  delete s.returned[key]; // re-insert last so the oldest is the first key
+  s.returned[key] = Math.min(ts, now); // a far-future ts must not block the child forever
+  const keys = Object.keys(s.returned);
+  if (keys.length > RETURNED_CAP) delete s.returned[keys[0]];
+  // `now`, not the event's ts: the leaving walk-out is timed from when we see it, not a replayed ts.
+  if (child && child.phase !== "leaving") leave(child, now);
+}
+
 export function applyEvent(state: OfficeState, event: AgentEvent, now: number): OfficeState {
   return applyOwned(structuredClone(state), event, now, state);
 }
@@ -336,20 +352,21 @@ function applyOwned(
         if (!loop) setOwn(parent.unresolved, event.toAgentId, clock);
       } else {
         delete parent.unresolved[event.toAgentId];
-        const key = agentKey(sessionId, event.toAgentId);
-        delete s.returned[key]; // re-insert last so the oldest is the first key
-        s.returned[key] = Math.min(event.ts, now); // a far-future ts must not block the child forever
-        const keys = Object.keys(s.returned);
-        if (keys.length > RETURNED_CAP) delete s.returned[keys[0]];
-        // `now`, not the event's ts: the leaving walk-out is timed from when we see it, not a replayed ts.
-        if (child && child.phase !== "leaving") leave(child, now);
+        walkOut(s, agentKey(sessionId, event.toAgentId), child, event.ts, now);
       }
       settle(parent);
       break;
     }
     case "done": {
-      // E1: a subagent's own turn end is not a `done`; its completion comes from the parent.
-      if (event.agentId !== null) break;
+      // E1: the normalizer never emits a subagent `done`; only the hooks adapter does
+      // (SubagentStop), and it is that child's exact completion. An unknown or already
+      // leaving child is ignored, so a stop can never create a ghost.
+      if (event.agentId !== null) {
+        const key = agentKey(sessionId, event.agentId);
+        const child = s.agents[key];
+        if (child && child.phase !== "leaving") walkOut(s, key, child, event.ts, now);
+        break;
+      }
       const a = touch(s, sessionId, null, projectId, clock);
       a.openTools = {};
       a.waitingOn = [];

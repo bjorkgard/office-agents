@@ -134,10 +134,11 @@ describe("arrival, R1 and R2", () => {
     expect(stateOf(s)).toBe("working");
   });
 
-  it("a subagent's own done is ignored", () => {
+  it("a subagent's done is its completion, never a question wave", () => {
     let s = applyEvent(working0(), started("a"), 0);
     s = applyEvent(s, { ...done(true), agentId: "a" }, 1000);
-    expect(stateOf(s, "a")).toBe("arriving");
+    expect(stateOf(s, "a")).toBe("leaving");
+    expect(get(s, "a")!.attention).toBeNull();
   });
 });
 
@@ -204,6 +205,94 @@ describe("returned children", () => {
     let s = applyEvent(createOffice(), { ...handoff("kid", "back"), ts: 1000 }, 5000);
     s = applyEvent(s, { ...working("kid"), ts: 2000 }, 5000);
     expect(get(s, "kid")).toBeDefined();
+  });
+});
+
+describe("hook-sourced subagent stop", () => {
+  const stop = (id: string, ts = LIVE): AgentEvent => ({
+    ...base,
+    kind: "done",
+    agentId: id,
+    ts,
+    endsWithQuestion: false,
+  });
+  const withKid = (): OfficeState => {
+    let s = applyEvent(working0(), handoff("kid", "out"), 10);
+    s = applyEvent(s, started("kid"), 10);
+    return applyEvent(s, working("kid"), 11);
+  };
+
+  it("walks a live child out and resolves the parent's launch", () => {
+    let s = applyEvent(withKid(), stop("kid"), 20);
+    expect(get(s, "kid")!.phase).toBe("leaving");
+    expect(get(s, "kid")!.leftAt).toBe(20);
+    s = tick(s, 20 + TUNING.subagentLeavingMs);
+    expect(get(s, "kid")).toBeUndefined();
+    expect(get(s)!.unresolved).toEqual({});
+  });
+
+  it("ignores a stop for an unknown child (no ghost, no returned mark)", () => {
+    const before = working0();
+    const s = applyEvent(before, stop("nobody"), 20);
+    expect(get(s, "nobody")).toBeUndefined();
+    expect(s.returned).toEqual({});
+  });
+
+  it("late child activity after the stop does not resurrect it", () => {
+    let s = applyEvent(withKid(), { ...stop("kid", 1000) }, 1000);
+    s = applyEvent(s, { ...working("kid"), ts: 900 }, 1000);
+    s = applyEvent(s, { ...started("kid"), ts: 1000 }, 1000);
+    expect(get(s, "kid")!.phase).toBe("leaving");
+    s = tick(s, 1000 + TUNING.subagentLeavingMs);
+    expect(get(s, "kid")).toBeUndefined();
+  });
+
+  it("live and replay agree", () => {
+    const events: AgentEvent[] = [
+      { ...started(), ts: 100 },
+      { ...handoff("kid", "out"), ts: 110 },
+      { ...started("kid"), ts: 120 },
+      { ...working("kid"), ts: 130 },
+      stop("kid", 140),
+      { ...working("kid"), ts: 135 },
+    ];
+    const t = 200;
+    let live = createOffice();
+    for (const e of events) live = applyEvent(live, e, Math.min(e.ts, t));
+    const replay = tick(applyEvents(createOffice(), events, t, { replay: true }), t);
+    expect(replay.returned).toEqual(live.returned);
+    expect(get(replay, "kid")?.phase).toBe(get(live, "kid")?.phase);
+  });
+
+  it("a stop then the parent's back does not double count", () => {
+    let s = applyEvent(withKid(), stop("kid"), 20);
+    const left = get(s, "kid")!.leftAt;
+    s = applyEvent(s, handoff("kid", "back"), 25);
+    expect(get(s, "kid")!.leftAt).toBe(left);
+    expect(Object.keys(s.returned)).toEqual([agentKey(S, "kid")]);
+  });
+
+  it("caps the returned map like a back does", () => {
+    const events: AgentEvent[] = [];
+    for (let i = 0; i < 2100; i++) events.push(started(`k${i}`), stop(`k${i}`));
+    const s = applyEvents(createOffice(), events, 5000);
+    expect(Object.keys(s.returned).length).toBeLessThanOrEqual(2000);
+    expect(Object.keys(s.returned).length).toBeGreaterThan(0);
+  });
+});
+
+describe("touch never rewinds liveness", () => {
+  it("a delayed event older than attentionStaleMs keeps an exact attention agent", () => {
+    const T = 10 * HOUR;
+    let s = applyEvent(
+      createOffice(),
+      { ...base, kind: "needs_attention", agentId: null, ts: T, waitingSince: T, episodeId: "e1" },
+      T,
+    );
+    s = applyEvent(s, { ...working(), ts: T - TUNING.attentionStaleMs }, T);
+    expect(get(s)!.lastEventAt).toBe(T);
+    s = tick(s, T + 1);
+    expect(stateOf(s)).toBe("attention");
   });
 });
 
