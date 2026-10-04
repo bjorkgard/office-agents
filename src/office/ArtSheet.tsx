@@ -101,13 +101,16 @@ function ScreenDesk({ kind, screen }: { kind: DeskKind; screen: "off" | "still" 
 
 const SCREEN_STATES = ["off", "still", "live"] as const;
 
-// A work desk as a subagent sees it: the monitor dark, the device showing the working state.
+// A work desk as a subagent sees it: the monitor and the device both show the working state.
 const DEVICE_LOOKS = ["dark", "half", "lit"] as const;
+const DEVICE_SCREEN = { dark: "off", half: "still", lit: "live" } as const;
 function DeviceDesk({ kind, device, look }: { kind: DeskKind; device: Device; look: DeviceLook }) {
   const r = deviceRect(kind, device);
+  const screen = DEVICE_SCREEN[look];
   return (
     <div style={{ position: "relative", width: DESK_WIDTH, height: DESK_HEIGHT }}>
-      <PixelDesk kind={kind} lit={false} />
+      <PixelDesk kind={kind} lit={screen === "live"} />
+      {screen !== "off" && <ScreenOverlay kind={kind} screen={screen} />}
       <div style={{ position: "absolute", left: r.x * CELL, top: r.y * CELL }}>
         <PixelProp name={deviceProp(device, look)} />
       </div>

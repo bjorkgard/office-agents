@@ -155,8 +155,8 @@ describe("Scene", () => {
       undefined,
       () => 120_000,
     );
-    // Someone sits at four desks: the parent on the monitor, the three subagents on devices.
-    expect(html.match(/data-screen="live"/g)).toHaveLength(1);
+    // Someone sits at four desks: the parent and the three subagents all glow, the subagents with devices.
+    expect(html.match(/data-screen="live"/g)).toHaveLength(4);
     expect(html.match(/data-device=/g)).toHaveLength(3);
     expect(html.match(/data-desk=/g)).toHaveLength(8);
   });
@@ -803,14 +803,23 @@ describe("DeskLayer devices", () => {
   const sub = (id: string, state: Agent["state"] = "working") =>
     agent("s1", id, { state, parentAgentId: null });
 
-  it("gives a subagent at a work desk its device, a dark monitor and the lit variant", () => {
+  it("gives a subagent at a work desk its device, a live monitor and the lit variant", () => {
     const a = sub("a1");
     const h = desk(html([], [[2, a]]), 2);
     const device = deviceFor(a.key);
     expect(h).toContain(`data-device="${device}"`);
-    expect(h).toContain('data-screen="off"');
-    expect(h).not.toContain("data-screen-overlay");
+    expect(h).toContain('data-screen="live"');
+    expect(h).toContain("data-screen-overlay");
     expect(h).toContain(`data-prop="${device.toUpperCase()}_LIT"`);
+  });
+
+  it("makes a subagent's monitor follow its state like a parent's", () => {
+    const waiting = desk(html([], [[2, sub("a1", "waiting-on-subagents")]]), 2);
+    expect(waiting).toContain('data-screen="still"');
+    expect(waiting).toContain("data-screen-overlay");
+    const idle = desk(html([], [[2, sub("a1", "idle")]]), 2);
+    expect(idle).toContain('data-screen="off"');
+    expect(idle).not.toContain("data-screen-overlay");
   });
 
   it("follows the subagent's state: working lit, waiting half, other dark", () => {
