@@ -9,6 +9,9 @@
     "lint": "vp lint",
     "preview": "vp preview",
     "e2e": "playwright test",
+    "criteria": "node e2e/release.ts criteria",
+    "perf": "node e2e/release.ts perf",
+    "hero": "node e2e/release.ts hero",
     "prepare": "vp config"
   },
   "dependencies": {
