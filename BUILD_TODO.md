@@ -137,9 +137,9 @@ Plan and decisions: `docs/designs/office-life-ceo-review.md` (settled; do not re
 - [x] **6.2 Housekeeping.** README roadmap ticked, `CHANGELOG.md` and `VERSION` at 0.5.0.0, `package.json` at 0.5.0.
 - [x] **6.3 Next.** Phase 7 below; the row-change recalc miss is in [TODOS.md](TODOS.md) ("Row-change style recalc over budget").
 
-## Phase 7: Hooks adapter (next)
+## Phase 7: Hooks adapter
 
-- [ ] **7.1 Hooks adapter.** Consent-gated Claude Code hooks as a second adapter behind `shared/events.ts`; replaces the two heuristic markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)`. Scope and cons in [TODOS.md](TODOS.md) "Hooks adapter for exact attention and subagent lifecycle". Not started; needs its own brief and plan.
+- [x] **7.1 Hooks adapter.** Consent-gated Claude Code hooks as a second adapter behind `shared/events.ts` (`server/hooks-adapter.ts`, `server/hook-discovery.ts`, `POST /__office/hook`, `hooks/office-hook.mjs`, `hooks/install.mjs`). The two heuristic markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)` stay as the fallback; an exact signal wins when the hooks supply one. Which Notification types fire for a permission prompt is still unverified; follow-ups are in [TODOS.md](TODOS.md) "Hooks adapter follow-ups".
 
 ---
 

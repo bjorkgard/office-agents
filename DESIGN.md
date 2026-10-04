@@ -30,7 +30,7 @@ Rules: text pairs must stay at or above 4.5:1. Graphics (rings, shirts, glow) mu
 
 ## Project shirt palette (6A)
 
-Seven colors from the Okabe-Ito color-blind-safe set plus light gray (replacing Okabe-Ito's black, which is invisible on the dark background), and a stripe pattern from the 9th active project (unique for up to 16). Unknown project: neutral gray shirt and tag "unknown".
+Seven colors from the Okabe-Ito color-blind-safe set plus light gray (replacing Okabe-Ito's black, which is invisible on the dark background), and a stripe pattern from the 9th active session (unique for up to 16). Shirts are per session, not per project; a subagent shares its parent's session id and so wears the parent's shirt. Unknown project: neutral gray shirt and tag "unknown".
 
 | Index | Name       | Value     | Contrast on bg |
 | ----- | ---------- | --------- | -------------- |
@@ -43,7 +43,7 @@ Seven colors from the Okabe-Ito color-blind-safe set plus light gray (replacing 
 | 6     | purple     | `#cc79a7` | 5.68           |
 | 7     | light gray | `#f2f2f2` | 15.54          |
 
-Selection is pure and lives in `identity.ts`: hash the project path, avoid collisions among active projects. Phase 0 chose all-drawn art, so recolor is a variable or fill on the drawn shirt, not a pixel key-color swap; decision 4B was amended to this route on 2026-10-01 (design doc, decision table). Expose the index as `data-shirt` for tests.
+Selection is pure and lives in `identity.ts`: hash the session id, avoid collisions among active sessions (kept while the session stays active). Phase 0 chose all-drawn art, so recolor is a variable or fill on the drawn shirt, not a pixel key-color swap; decision 4B was amended to this route on 2026-10-01 (design doc, decision table). Expose the index as `data-shirt` for tests.
 
 Accent separation (8B): `--accent` (violet, hue about 262°) sits at least 59° away from every shirt hue (nearest: sky and blue at 202°, purple at 327°), so no project shirt matches it. Even so, the accent never relies on hue alone: it appears as a ring on the floor under the agent plus the raised-arm pose and the bubble. Verify in grayscale and against all 8 shirts before ship (task DT11). If the ring is ever confused with a shirt, change the accent, not the shirt palette.
 
