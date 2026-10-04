@@ -12,7 +12,9 @@
  *                                     out, or truncated and about to be replayed)
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { constants } from "node:fs";
 import { open, readdir as fsReaddir, lstat as fsLstat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
@@ -35,7 +37,8 @@ const MAX_DENIED = 1000;
 // Snapshot retention is per agent: its agent_started, the wait marker of its open sync launch,
 // and its open tool starts, unresolved handoffs and returned children (up to
 // ESSENTIAL_PER_AGENT each, oldest dropped past that) always stay; RECENT_PER_AGENT bounds the
-// rest. SNAPSHOT_CAP bounds the whole ring and evicts the least recently active agents whole.
+// rest. SNAPSHOT_CAP bounds the whole ring and evicts the least recently active agents whole,
+// agents whose latest state is a question last (they are only evicted when nothing else is left).
 const RECENT_PER_AGENT = 40;
 // Per map, so a parent that fanned out to a few hundred children keeps every back.
 const ESSENTIAL_PER_AGENT = 200;
@@ -44,6 +47,13 @@ const DRIFT_LOG_MS = 60_000;
 const MAX_SSE_CLIENTS = 8;
 const MAX_CLIENT_BACKLOG_BYTES = 1024 * 1024;
 const DRAIN_TIMEOUT_MS = 10_000;
+// An SSE comment frame this often makes a dead peer fail the write and drop its slot.
+const HEARTBEAT_MS = 15_000;
+const MAX_LOGGED_HEADER = 64;
+// A replaced file is told from a grown one by its inode and this many leading bytes.
+const HEAD_BYTES = 256;
+// Open without following a leaf symlink and without blocking on a FIFO or device.
+const OPEN_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 // ---- loopback guard (R3/R5, D10) ------------------------------------------------------
 
@@ -73,6 +83,45 @@ export function isLoopbackRequest(req: {
   const host = req.headers.host;
   if (typeof host !== "string" || !LOOPBACK_HOSTS.has(hostname(host))) return false;
   return isLoopbackAddress(req.socket.remoteAddress);
+}
+
+/** True when the Origin header is absent or names a loopback host on any port. */
+function isLoopbackOrigin(origin: string | string[] | undefined): boolean {
+  if (origin === undefined) return true;
+  if (typeof origin !== "string") return false;
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      LOOPBACK_HOSTS.has(hostname(url.host))
+    );
+  } catch {
+    return false; // "null" and other opaque origins
+  }
+}
+
+/** Why a request must be refused beyond the Host/socket check, or null when it may proceed. */
+export function crossOriginReason(req: {
+  headers: Record<string, string | string[] | undefined>;
+}): string | null {
+  const h = req.headers;
+  if (!isLoopbackOrigin(h.origin)) return "foreign origin";
+  if (Object.keys(h).some((k) => k.toLowerCase().startsWith("x-forwarded-"))) {
+    return "forwarded request";
+  }
+  const site = h["sec-fetch-site"];
+  if (site !== undefined && site !== "same-origin" && site !== "none") return "cross-site request";
+  return null;
+}
+
+/** A header value safe for one log line: control characters become "?", length capped. */
+function loggable(value: unknown): string {
+  return (
+    String(value)
+      // oxlint-disable-next-line no-control-regex
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, "?")
+      .slice(0, MAX_LOGGED_HEADER)
+  );
 }
 
 // ---- seat table (T10/R8) --------------------------------------------------------------
@@ -132,7 +181,15 @@ export function seatsOf(table: SeatTable): Record<string, number> {
 export type DirEntry = { name: string; isFile(): boolean; isDirectory(): boolean };
 export type TailerIo = {
   readdir(path: string): Promise<DirEntry[]>;
-  lstat(path: string): Promise<{ size: number; mtimeMs: number; isSymbolicLink(): boolean }>;
+  lstat(path: string): Promise<{
+    size: number;
+    mtimeMs: number;
+    dev?: number;
+    ino?: number;
+    isSymbolicLink(): boolean;
+  }>;
+  /** Opens without following a symlink and fstats the handle: a non-regular file (FIFO, socket,
+   * device) fails with code ENOTREG, a symlink with ELOOP, and neither blocks. */
   read(path: string, start: number, end: number): Promise<Buffer>;
 };
 
@@ -140,8 +197,11 @@ const defaultIo: TailerIo = {
   readdir: (path) => fsReaddir(path, { withFileTypes: true }),
   lstat: (path) => fsLstat(path),
   async read(path, start, end) {
-    const handle = await open(path, "r");
+    const handle = await open(path, OPEN_FLAGS);
     try {
+      if (!(await handle.stat()).isFile()) {
+        throw Object.assign(new Error("not a regular file"), { code: "ENOTREG" });
+      }
       const buf = Buffer.alloc(end - start);
       const { bytesRead } = await handle.read(buf, 0, buf.length, start);
       return buf.subarray(0, bytesRead);
@@ -184,9 +244,19 @@ type Tracked = {
   /** Dropping the rest of an oversize line, up to its next newline. */
   discarding: boolean;
   cold: boolean;
+  /** Identity of the file read so far: inode and a hash of its first bytes. */
+  ident: { dev?: number; ino?: number } | null;
+  head: { len: number; hash: string } | null;
 };
 
+type Candidate = Omit<
+  Tracked,
+  "state" | "offset" | "pending" | "discarding" | "cold" | "ident" | "head"
+>;
+
 const errCode = (e: unknown): string | undefined => (e as NodeJS.ErrnoException | null)?.code;
+
+const hashOf = (buf: Buffer): string => createHash("sha256").update(buf).digest("hex");
 
 function splitLines(buf: Buffer): string[] {
   return buf
@@ -247,7 +317,7 @@ export function createTailer(opts: TailerOptions) {
     const code = errCode(e);
     if (denied.size >= MAX_DENIED) denied.delete(denied.keys().next().value as string);
     denied.set(path, code === "EACCES" || code === "EPERM" ? Infinity : now() + DENY_RETRY_MS);
-    log(`skipping ${basename(path)}: ${code ?? "read error"}`);
+    log(`skipping ${loggable(basename(path))}: ${code ?? "read error"}`);
   }
 
   /** ENOENT retires the file (the agent leaves), a permission error denies it for good,
@@ -256,13 +326,13 @@ export function createTailer(opts: TailerOptions) {
     const code = errCode(e);
     if (code === "ENOENT") {
       retire(file);
-    } else if (code === "EACCES" || code === "EPERM") {
+    } else if (code === "EACCES" || code === "EPERM" || code === "ELOOP" || code === "ENOTREG") {
       deny(file.path, e);
       retire(file);
     } else {
       const n = (failures.get(file.path) ?? 0) + 1;
       failures.set(file.path, n);
-      if (n === 1) log(`retrying ${basename(file.path)}: ${code ?? "read error"}`);
+      if (n === 1) log(`retrying ${loggable(basename(file.path))}: ${code ?? "read error"}`);
       if (n >= MAX_READ_RETRIES) {
         deny(file.path, e);
         retire(file);
@@ -270,10 +340,8 @@ export function createTailer(opts: TailerOptions) {
     }
   }
 
-  async function candidates(): Promise<
-    Array<Omit<Tracked, "state" | "offset" | "pending" | "discarding" | "cold">>
-  > {
-    const out: Array<Omit<Tracked, "state" | "offset" | "pending" | "discarding" | "cold">> = [];
+  async function candidates(): Promise<Array<Candidate>> {
+    const out: Array<Candidate> = [];
     let projects: DirEntry[];
     try {
       projects = await io.readdir(opts.root);
@@ -382,9 +450,7 @@ export function createTailer(opts: TailerOptions) {
 
   /** Session id comes from the path, never the record body; a parent is looked up among the
    * session's other files' launches (a top-level parent has no agentId, so that stays null). */
-  function stateFor(
-    file: Omit<Tracked, "state" | "offset" | "pending" | "discarding" | "cold">,
-  ): NormalizerState {
+  function stateFor(file: Candidate): NormalizerState {
     return createNormalizerState({
       projectId: file.projectId,
       subagent: file.agentId !== null,
@@ -462,9 +528,30 @@ export function createTailer(opts: TailerOptions) {
     emit(file, splitLines(data.subarray(0, last + 1)));
   }
 
+  /** True when the file at this path is not the one read so far: a new inode, or leading bytes
+   * that changed while the file grew past the old offset. */
+  async function replaced(
+    file: Tracked,
+    stat: { size: number; dev?: number; ino?: number },
+  ): Promise<boolean> {
+    const id = file.ident;
+    if (id !== null && (id.ino !== stat.ino || id.dev !== stat.dev)) return true;
+    if (file.head === null || stat.size === file.offset) return false;
+    const now = await io.read(file.path, 0, file.head.len);
+    return now.length < file.head.len || hashOf(now) !== file.head.hash;
+  }
+
+  /** Notes the hash of the file's first bytes, widening it while the file is under HEAD_BYTES. */
+  async function remember(file: Tracked): Promise<void> {
+    const len = Math.min(HEAD_BYTES, file.offset);
+    if (len === 0 || (file.head !== null && file.head.len >= len)) return;
+    const head = await io.read(file.path, 0, len);
+    file.head = { len: head.length, hash: hashOf(head) };
+  }
+
   async function pollFile(file: Tracked): Promise<void> {
     if (isDenied(file.path)) return;
-    let stat: { size: number; mtimeMs: number };
+    let stat: { size: number; mtimeMs: number; dev?: number; ino?: number };
     try {
       stat = await io.lstat(file.path);
     } catch (e) {
@@ -477,8 +564,8 @@ export function createTailer(opts: TailerOptions) {
     }
     try {
       if (file.cold) await readCold(file, stat.size);
-      else if (stat.size < file.offset) {
-        // Truncated: reset offset and state; the agent is re-synthesized.
+      else if (stat.size < file.offset || (await replaced(file, stat))) {
+        // Truncated or replaced: reset offset and state; the agent is re-synthesized.
         addDrift(retiredDrift, file.state.drift);
         file.state = stateFor(file);
         file.offset = 0;
@@ -486,8 +573,12 @@ export function createTailer(opts: TailerOptions) {
         file.discarding = false;
         file.cold = true;
         opts.onReset?.(file);
+        file.ident = null;
+        file.head = null;
         await readCold(file, stat.size);
       } else if (stat.size > file.offset) await readMore(file, stat.size);
+      if (file.ident === null) file.ident = { dev: stat.dev, ino: stat.ino };
+      await remember(file);
       failures.delete(file.path);
     } catch (e) {
       fail(file, e);
@@ -515,6 +606,8 @@ export function createTailer(opts: TailerOptions) {
           pending: Buffer.alloc(0),
           discarding: false,
           cold: true,
+          ident: null,
+          head: null,
         });
       }
     }
@@ -576,6 +669,8 @@ type AgentRing = {
   returned: Map<string, AgentEvent>;
   /** The wait marker of the newest open sync launch. */
   waiting: AgentEvent | null;
+  /** The done (or needs_attention) event of an agent whose latest state is a question. */
+  question: AgentEvent | null;
   recent: AgentEvent[];
   /** Newest ts this agent has produced. */
   last: number;
@@ -597,6 +692,7 @@ export function createSnapshotRing() {
     r.unresolved.size +
     r.returned.size +
     (r.waiting ? 1 : 0) +
+    (r.question ? 1 : 0) +
     r.recent.length;
   const capped = <V>(map: Map<string, V>): string | null => {
     if (map.size <= ESSENTIAL_PER_AGENT) return null;
@@ -613,6 +709,7 @@ export function createSnapshotRing() {
       unresolved: new Map(),
       returned: new Map(),
       waiting: null,
+      question: null,
       recent: [],
       last: Number.NEGATIVE_INFINITY,
     };
@@ -625,7 +722,15 @@ export function createSnapshotRing() {
       r.recent.push(event);
       if (r.recent.length > RECENT_PER_AGENT) r.recent.shift();
     };
-    if (event.kind === "agent_started") {
+    const asking =
+      (event.kind === "done" && event.endsWithQuestion) || event.kind === "needs_attention";
+    // Only a question or a handoff leaves the question standing; any other event is activity.
+    if (!asking && event.kind !== "handoff") r.question = null;
+    if (asking) {
+      r.question = event;
+      r.openTools.clear();
+      r.waiting = null;
+    } else if (event.kind === "agent_started") {
       r.started = event;
     } else if (event.kind === "working" && event.tool?.phase === "start") {
       r.openTools.set(event.tool.id, event);
@@ -663,9 +768,19 @@ export function createSnapshotRing() {
     }
     total += sizeOf(r);
     while (total > SNAPSHOT_CAP && agents.size > 1) {
-      const [oldest, gone] = agents.entries().next().value as [string, AgentRing];
-      agents.delete(oldest);
-      total -= sizeOf(gone);
+      // The first agent without a standing question; with none, the oldest asker (never `r`).
+      let victim: [string, AgentRing] | undefined;
+      for (const entry of agents) {
+        if (entry[1] === r) break;
+        victim ??= entry;
+        if (entry[1].question === null) {
+          victim = entry;
+          break;
+        }
+      }
+      if (victim === undefined) break;
+      agents.delete(victim[0]);
+      total -= sizeOf(victim[1]);
     }
   }
 
@@ -689,6 +804,7 @@ export function createSnapshotRing() {
           ...r.returned.values(),
           ...r.recent,
         );
+        if (r.question) out.push(r.question);
         if (r.waiting) out.push(r.waiting);
       }
       return out.sort((a, b) => a.ts - b.ts || (order.get(a) ?? 0) - (order.get(b) ?? 0));
@@ -726,12 +842,16 @@ export function createFeed(options: FeedOptions = {}) {
   /** Clients whose last write returned false, with the time it did, until they drain. */
   const blocked = new Map<Res, number>();
   let timer: unknown = null;
+  let heartbeat: NodeJS.Timeout | null = null;
   let lastDriftLog = Number.NEGATIVE_INFINITY;
   let lastDriftTotal = 0;
 
   function send(frame: unknown): void {
+    broadcast(`data: ${JSON.stringify(frame)}\n\n`);
+  }
+
+  function broadcast(data: string): void {
     if (clients.size === 0) return;
-    const data = `data: ${JSON.stringify(frame)}\n\n`;
     for (const res of [...clients]) {
       try {
         if (!res.write(data) && !blocked.has(res)) blocked.set(res, now());
@@ -764,6 +884,12 @@ export function createFeed(options: FeedOptions = {}) {
   function dropClient(res: Res): void {
     clients.delete(res);
     blocked.delete(res);
+    if (clients.size === 0) stopHeartbeat();
+  }
+
+  function stopHeartbeat(): void {
+    if (heartbeat !== null) clearInterval(heartbeat);
+    heartbeat = null;
   }
 
   /** Removes a vanished agent's events from the snapshot ring and tells live clients. */
@@ -825,9 +951,10 @@ export function createFeed(options: FeedOptions = {}) {
       next();
       return;
     }
-    if (!isLoopbackRequest(req)) {
+    const refusal = isLoopbackRequest(req) ? crossOriginReason(req) : "not loopback";
+    if (refusal !== null) {
       log(
-        `refused ${path}: host=${String(req.headers.host)} remote=${String(req.socket.remoteAddress)}`,
+        `refused ${loggable(path)} (${refusal}): host=${loggable(req.headers.host)} remote=${loggable(req.socket.remoteAddress)}`,
       );
       reply(res, 403, "text/plain; charset=utf-8", "forbidden: office feed is loopback only\n");
       return;
@@ -850,6 +977,7 @@ export function createFeed(options: FeedOptions = {}) {
       const snapshot = `data: ${JSON.stringify({ type: "snapshot", events: ring.events(), seats: seatsOf(seats) })}\n\n`;
       if (!res.write(snapshot)) blocked.set(res, now());
       clients.add(res);
+      heartbeat ??= setInterval(() => broadcast(": ping\n\n"), HEARTBEAT_MS).unref();
       const drop = () => dropClient(res);
       req.on?.("close", drop);
       res.on?.("close", drop);
@@ -886,6 +1014,7 @@ export function createFeed(options: FeedOptions = {}) {
     }
     clients.clear();
     blocked.clear();
+    stopHeartbeat();
   }
 
   return { handle, start, stop, scanOnce, status, clients, seats };

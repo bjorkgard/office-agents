@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   appendFileSync,
@@ -19,7 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite-plus";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ATTENTION_STALE_MS } from "../shared/tuning.ts";
 import {
   assignSeat,
@@ -157,6 +158,78 @@ describe("tailer", () => {
     await t.scanOnce();
     expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
   });
+
+  it("re-reads from the start when the file is replaced and grows past the old offset", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const resets: string[] = [];
+    const { t, events } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(1);
+    // A different inode, longer than the old offset: size alone cannot tell.
+    const next = file + ".new";
+    writeFileSync(next, lines.join("\n") + "\n" + lines[2] + "\n");
+    renameSync(next, file);
+    await t.scanOnce();
+    expect(resets).toHaveLength(1);
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
+  });
+
+  it("re-reads from the start when the same inode is rewritten with a different head", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const resets: string[] = [];
+    const { t, events } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    writeFileSync(file, "{}\n" + lines.join("\n") + "\n" + lines[2] + "\n");
+    await t.scanOnce();
+    expect(resets).toHaveLength(1);
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
+  });
+
+  it("does not reset a file that only grows, even while its head is shorter than the head window", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines[0] + "\n");
+    const resets: string[] = [];
+    const { t } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    for (const l of lines.slice(1)) {
+      appendFileSync(file, l + "\n");
+      await t.scanOnce();
+    }
+    expect(resets).toEqual([]);
+  });
+
+  it("does not follow a leaf swapped for a symlink after it was tracked", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const other = join(root, "elsewhere.jsonl");
+    writeFileSync(other, lines.join("\n") + "\n" + lines.join("\n") + "\n");
+    const { t, events, logs } = tailer();
+    await t.scanOnce();
+    const n = events.length;
+    unlinkSync(file);
+    symlinkSync(other, file);
+    await t.scanOnce();
+    expect(events).toHaveLength(n);
+    expect(t.status().filesTracked).toBe(0);
+    expect(logs.some((l) => l.includes("skipping"))).toBe(true);
+  });
+
+  it("rejects a FIFO swapped in for a tracked file without blocking, logging once", async () => {
+    const file = putTop("p1", "top-live");
+    const { t, logs } = tailer();
+    await t.scanOnce();
+    unlinkSync(file);
+    execFileSync("mkfifo", [file]);
+    await t.scanOnce();
+    await t.scanOnce();
+    expect(t.status().filesTracked).toBe(0);
+    const skipped = logs.filter((l) => l.includes("skipping"));
+    expect(skipped).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(skipped[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  }, 3000);
 
   it("retries a transient read error on the next scan and logs once", async () => {
     putTop("p1", "top-live");
@@ -869,6 +942,107 @@ describe("feed", () => {
     expect(logs.filter((l) => l.includes("refused"))).toHaveLength(2);
   });
 
+  const withHeaders = (url: string, headers: Record<string, string>) => {
+    const r = fakeReq(url);
+    Object.assign(r.headers, headers);
+    return r;
+  };
+
+  it.each([
+    [{ origin: "http://evil.example" }, 403],
+    [{ origin: "null" }, 403],
+    [{ origin: "http://localhost.evil.example:5173" }, 403],
+    [{ origin: "http://localhost:5173" }, 200],
+    [{ origin: "http://127.0.0.1:3000" }, 200],
+    [{ origin: "http://[::1]:8080" }, 200],
+    [{ "x-forwarded-for": "10.0.0.1" }, 403],
+    [{ "x-forwarded-host": "evil.example" }, 403],
+    [{ "sec-fetch-site": "cross-site" }, 403],
+    [{ "sec-fetch-site": "same-site" }, 403],
+    [{ "sec-fetch-site": "same-origin" }, 200],
+    [{ "sec-fetch-site": "none" }, 200],
+    [{}, 200],
+  ])("request headers %j -> %s", (headers, code) => {
+    const feed = createFeed({ root, log: () => {} });
+    const { res } = call(feed, withHeaders("/__office/status", headers));
+    expect(res.statusCode).toBe(code);
+  });
+
+  it("logs a refused Host without control characters and within a bounded length", () => {
+    const logs: string[] = [];
+    const feed = createFeed({ root, log: (l) => logs.push(l) });
+    const host = `evil\r\n[office] forged\u001b[31m${"x".repeat(5000)}`;
+    call(feed, fakeReq("/__office/status", host));
+    expect(logs).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(logs[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(logs[0].length).toBeLessThan(400);
+  });
+
+  it("logs a refused path and remote address without control characters", () => {
+    const logs: string[] = [];
+    const feed = createFeed({ root, log: (l) => logs.push(l) });
+    const req = fakeReq(
+      "/__office/a\r\n[office] forged\u001b[31m",
+      "evil.example",
+      "10.0.0.1\r\nx",
+    );
+    call(feed, req);
+    expect(logs).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(logs[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(logs[0]).toContain("forged");
+  });
+
+  it("refuses an array-valued or comma-joined (duplicate) Origin header", () => {
+    const feed = createFeed({ root, log: () => {} });
+    const twice = ["http://localhost:5173", "http://localhost:5173"];
+    const arr = withHeaders("/__office/status", {});
+    Object.assign(arr.headers, { origin: twice });
+    expect(call(feed, arr).res.statusCode).toBe(403);
+    const joined = withHeaders("/__office/status", {
+      origin: "http://localhost:5173, http://evil.example",
+    });
+    expect(call(feed, joined).res.statusCode).toBe(403);
+  });
+
+  it("does not let the heartbeat timer keep the process alive", () => {
+    const spy = vi.spyOn(globalThis, "setInterval");
+    try {
+      const feed = createFeed({ root, log: () => {} });
+      call(feed, fakeReq("/__office/events"));
+      const timer = spy.mock.results[0].value as NodeJS.Timeout;
+      expect(timer.hasRef()).toBe(false);
+      feed.stop();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("pings SSE clients every 15 s and clears the timer once the last client closes", () => {
+    vi.useFakeTimers();
+    try {
+      const feed = createFeed({ root, log: () => {} });
+      const reqA = fakeReq("/__office/events");
+      const a = call(feed, reqA);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(14_999);
+      expect(a.res.written).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(a.res.written[1]).toBe(": ping\n\n");
+      reqA.emit("close");
+      expect(vi.getTimerCount()).toBe(0);
+      const b = call(feed, fakeReq("/__office/events"));
+      expect(vi.getTimerCount()).toBe(1);
+      feed.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(b.res.written).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("serves status JSON on loopback", async () => {
     putTop("p1", "top-live");
     const feed = createFeed({ root, log: () => {} });
@@ -1114,6 +1288,54 @@ describe("feed", () => {
       for (let i = 0; i < n; i++) ring.add({ ...at, agentId: null, ts: from + i, kind: "working" });
     };
     const T = 1_800_000_001_000;
+
+    const done = (agentId: string | null, ts: number, endsWithQuestion: boolean): AgentEvent => ({
+      ...at,
+      agentId,
+      ts,
+      kind: "done",
+      endsWithQuestion,
+    });
+    const crowd = (ring: ReturnType<typeof createSnapshotRing>, agents: number, each: number) => {
+      for (let a = 0; a < agents; a++) {
+        const id = `busy-${a}`;
+        ring.add(started(id));
+        for (let i = 0; i < each; i++) {
+          ring.add({ ...at, agentId: id, ts: T + a * 100 + i, kind: "working" });
+        }
+      }
+    };
+
+    it("keeps an agent waiting on a question when busier agents fill the ring", () => {
+      const ring = createSnapshotRing();
+      ring.add(started("asker"));
+      ring.add(done("asker", T, true));
+      crowd(ring, 80, 40);
+      const mine = ring.events().filter((e) => e.agentId === "asker");
+      expect(mine.map((e) => e.kind)).toEqual(["agent_started", "done"]);
+      expect(ring.events().length).toBeLessThanOrEqual(2000);
+    });
+
+    it("lets a questioning agent be evicted again once it resumes work", () => {
+      const ring = createSnapshotRing();
+      ring.add(started("asker"));
+      ring.add(done("asker", T, true));
+      ring.add({ ...at, agentId: "asker", ts: T + 1, kind: "working" });
+      crowd(ring, 80, 40);
+      expect(ring.events().some((e) => e.agentId === "asker")).toBe(false);
+    });
+
+    it("keeps one question done per agent and bounds the total with many askers", () => {
+      const ring = createSnapshotRing();
+      for (let a = 0; a < 3000; a++) {
+        ring.add(started(`q-${a}`));
+        ring.add(done(`q-${a}`, T + a, true));
+        ring.add(done(`q-${a}`, T + a + 1, true));
+      }
+      const events = ring.events();
+      expect(events.length).toBeLessThanOrEqual(2000);
+      expect(events.filter((e) => e.agentId === "q-2999")).toHaveLength(2);
+    });
 
     it("keeps a waiting marker through 100 events and drops it when the tool ends", () => {
       const ring = createSnapshotRing();
