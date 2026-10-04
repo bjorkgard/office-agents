@@ -762,3 +762,53 @@ describe("removeAgent", () => {
     expect(removeAgent(s, "other", null)).toBe(s);
   });
 });
+
+describe("replay clock cap", () => {
+  it("a far-future event neither expires other agents nor never expires itself", () => {
+    const now = 10 * HOUR;
+    const events: AgentEvent[] = [
+      { ...started("a"), ts: now - 1000 },
+      { ...working("a"), ts: now - 1000 },
+      { ...started("b"), ts: now + 100 * HOUR },
+      { ...working("b"), ts: now + 100 * HOUR },
+    ];
+    const s = tick(applyEvents(createOffice(), events, now, { replay: true }), now);
+    expect(stateOf(s, "a")).not.toBe("leaving");
+    expect(get(s, "a")).toBeDefined();
+    expect(get(s, "b")!.lastEventAt).toBe(now);
+    const later = tick(s, now + STALE_MS + 1);
+    expect(["leaving", undefined]).toContain(stateOf(later, "b"));
+  });
+});
+
+describe("ids that collide with Object.prototype", () => {
+  const ids = ["__proto__", "constructor", "toString"];
+
+  it("tracks a tool and a launched child under each id", () => {
+    for (const id of ids) {
+      let s = applyEvent(createOffice(), started(), 0);
+      s = applyEvent(s, working(null, { phase: "start", id, isSubagent: true }), 1);
+      expect(Object.keys(get(s)!.openTools)).toEqual([id]);
+      s = applyEvent(s, waitingSubs(), 2);
+      expect(stateOf(s)).toBe("waiting-on-subagents");
+      s = applyEvent(s, working(null, { phase: "end", id, isSubagent: true }), 3);
+      expect(Object.keys(get(s)!.openTools)).toEqual([]);
+      expect(get(s)!.waitingOn).toEqual([]);
+      expect(stateOf(s)).not.toBe("waiting-on-subagents");
+      s = applyEvent(s, handoff(id, "out"), 4);
+      expect(Object.keys(get(s)!.unresolved)).toEqual([id]);
+      s = applyEvent(s, handoff(id, "back"), 5);
+      expect(Object.keys(get(s)!.unresolved)).toEqual([]);
+    }
+  });
+
+  it("does not see an absent id as an open tool", () => {
+    let s = applyEvent(createOffice(), started(), 0);
+    s = applyEvent(s, working(null, { phase: "start", id: "x", isSubagent: true }), 1);
+    s = applyEvent(s, waitingSubs(), 2);
+    s = applyEvent(s, working(null, { phase: "end", id: "toString" }), 3);
+    expect(Object.keys(get(s)!.openTools)).toEqual(["x"]);
+    expect(get(s)!.waitingOn).toEqual(["x"]);
+    expect(stateOf(s)).toBe("waiting-on-subagents");
+  });
+});

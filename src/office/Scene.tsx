@@ -436,6 +436,7 @@ export function Scene({
       data-desks={layout.desks.length}
       ref={sceneRef}
       tabIndex={-1}
+      role="group"
       aria-label="Office"
       onFocus={(e) => {
         focused.current = e.target;
@@ -548,13 +549,18 @@ export function Scene({
               <button
                 type="button"
                 className="hit"
-                aria-label={`${name}, ${project}, ${STATE_LABEL[a.state]}`}
+                aria-label={`${name}, ${project}, ${STATE_LABEL[a.state]}${
+                  a.agentId === null && extra > 0
+                    ? `, ${extra} more ${extra === 1 ? "helper" : "helpers"}`
+                    : ""
+                }`}
                 ref={bindOverlay(a.key, "hit")}
                 style={{ left: at.hit.left, top: at.hit.top, width: hit, height: hit }}
                 onClick={() => onSelect?.(a.key)}
               />
               <div
                 className="tag"
+                aria-hidden="true"
                 data-waving={waiting ? "" : undefined}
                 ref={bindOverlay(a.key, "tag")}
                 style={{ left: at.tag.left, top: at.tag.top }}

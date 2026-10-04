@@ -89,15 +89,20 @@ export function removeAgent(
   return { ...state, agents, returned };
 }
 
+/** Sets an own property, so an id like `__proto__` is data and not the prototype setter. */
+function setOwn<T>(o: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(o, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function stateOf(a: Agent): AgentState {
   if (a.phase === "leaving") return "leaving";
   if (a.attention) return "attention";
-  if (a.waitingOn.some((id) => id in a.openTools)) return "waiting-on-subagents";
+  if (a.waitingOn.some((id) => Object.hasOwn(a.openTools, id))) return "waiting-on-subagents";
   return a.phase;
 }
 
 function settle(a: Agent): void {
-  a.waitingOn = a.waitingOn.filter((id) => id in a.openTools);
+  a.waitingOn = a.waitingOn.filter((id) => Object.hasOwn(a.openTools, id));
   a.state = stateOf(a);
 }
 
@@ -214,7 +219,7 @@ export function applyEvents(
 ): OfficeState {
   if (events.length === 0) return state;
   let s = structuredClone(state);
-  for (const e of events) s = applyOwned(s, e, opts.replay ? e.ts : now, s);
+  for (const e of events) s = applyOwned(s, e, opts.replay ? Math.min(e.ts, now) : now, s);
   return s;
 }
 
@@ -244,7 +249,7 @@ function applyOwned(
       const a = touch(s, sessionId, event.agentId, projectId, clock);
       const tool = event.tool;
       if (tool?.phase === "start") {
-        a.openTools[tool.id] = { startedAt: clock, isSubagent: tool.isSubagent };
+        setOwn(a.openTools, tool.id, { startedAt: clock, isSubagent: tool.isSubagent });
         clearAttention(a, clock, (t) => t !== "tool");
       } else {
         if (tool) delete a.openTools[tool.id];
@@ -283,7 +288,7 @@ function applyOwned(
         // A launch that would close a wait loop could never expire; ignore it.
         const loop =
           event.fromAgentId !== null && waitsOn(s, sessionId, event.toAgentId, event.fromAgentId);
-        if (!loop) parent.unresolved[event.toAgentId] = clock;
+        if (!loop) setOwn(parent.unresolved, event.toAgentId, clock);
       } else {
         delete parent.unresolved[event.toAgentId];
         const key = agentKey(sessionId, event.toAgentId);
