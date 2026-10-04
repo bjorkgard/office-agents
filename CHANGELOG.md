@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0.0] - 2026-10-04
+
+### Added
+
+- Optional exact attention signals. `node hooks/install.mjs` prints the Claude Code hook settings that make the office show "asking you" the moment Claude asks for permission, instead of guessing from a quiet transcript. Nothing is installed unless you run it with `--apply`, it backs up your settings first, keeps your other hooks, follows a symlinked settings file, and `--remove` takes it out again. The hook only ever sends session and agent ids, the event name and paths to your own machine, never message text, and it never blocks or slows Claude Code.
+- A subagent's monitor lights up like its parent's, and each session gets its own shirt color that its subagents inherit.
+
+### Changed
+
+- The feed server is stricter about who can talk to it. It refuses requests from other origins, forwarded requests and cross-site fetches, keeps the event stream alive with a heartbeat, will not follow a symlinked or FIFO transcript, and notices when a transcript file is replaced instead of read from the wrong place.
+- One bad line in a transcript now costs that line, not the whole batch. A session's identity comes from its file, so a crafted record can no longer claim another session's seat, and results of several parallel tool calls are matched to the right subagent.
+- A waiting agent that asked a question stays visible to a page that reconnects. After a transcript is truncated the agent gets its seat back, and one timestamp far in the future can no longer blank the office.
+- The scene is announced as a group for screen readers, the "+N more helpers" count is read with the parent's button, and ids such as `__proto__` are treated as plain names.
+- The end-to-end suite starts every dev server with its own private hook directory, so a test run can no longer touch your real hook setup, and its screenshot test no longer depends on whether macOS shows scrollbars (the baseline is regenerated).
+- The fixture sanitizer salts its id hashes per run and keeps only known tool names.
+
 ## [0.5.0.0] - 2026-10-04
 
 ### Added

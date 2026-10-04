@@ -282,6 +282,20 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 
 **Completed:** todo-burndown step 5 (2026-10-04). Tests: src/office/machine.test.ts, src/office/Scene.a11y.test.tsx, server/feed-plugin.test.ts. Not run through a screen reader. machine.ts keeps plain objects; `openTools` and `unresolved` use own-key writes (`setOwn`) and `Object.hasOwn` reads.
 
+### Hooks adapter for exact attention and subagent lifecycle
+
+**What:** Consent-gated Claude Code hooks (Notification, PermissionRequest, SubagentStart/Stop) that POST to the loopback feed as a second adapter behind `shared/events.ts`.
+
+**Why:** Replaces the slice 1 heuristics (trailing "?" and tool-call timer, markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)`) with exact signals, so the wave never fires falsely and never misses a permission prompt.
+
+**Context:** Slice 1 reads `~/.claude/projects/**/*.jsonl` only. Pros: no false waves, resolves both shortcut markers. Cons: edits `~/.claude/settings.json`, adds an installer, a token-checked 127.0.0.1 endpoint and a hook script (about 3 files); sessions started before install stay silent. The normalized event interface already exists, so this is an added adapter; start from `shared/events.ts`. Ideas only from pixel-agents (`../pixel-agents/CLAUDE.md:30,284`), no code copied without license attribution (MIT).
+
+**Effort:** L (human ~1.5 days / CC ~1h)
+**Priority:** P2
+**Depends on:** Slice 1 shipped
+
+**Completed:** todo-burndown step 6 (2026-10-04). Server: `server/hooks-adapter.ts`, `server/hook-discovery.ts`, `POST /__office/hook` in `server/feed-plugin.ts`. Claude side: `hooks/office-hook.mjs`, `hooks/install.mjs` (print-only by default, nothing writes `~/.claude/settings.json` unless the user runs `--apply`). Machine: exact `needs_attention` in `src/office/machine.ts`. Remaining work is in the new items "Make the hooks attention mapping exact" and "Hooks adapter leftovers".
+
 ## Completed in v0.3.0.0
 
 ### V1: Windows with a random outside world

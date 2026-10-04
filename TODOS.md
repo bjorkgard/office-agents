@@ -2,18 +2,6 @@
 
 ## Feed
 
-### Hooks adapter for exact attention and subagent lifecycle
-
-**What:** Consent-gated Claude Code hooks (Notification, PermissionRequest, SubagentStart/Stop) that POST to the loopback feed as a second adapter behind `shared/events.ts`.
-
-**Why:** Replaces the slice 1 heuristics (trailing "?" and tool-call timer, markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)`) with exact signals, so the wave never fires falsely and never misses a permission prompt.
-
-**Context:** Slice 1 reads `~/.claude/projects/**/*.jsonl` only. Pros: no false waves, resolves both shortcut markers. Cons: edits `~/.claude/settings.json`, adds an installer, a token-checked 127.0.0.1 endpoint and a hook script (about 3 files); sessions started before install stay silent. The normalized event interface already exists, so this is an added adapter; start from `shared/events.ts`. Ideas only from pixel-agents (`../pixel-agents/CLAUDE.md:30,284`), no code copied without license attribution (MIT).
-
-**Effort:** L (human ~1.5 days / CC ~1h)
-**Priority:** P2
-**Depends on:** Slice 1 shipped
-
 ## Office
 
 ### Paper hover-text with redaction
@@ -427,5 +415,105 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Context:** The demo module is excluded from `dist/` on purpose (marker `__OFFICE_DEMO__`), so a production replay needs its own path.
 
 **Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+## Hooks adapter follow-ups (2026-10-04)
+
+### Make the hooks attention mapping exact, then retire the heuristics
+
+**What:** Run the interactive hook probe (a real `claude` session with `--settings <temp file>` and a logging hook that records field names and ids only) to learn which hook events fire for a permission prompt, an `AskUserQuestion` and an idle wait, and whether `matcher: ""` and `async: true` behave as assumed. Then fix the `HOOK_EVENTS` table in `server/hooks-adapter.ts`, make the episode id independent of the hook name if two hooks fire for one prompt, and decide whether the `dec-R1` and `dec-R2` heuristics in `src/office/machine.ts` can be suppressed for agents with exact signals.
+
+**Why:** The mapping for `PermissionRequest` and `Notification` types is tolerant but unverified; a headless `claude -p` run fires neither, and the agent-driven interactive probe was denied by the auto-mode classifier. The subagent mapping is verified (the hook `agent_id` equals the `agent-<id>.jsonl` id).
+
+**Context:** `.claude/scratch/todo-burndown/FINDINGS.md` ("Hook probe") has the facts and the exact probe command. Both hooks firing for one prompt would announce twice (episode id includes the hook name).
+
+**Effort:** S (human ~30min / CC ~20min)
+**Priority:** P2
+**Depends on:** The user running the probe
+
+### Hooks adapter leftovers
+
+**What:** (1) A hook payload over 256 KB (a huge `PermissionRequest` `tool_input`) is dropped whole, so that attention signal is lost; a reused pid sends the token to whatever listens on that port. (2) Installer: a failed rename leaves a `.<name>.<pid>.tmp` with the full settings; two runs in the same millisecond overwrite each other's backup; rename breaks hard links; apply then remove normalises the user's empty event arrays away; `echo /x/office-hook.mjs` counts as ours. (3) Hook discovery: both dev servers (5173 and 5199) use the default `~/.office-agents` dir, so the last writer wins; after SIGKILL a stale `hook.json` stays (the script checks the pid). (4) The `returnedSeen` ring set is never cleared, so a relaunched child with the same agent id would be dropped. (5) Machine: live and replay can still differ on hold-check versus tick timing and on a repeated `episodeId` after an idle exit; only the latest exact episode id per agent is remembered; the clamp accepts `waitingSince: 1`; an upgrade can reorder the attention list by since-time. (6) Not tested: a Windows host, real hook arrival latency.
+
+**Why:** Informational findings from the step 6 refuter passes; none blocks.
+
+**Context:** Reports in `.claude/scratch/todo-burndown/reports/refuter-17.md`, `-21.md`, `-26.md`, `-28.md`, `-31.md`, `-33.md`.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+## Pre-landing review follow-ups (2026-10-04, /ship cycle 1)
+
+### Hooks adapter: ring, machine and hook semantics to align
+
+**What:** (1) A hook `SubagentStop` `done` is a no-op in the machine (`src/office/machine.ts:352`, `event.agentId !== null` breaks) but `ingestHook` adds it to the ring, where it clears the child's standing question, open tools and wait marker, so live and replay disagree: either act on it in the machine or do not ring it. (2) The ring clears `openTools` and the sync-launch wait marker on `needs_attention` (`server/feed-plugin.ts:749`) while the machine's `enterExact` does not: clear them only for the heuristic question `done`. (3) Hook-only agents have no tailer file, so nothing retires them from the ring (`server/feed-plugin.ts:1034`): add a TTL or ignore hook events for sessions the tailer does not track. (4) `PermissionRequest` and `Notification(permission_prompt)` hash different episode ids (hook name is in the hash), so both firing would supersede and re-announce; part of "Make the hooks attention mapping exact".
+
+**Why:** Red-team findings from the /ship review; each is a live-versus-replay or lifecycle gap, none reproduced end to end.
+
+**Context:** See `.claude/scratch/todo-burndown/DECISIONS.md` D35 to D37 for the rules the machine and ring already share.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** The user's interactive hook probe
+
+### Feed plugin: split the hook route and tighten small spots
+
+**What:** `server/feed-plugin.ts` is past 1,200 lines: move the hook route (`handleHook`, `readHookBody`, `hookAdmit`, `ingestHook`) into `server/hook-route.ts` like `hooks-adapter.ts` and `hook-discovery.ts`. The `Req.on` type was widened to `(event: string, cb: (arg: Buffer) => void)` (`:849`): use overloads for `close`, `data`, `end`, `error`. `hookSessions` evicts by insertion order, not recency (`:1014`): delete before set. `replaced()` re-opens, reads and hashes the file head on every scan for every grown file (`:556`): skip unless size shrank or the inode changed, or read the head on the same handle. `hookSessionCount` and several `HOOK_*` exports exist only for tests. The SIGINT handler re-raises unconditionally (`:1237`); verified fine for `vp dev` (refuter-21) but would double-run other plain listeners. `hooks/install.mjs:225` writes the settings temp file without `O_EXCL`/`O_NOFOLLOW` (needs write access to `~/.claude`, low impact).
+
+**Why:** Maintainability, performance and security informational findings; none is a defect today.
+
+**Context:** Advisory simplifications also listed: drop the redundant `chmodSync(tmp, 0o600)` in `server/hook-discovery.ts`, share one `reject(code)` closure in `readHookBody`, validate the root before `mkdtempSync` in `e2e/release.ts` `startOffice`.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### sanitize-fixtures CLI usability
+
+**What:** `server/sanitize-fixtures.ts:179`: the default became a random per-run salt, so the committed fixtures can only be reproduced through the library function; an empty `OFFICE_FIXTURE_SALT` exits 2 with only the usage message; `--salt` is only recognised as the first argument. Document which salt regenerates the committed fixtures, treat an empty env var as unset, and parse flags anywhere.
+
+**Why:** api-contract findings from the /ship review.
+
+**Context:** Related to "Batch B2 leftovers" item 4.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Review cycle 2 leftovers (2026-10-04)
+
+**What:** (1) `server/feed-plugin.ts:7` header says every SSE frame is a `data:` JSON line; add the `: ping` comment frame and the token-gated `POST /__office/hook` route. (2) `server/feed-plugin.ts:58` the `HOOK_ROUTE` export sits between the body-cap comment and its constants; move it. (3) `hooks/office-hook.mjs:30` `MAX_VALUE = 512` is tied to `MAX_STRING_LENGTH` by a comment only: assert it in `hooks/office-hook.test.ts` (and that `ALLOWED` covers what `server/hooks-adapter.ts` reads). (4) `hooks/office-hook.test.ts:252` the `::1` host test has no skip guard for hosts without IPv6 loopback. (5) `hooks/install.mjs:80` `isOurs` matches any command whose script argument is named `office-hook.mjs` at any path, so `--remove` also removes another checkout's entry; the README says "only our entries": match this checkout's path or say so. (6) `hooks/install.mjs:236` no re-check before `renameSync` if another tool wrote the settings file meanwhile. (7) `server/hook-discovery.ts:86` `removeDiscovery` reads `hook.json` with a blocking `readFileSync` (a planted FIFO would hang SIGINT cleanup); harden like `readInfo` in the script. (8) `server/feed-plugin.ts:1041` events over the 20/s per-session or 100/s total window are dropped, so a burst could lose the one `needs_attention`: exempt it or reserve a budget.
+
+**Why:** Informational findings from the second /ship review pass; none blocks, all were skipped by the user's choice.
+
+**Context:** The first pass's findings are in "Pre-landing review follow-ups" above.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Adversarial review leftovers (2026-10-04)
+
+**What:** (1) `hooks/install.mjs` writes `async: true` and a `node '<path>'` command resolved through PATH: if Claude Code is started from a GUI with a minimal PATH, every hook event exits 127; consider the absolute `process.execPath` (or document it). Whether `async` is honoured is unverified (the probe). (2) `server/hook-discovery.ts` `hookHost` maps a specific non-loopback `--host` to `127.0.0.1`, where nothing listens, with no diagnostic: log one warning at publish time when the bind address is neither loopback nor wildcard; Vite middleware mode (no `httpServer`) also skips publishing silently. (3) `writeDiscovery` `chmodSync(dir, 0o700)` on a pre-existing `OFFICE_HOOK_DIR` changes a shared directory's mode and never checks ownership. (4) The 408 timer in `readHookBody` survives a client abort before `end` (clear it on `close`). (5) `readHookBody`'s `end` handler wraps `ingestHook` in the same try/catch as `JSON.parse`, so a bug in `ring.add` or `send` is logged as an unparseable payload and the ring and SSE clients can diverge: parse in its own try. (6) The per-file normalizer failure log writes `String(e)` (`server/feed-plugin.ts` ~416): log only `e.name`/code or route through `loggable()`. (7) The installer is a read-modify-write on `~/.claude/settings.json` (another writer between read and rename loses its update) and `.bak-<stamp>` backups accumulate unpruned with a full copy of the settings. (8) The 400 ms script deadline covers node cold start, stdin and the round trip; a dropped `needs_attention` leaves no trace on either side: add a server-side counter of received hooks per minute.
+
+**Why:** Native adversarial review (/ship Step 11). Its top finding (late transcript activity erasing a live exact attention because the guard compares the receipt clock) was refuted: `applyOwned` uses `clock = Math.min(event.ts, now)` in live and replay and `src/office/machine.test.ts` covers needs_attention@10000 followed by a tool start@9900.
+
+**Context:** All skipped by the user's choice (/ship D4).
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** The user's interactive hook probe (items 1 and 8)
+
+### Final review pass leftovers (2026-10-04)
+
+**What:** (1) A child handed back and later resumed (the normalizer's `state.resumes`) stays in `returnedSeen`, so its hook `needs_attention` and `agent_started` are dropped for good (`server/feed-plugin.ts` `ingestHook`): delete the key when a `handoff out` for that child arrives. (2) `hooks/office-hook.mjs` trusts `hook.json` without an owner or mode check and accepts any integer port: require owner equals the current uid, no group or other bits, and a port in 1024 to 65535. (3) `keyOf` and `episodeIdOf` join ids with `\u0000` and `idOf` accepts NUL in ids, so a token holder can collide session `a\0b` with session `a` plus agent `b`: reject NUL or length-prefix the key. (4) `hooks/install.mjs` rewrites settings through `JSON.parse`/`stringify`: duplicate keys and integers above 2^53 are lost and formatting is normalised without a warning. (5) One `node` process per hook event with a 400 ms deadline: a burst of many subagents costs CPU and events past the deadline vanish. (6) A hook-created top-level agent for a session the tailer has not read gets no seat. (7) `src/office/identity.ts:41` `pickShirt` and DESIGN.md (shirt sections, "unknown project: neutral gray") still say project although shirts are per session; `setOwn` is defined twice (`machine.ts` and `scene-model.ts`); `parentOf` in `server/feed-plugin.ts:475` scans every tracked file's launches linearly per subagent file.
+
+**Why:** Informational findings from the last /ship review pass, skipped by the user's choice (/ship D5).
+
+**Context:** Items 1, 3 and 6 are red-team or adversarial findings read from code, not reproduced end to end.
+
+**Effort:** M
 **Priority:** P3
 **Depends on:** None
