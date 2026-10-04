@@ -52,15 +52,17 @@ const base = tempBase();
 function prepare(s: Scenario) {
   const root = join(base, s.name, "root");
   const cache = join(base, s.name, "cache");
+  const hookDir = join(base, s.name, "hook");
   if (!existsSync(root)) {
     mkdirSync(root, { recursive: true });
     mkdirSync(cache, { recursive: true });
+    mkdirSync(hookDir, { recursive: true });
     const files = s.files();
     if (files.length > 0)
       writeFixtureSet(root, files, { anchorNow: Date.now(), ageOffsetMs: s.ageOffsetMs });
-    return { root, cache, expected: files.length };
+    return { root, cache, hookDir, expected: files.length };
   }
-  return { root, cache, expected: s.files().length };
+  return { root, cache, hookDir, expected: s.files().length };
 }
 
 const prepared = SCENARIOS.map((s) => ({ s, ...prepare(s) }));
@@ -80,13 +82,14 @@ export default defineConfig({
     metadata: { port: s.port, expected },
     use: { baseURL: `http://localhost:${s.port}` },
   })),
-  webServer: prepared.map(({ s, root, cache }) => ({
+  webServer: prepared.map(({ s, root, cache, hookDir }) => ({
     command: `vp dev --port ${s.port} --strictPort`,
     url: `http://localhost:${s.port}/__office/status`,
     reuseExistingServer: false,
     stdout: "pipe" as const,
     stderr: "pipe" as const,
     timeout: 120_000,
-    env: { OFFICE_E2E_ROOT: root, OFFICE_E2E_CACHE: cache },
+    // A per-run hook dir keeps the dev plugin off the real ~/.office-agents/hook.json.
+    env: { OFFICE_E2E_ROOT: root, OFFICE_E2E_CACHE: cache, OFFICE_HOOK_DIR: hookDir },
   })),
 });

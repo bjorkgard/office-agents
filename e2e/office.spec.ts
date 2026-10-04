@@ -521,6 +521,10 @@ test("the office scene looks as designed", { tag: "@visual" }, async ({ page }) 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?hour=14&seed=e2e&scene=afternoon");
+  // The scene sits in an overflow-y container: a classic scrollbar (macOS with a mouse attached)
+  // would shrink the shot by 15px, an overlay scrollbar (trackpad only) would not. Hide it so the
+  // baseline does not depend on the OS scrollbar setting.
+  await page.addStyleTag({ content: "* { scrollbar-width: none !important; }" });
   await expect(page.locator(".agent")).toHaveCount(4);
   await expect(page).toHaveTitle(titleFor(3));
   await expect(page.locator('.agent[data-state="attention"]')).toHaveCount(3);
