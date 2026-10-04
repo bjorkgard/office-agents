@@ -128,6 +128,104 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 
 **Completed:** todo-burndown batch A (2026-10-04, uncommitted). Tests: server/normalize.test.ts, server/feed-plugin.test.ts.
 
+### Origin and X-Forwarded-* check, sanitized Host in the refusal log
+
+**What:** In `server/feed-plugin.ts` (~524) also refuse requests with a foreign Origin or X-Forwarded-* headers, and strip control characters from the logged Host.
+
+**Why:** The loopback guard checks Host and socket only; the refusal log prints the raw Host header.
+
+**Context:** Found in the Phase 2-3 /ship review.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B1 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts. Left open: `Forwarded:` (RFC 7239) and `X-Real-IP` are still allowed.
+
+### SSE heartbeat
+
+**What:** Send a comment frame (`: ping`) every ~15 s on /__office/events.
+
+**Why:** Idle proxies and browsers close a silent stream, and a dead client is only noticed on the next write.
+
+**Context:** Doubles as a dead-client probe.
+
+**Effort:** S (human ~1h / CC ~10min)
+**Priority:** P3
+**Depends on:** None
+
+**Completed:** todo-burndown batch B1 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts. Left open: `Forwarded:` (RFC 7239) and `X-Real-IP` are still allowed.
+
+### Close the leaf-file symlink TOCTOU
+
+**What:** Open transcript files with O_NOFOLLOW and fstat the handle instead of lstat-then-open.
+
+**Why:** A file swapped for a symlink between the lstat and the open would be followed.
+
+**Context:** Directories are already not followed; this is the leaf file only. Needs a TailerIo change.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B2 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts and server/normalize.test.ts.
+
+### Fixture id salt and tool-name allowlist
+
+**What:** Salt the id hashes in `server/sanitize-fixtures.ts` per run and restrict tool names to a known list.
+
+**Why:** Unsalted short-input hashes can be reversed by guessing, and a custom tool name can identify a person or project.
+
+**Context:** Found in the Phase 2-3 /ship review.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B2 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts and server/normalize.test.ts.
+
+### Detect file rotation by more than size
+
+**What:** `server/feed-plugin.ts` detects a replaced file only when its size shrinks.
+
+**Why:** A rotated file that grows past the old offset is read from the wrong place.
+
+**Context:** Compare inode and a hash of the first bytes as well; re-read from 0 on change.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B2 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts and server/normalize.test.ts.
+
+### Open transcripts without blocking on FIFOs
+
+**What:** Open with `O_NOFOLLOW` and reject non-regular files (FIFO) before reading.
+
+**Why:** A FIFO named `*.jsonl` would hang the read; a leaf symlink swap is a TOCTOU gap (see the leaf symlink item).
+
+**Context:** Pair with the leaf symlink item.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B2 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts and server/normalize.test.ts.
+
+### Keep question-attention agents in the snapshot ring
+
+**What:** Retain the `done` event of an agent waiting on a question beyond the recent window.
+
+**Why:** A late client may not see a waiting agent that was quiet while others were busy.
+
+**Context:** Ring retention is per agent today (`createSnapshotRing`).
+
+**Effort:** S (human ~1h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Completed:** todo-burndown batch B2 (2026-10-04, uncommitted). Tests in server/feed-plugin.test.ts and server/normalize.test.ts.
+
 ## Completed in v0.3.0.0
 
 ### V1: Windows with a random outside world

@@ -280,42 +280,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** None
 
-### Origin and X-Forwarded-* check, sanitized Host in the refusal log
-
-**What:** In `server/feed-plugin.ts` (~524) also refuse requests with a foreign Origin or X-Forwarded-* headers, and strip control characters from the logged Host.
-
-**Why:** The loopback guard checks Host and socket only; the refusal log prints the raw Host header.
-
-**Context:** Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Close the leaf-file symlink TOCTOU
-
-**What:** Open transcript files with O_NOFOLLOW and fstat the handle instead of lstat-then-open.
-
-**Why:** A file swapped for a symlink between the lstat and the open would be followed.
-
-**Context:** Directories are already not followed; this is the leaf file only. Needs a TailerIo change.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Fixture id salt and tool-name allowlist
-
-**What:** Salt the id hashes in `server/sanitize-fixtures.ts` per run and restrict tool names to a known list.
-
-**Why:** Unsalted short-input hashes can be reversed by guessing, and a custom tool name can identify a person or project.
-
-**Context:** Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
 ### Feed performance pass
 
 **What:** Serial lstat of stale files every 5 s; per-second poll of idle files; cold start blocks the first scan; batch SSE writes; ring uses Array.shift and has no global cap; structuredClone per event and a clone in tick when nothing changed.
@@ -338,42 +302,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Effort:** S (human ~2h / CC ~15min)
 **Priority:** P3
-**Depends on:** None
-
-### Detect file rotation by more than size
-
-**What:** `server/feed-plugin.ts` detects a replaced file only when its size shrinks.
-
-**Why:** A rotated file that grows past the old offset is read from the wrong place.
-
-**Context:** Compare inode and a hash of the first bytes as well; re-read from 0 on change.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Open transcripts without blocking on FIFOs
-
-**What:** Open with `O_NOFOLLOW` and reject non-regular files (FIFO) before reading.
-
-**Why:** A FIFO named `*.jsonl` would hang the read; a leaf symlink swap is a TOCTOU gap (see the leaf symlink item).
-
-**Context:** Pair with the leaf symlink item.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Keep question-attention agents in the snapshot ring
-
-**What:** Retain the `done` event of an agent waiting on a question beyond the recent window.
-
-**Why:** A late client may not see a waiting agent that was quiet while others were busy.
-
-**Context:** Ring retention is per agent today (`createSnapshotRing`).
-
-**Effort:** S (human ~1h / CC ~15min)
-**Priority:** P2
 **Depends on:** None
 
 ### Key sessions by filename, not record sessionId, for resumed sessions
@@ -400,18 +328,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** None
 
-### SSE heartbeat
-
-**What:** Send a comment frame (`: ping`) every ~15 s on /__office/events.
-
-**Why:** Idle proxies and browsers close a silent stream, and a dead client is only noticed on the next write.
-
-**Context:** Doubles as a dead-client probe.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P3
-**Depends on:** None
-
 ### Anchor the task-notification match in the normalizer
 
 **What:** `onQueueOperation` in `server/normalize.ts` tests whether the content includes the task-notification tag anywhere.
@@ -435,6 +351,18 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Effort:** S (human ~1h / CC ~10min)
 **Priority:** P3
 **Depends on:** BUILD_TODO 4.4
+
+### Batch B2 leftovers (2026-10-04)
+
+**What:** (1) A unix socket swapped in for a transcript is not refused at once: on macOS opening it fails with errno -102, which takes the transient-retry path for up to 5 scans before denial (`server/feed-plugin.ts:329`). (2) A same-size in-place rewrite is not detected as rotation (the head is re-read only when the file grew). (3) No test checks that the read handle is closed on every reject path. (4) `server/sanitize-fixtures.ts`: the CLI rejects an empty salt, so committed unsalted fixtures reproduce only via the library; `--salt` is only recognised as the first argument. (5) `needs_attention` now clears `openTools` and `waiting` in the ring (`feed-plugin.ts:729`), latent until the hooks adapter emits it; and a resumed asker's question `done` leaves the snapshot.
+
+**Why:** Informational findings from the round-1 refuter pass; none blocks.
+
+**Context:** Linux errno for a socket open is ENXIO, untested. Ring eviction scans all agents when full of askers (O(N), fine at the 2000 cap).
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
 
 ## Phase 4 review follow-ups
 
@@ -462,16 +390,16 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** None
 
-### Feed server hardening (session identity, origin check, heartbeat)
+### Feed server hardening: truncation detection and tracked-file cap
 
-**What:** In `server/feed-plugin.ts` and `server/normalize.ts`: (1) the session id comes from transcript content while release and forget use the file name, so a resumed or mislabelled file can release a live session's seat and ring; (2) the SSE endpoint checks only Host and the socket, so any web page can open all 8 SSE slots; (3) there is no SSE heartbeat, so half-open connections hold a slot; (4) truncation is detected only as `size < offset`; (5) there is no cap on tracked files.
+**What:** In `server/feed-plugin.ts`: truncation is detected only as `size < offset` (see "Detect file rotation by more than size"), and there is no cap on tracked files. Also refuse `Forwarded:` (RFC 7239) and `X-Real-IP` like X-Forwarded-*.
 
-**Why:** Wrong seats and history for live sessions, and a 503 for the real UI from a hostile page.
+**Why:** A hostile or odd file set can grow memory and scan time without bound.
 
-**Context:** Found in the Phase 4 /ship adversarial review; all items sit in the Phase 2 and 3 server code, not this diff. Check `Sec-Fetch-Site` and `Origin` first.
+**Context:** Split from the Phase 4 umbrella item; session identity, Origin check and heartbeat are DONE (see ARCHIVE.md).
 
-**Effort:** M (human ~1 day / CC ~1h)
-**Priority:** P2
+**Effort:** S (human ~2h / CC ~20min)
+**Priority:** P3
 **Depends on:** None
 
 ### Waiting agent past QUEUE_VISIBLE is unreachable
