@@ -25,6 +25,7 @@
     "e2e",
     "shared",
     "server",
+    "hooks",
     "src/css.test.ts",
     "src/design-md.ts"
   ]
