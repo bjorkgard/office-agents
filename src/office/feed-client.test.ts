@@ -504,6 +504,29 @@ describe("seats (S1-1)", () => {
     expect(h.state().failure).toBeNull();
   });
 
+  it("a hook needs_attention for a session with no seat yet shows an asking agent that keeps its state when the seat arrives", () => {
+    const h = harness();
+    live(h, [], {});
+    const ask: AgentEvent = {
+      ...base,
+      agentId: null,
+      kind: "needs_attention",
+      ts: T0 - 1000,
+      waitingSince: T0 - 1000,
+      episodeId: "ep1",
+    };
+    h.last().send({ type: "event", event: ask });
+    const key = agentKey("s1", null);
+    expect(h.state().seats).toEqual({});
+    expect(h.state().office.agents[key]?.state).toBe("attention");
+    expect(h.state().failure).toBeNull();
+    // The Scene queues a seatless top-level agent by the door (Scene.tsx `unseated`), so it is
+    // not broken; the server's seat frame then places it without losing the question.
+    h.last().send({ type: "seat", sessionId: "s1", desk: 2 });
+    expect(h.state().seats).toEqual({ s1: 2 });
+    expect(h.state().office.agents[key]?.state).toBe("attention");
+  });
+
   it("a session id named like an Object.prototype member does not collide", () => {
     const h = harness();
     live(h, [], {});

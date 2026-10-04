@@ -56,7 +56,7 @@ export type Agent = {
   waitingOn: string[];
   attention: { trigger: AttentionTrigger } | null;
   /** Owned by the machine (T12). `exitedAt` is set while the agent is out of attention. */
-  episode: { id: string; waitingSince: number; exitedAt: number | null } | null;
+  episode: { id: string; waitingSince: number; exitedAt: number | null; exactId?: string } | null;
 };
 
 export type OfficeState = {
@@ -162,12 +162,53 @@ function enterAttention(
       a.episode = { id: `${a.key}#${s.episodeSeq}`, waitingSince, exitedAt: null };
     }
   }
-  a.attention = { trigger };
+  // A heuristic firing for a wait the hooks already announced keeps the exact trigger.
+  if (a.attention?.trigger !== "exact") a.attention = { trigger };
   settle(a);
 }
 
+/**
+ * The hooks adapter's exact signal. One wave per `episodeId`: a repeat (or replay) of the
+ * open or just-ended id changes nothing. A new id always wins (D35): it supersedes an open
+ * exact episode, and replaces an open heuristic one in place (same id, so live and replay
+ * agree), taking the event's since-time. A 0, negative, non-finite or future `waitingSince`
+ * is implausible and falls back to the clock; it must never read as an epoch-sized wait.
+ */
+function enterExact(
+  s: OfficeState,
+  a: Agent,
+  episodeId: string,
+  waitingSince: number,
+  now: number,
+): void {
+  const since =
+    Number.isFinite(waitingSince) && waitingSince > 0 ? Math.min(waitingSince, now) : now;
+  if (a.attention && a.episode && a.attention.trigger !== "exact") {
+    a.episode.waitingSince = since;
+    a.episode.exactId = episodeId;
+  } else {
+    s.episodeSeq += 1;
+    a.episode = {
+      id: `${a.key}#${s.episodeSeq}`,
+      waitingSince: since,
+      exitedAt: null,
+      exactId: episodeId,
+    };
+  }
+  a.attention = { trigger: "exact" };
+  // Like R2: an agent in attention is not idle, so the idle walk-out must not take it.
+  a.phase = "working";
+  a.idleSince = null;
+  settle(a);
+}
+
+/**
+ * Ends attention (optionally only for some triggers). Activity no newer than an exact
+ * episode's since-time predates it (events arrive out of order), so it cannot end it.
+ */
 function clearAttention(a: Agent, now: number, only?: (t: AttentionTrigger) => boolean): void {
   if (!a.attention || (only && !only(a.attention.trigger))) return;
+  if (a.attention.trigger === "exact" && a.episode && now <= a.episode.waitingSince) return;
   a.attention = null;
   if (a.episode) a.episode.exitedAt = now;
 }
@@ -276,9 +317,13 @@ function applyOwned(
       break;
     }
     case "needs_attention": {
-      // Reserved for the hooks adapter; the transcript normalizer never emits it.
+      // Exact adapters only (hooks); the transcript normalizer never emits it.
+      const known = s.agents[agentKey(sessionId, event.agentId)];
+      // A repeat of the open or just-ended episode is old news: no touch, so it cannot
+      // refresh the agent's silence clock or re-trigger the wave.
+      if (known && known.phase !== "leaving" && known.episode?.exactId === event.episodeId) break;
       const a = touch(s, sessionId, event.agentId, projectId, clock);
-      enterAttention(s, a, "exact", clock);
+      enterExact(s, a, event.episodeId, event.waitingSince, clock);
       break;
     }
     case "handoff": {
@@ -308,15 +353,18 @@ function applyOwned(
       const a = touch(s, sessionId, null, projectId, clock);
       a.openTools = {};
       a.waitingOn = [];
-      // gstack-shortcut(dec-R2): trailing "?" heuristic; upgrade when the hooks adapter lands
+      // gstack-shortcut(dec-R2): trailing "?" heuristic; fallback, exact signal preferred when the hooks adapter supplies it
       if (event.endsWithQuestion) {
         a.phase = "working";
         a.idleSince = null;
         enterAttention(s, a, "question", clock);
       } else {
         clearAttention(a, clock);
-        a.phase = "idle";
-        a.idleSince = clock;
+        // An out-of-order done that the guard ignored keeps enterExact's working phase.
+        if (!a.attention) {
+          a.phase = "idle";
+          a.idleSince = clock;
+        }
         settle(a);
       }
       break;
@@ -378,7 +426,7 @@ function pass(s: OfficeState, now: number): boolean {
       changed = true;
       continue;
     }
-    // gstack-shortcut(dec-R1): tool-call timer heuristic; upgrade when the hooks adapter lands
+    // gstack-shortcut(dec-R1): tool-call timer heuristic; fallback, exact signal preferred when the hooks adapter supplies it
     if (a.state === "working") {
       let since = Infinity;
       for (const t of Object.values(a.openTools)) {

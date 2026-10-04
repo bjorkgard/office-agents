@@ -487,7 +487,10 @@ describe("random sequences (ADD-4a)", () => {
       let s = createOffice();
       let now = 1_000_000;
       // Reference model for episodes: per agent life, the last id, waitingSince and exit time.
-      const ref = new Map<string, { id: string | null; ws: number; exitedAt: number | null }>();
+      const ref = new Map<
+        string,
+        { id: string | null; ws: number; exitedAt: number | null; exactId?: string }
+      >();
       const allIds = new Set<string>();
       const log: AgentEvent[] = [];
 
@@ -513,7 +516,17 @@ describe("random sequences (ADD-4a)", () => {
             const ep = cur.episode!;
             expect(ep.exitedAt).toBeNull();
             expect(cur.attention).not.toBeNull();
-            if (!wasAttention) {
+            if (ep.exactId !== undefined && ep.exactId !== r.exactId) {
+              // D35: a new exact id wins. Its implausible waitingSince (0) falls back to the
+              // event's clock; an open heuristic episode is replaced in place, keeping its id.
+              expect(cur.attention!.trigger).toBe("exact");
+              expect(ep.waitingSince).toBe(now);
+              if (wasAttention && before!.attention!.trigger !== "exact") {
+                expect(ep.id).toBe(r.id);
+              } else {
+                expect(allIds.has(ep.id)).toBe(false);
+              }
+            } else if (!wasAttention) {
               // Entry (a): kept only inside the hold, else a never-seen id.
               const kept =
                 r.id !== null && r.exitedAt !== null && now - r.exitedAt < TUNING.episodeHoldMs;
@@ -537,6 +550,7 @@ describe("random sequences (ADD-4a)", () => {
             allIds.add(ep.id);
             r.id = ep.id;
             r.ws = ep.waitingSince;
+            r.exactId = ep.exactId;
             r.exitedAt = null;
           } else {
             expect(cur.attention).toBeNull();
@@ -696,6 +710,274 @@ describe("needs_attention event", () => {
   });
 });
 
+describe("exact needs_attention (hooks adapter)", () => {
+  const exact = (episodeId: string, waitingSince: number, agentId: string | null = null) =>
+    ({
+      ...base,
+      kind: "needs_attention",
+      agentId,
+      ts: LIVE,
+      waitingSince,
+      episodeId,
+    }) as AgentEvent;
+
+  it("enters attention at once with the event's waitingSince", () => {
+    const s = applyEvent(working0(), exact("e1", 500), 10_000);
+    expect(stateOf(s)).toBe("attention");
+    expect(get(s)!.episode!.waitingSince).toBe(500);
+  });
+
+  it("a repeated event with the same episodeId keeps the episode and since-time", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    const first = structuredClone(get(s)!.episode);
+    const seq = s.episodeSeq;
+    s = applyEvent(s, exact("e1", 9_000), 20_000);
+    expect(get(s)!.episode).toEqual(first);
+    expect(s.episodeSeq).toBe(seq);
+    expect(get(s)!.lastEventAt).toBe(10_000);
+  });
+
+  it("the same episodeId after the agent left attention does not re-enter", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    s = applyEvent(s, working(null, { phase: "start", id: "t1" }), 11_000);
+    expect(stateOf(s)).toBe("working");
+    s = applyEvent(s, exact("e1", 500), 12_000);
+    expect(stateOf(s)).toBe("working");
+  });
+
+  it("a new episodeId after the agent left attention starts a new episode", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    s = applyEvent(s, working(), 11_000);
+    s = applyEvent(s, exact("e2", 11_500), 12_000);
+    expect(stateOf(s)).toBe("attention");
+    expect(get(s)!.episode!.waitingSince).toBe(11_500);
+  });
+
+  it("a new episodeId while in an exact episode supersedes it", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    const id = get(s)!.episode!.id;
+    s = applyEvent(s, exact("e2", 7_000), 12_000);
+    expect(stateOf(s)).toBe("attention");
+    expect(get(s)!.episode!.id).not.toBe(id);
+    expect(get(s)!.episode!.waitingSince).toBe(7_000);
+  });
+
+  it("each activity kind ends an exact episode", () => {
+    const ends: [string, AgentEvent][] = [
+      ["working", working()],
+      ["tool start", working(null, { phase: "start", id: "t1" })],
+      ["tool end", working(null, { phase: "end", id: "t1" })],
+      ["done without question", done(false)],
+      ["waiting_on_subagents", waitingSubs()],
+    ];
+    for (const [name, ev] of ends) {
+      let s = applyEvent(
+        working0(),
+        working(null, { phase: "start", id: "sub", isSubagent: true }),
+        5,
+      );
+      s = applyEvent(s, exact("e1", 500), 10_000);
+      s = applyEvent(s, ev, 11_000);
+      expect(get(s)!.attention, name).toBeNull();
+    }
+  });
+
+  it("an agent that left in an exact episode comes back without attention on agent_started", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    s = tick(s, 10_000 + TUNING.attentionStaleMs);
+    s = tick(s, 10_000 + TUNING.attentionStaleMs + TUNING.leavingMs);
+    expect(get(s)).toBeUndefined();
+    s = applyEvent(s, started(), 10_000 + ATTENTION_STALE_MS + 10_000);
+    expect(get(s)!.attention).toBeNull();
+    expect(stateOf(s)).not.toBe("attention");
+  });
+
+  it("R1 firing on an open exact episode changes neither id nor since-time", () => {
+    let s = applyEvent(working0(), working(null, { phase: "start", id: "t1" }), 1_000);
+    s = applyEvent(s, exact("e1", 500), 2_000);
+    const ep = structuredClone(get(s)!.episode);
+    const seq = s.episodeSeq;
+    s = tick(s, 1_000 + TUNING.toolTimerMs + 5_000);
+    expect(get(s)!.episode).toEqual(ep);
+    expect(s.episodeSeq).toBe(seq);
+    expect(get(s)!.attention).toEqual({ trigger: "exact" });
+  });
+
+  it("R2 on an open exact episode changes neither id nor since-time", () => {
+    let s = applyEvent(working0(), exact("e1", 500), 10_000);
+    const ep = structuredClone(get(s)!.episode);
+    s = applyEvent(s, done(true), 12_000);
+    expect(get(s)!.episode).toEqual(ep);
+    expect(get(s)!.attention).toEqual({ trigger: "exact" });
+  });
+
+  it("an exact event while a heuristic episode is open replaces it with the exact since-time", () => {
+    let s = applyEvent(working0(), done(true), 10_000);
+    const ep = structuredClone(get(s)!.episode);
+    s = applyEvent(s, exact("e1", 9_000), 11_000);
+    expect(get(s)!.episode!.id).toBe(ep!.id);
+    expect(get(s)!.episode!.waitingSince).toBe(9_000);
+    expect(get(s)!.episode!.exactId).toBe("e1");
+    expect(get(s)!.attention).toEqual({ trigger: "exact" });
+    // and a repeat of it is now a no-op
+    const again = applyEvent(s, exact("e1", 9_500), 12_000);
+    expect(get(again)!.episode).toEqual(get(s)!.episode);
+  });
+
+  it("an exact event within the hold of a just-ended heuristic episode takes the exact since-time", () => {
+    let s = applyEvent(working0(), done(true), 10_000);
+    s = applyEvent(s, working(), 11_000);
+    s = applyEvent(s, exact("e1", 11_500), 12_000);
+    expect(get(s)!.episode!.waitingSince).toBe(11_500);
+    expect(get(s)!.episode!.exactId).toBe("e1");
+    expect(get(s)!.attention).toEqual({ trigger: "exact" });
+  });
+
+  it("an episodeId like __proto__ is plain data", () => {
+    let s = applyEvent(working0(), exact("__proto__", 500), 10_000);
+    s = applyEvent(s, exact("__proto__", 600), 11_000);
+    expect(get(s)!.episode!.waitingSince).toBe(500);
+  });
+
+  it("replay gives the same state as the live path, capped at now", () => {
+    const evs: AgentEvent[] = [
+      { ...started(), ts: 1_000 },
+      { ...exact("e1", 1_500), ts: 2_000 },
+      { ...exact("e1", 1_500), ts: 2_500 },
+      { ...exact("e2", 99_999_999), ts: 3_000 },
+    ];
+    const now = 50_000;
+    const replayed = applyEvents(createOffice(), evs, now, { replay: true });
+    let live = createOffice();
+    for (const e of evs) live = applyEvent(live, e, e.ts);
+    live = tick(live, now);
+    const r = tick(replayed, now);
+    expect(get(r)!.episode).toEqual(get(live)!.episode);
+    expect(get(r)!.attention).toEqual({ trigger: "exact" });
+    expect(get(r)!.episode!.waitingSince).toBe(3_000); // future since capped to the clock
+    expect(get(r)!.lastEventAt).toBe(3_000);
+  });
+
+  describe("live equals replay (D35)", () => {
+    const at = (e: AgentEvent, ts: number): AgentEvent => ({ ...e, ts });
+    /** Live: every event at its own ts, ticking every 250 ms in between, like the client. */
+    function liveRun(evs: AgentEvent[], end: number): OfficeState {
+      let s = createOffice();
+      let t = 0;
+      for (const e of evs) {
+        for (; t + 250 <= e.ts; t += 250) s = tick(s, t + 250);
+        s = applyEvent(s, e, e.ts);
+      }
+      for (; t + 250 <= end; t += 250) s = tick(s, t + 250);
+      return tick(s, end);
+    }
+    const replayRun = (evs: AgentEvent[], end: number) =>
+      tick(applyEvents(createOffice(), evs, end, { replay: true }), end);
+    const sameEpisode = (evs: AgentEvent[], end: number) => {
+      const l = get(liveRun(evs, end))!;
+      const r = get(replayRun(evs, end))!;
+      expect(r.state).toBe(l.state);
+      expect(r.attention).toEqual(l.attention);
+      expect(r.episode).toEqual(l.episode);
+      return l;
+    };
+
+    it("a heuristic wait open when the exact event arrives: since is the exact one in both", () => {
+      const l = sameEpisode(
+        [
+          at(started(), 0),
+          at(working(), 0),
+          at(working(null, { phase: "start", id: "t1" }), 1_000),
+          at(exact("e1", 13_000), 13_000),
+        ],
+        20_000,
+      );
+      expect(l.episode!.waitingSince).toBe(13_000);
+      expect(l.episode!.exactId).toBe("e1");
+    });
+
+    it("exact, activity, then a heuristic wait inside the D8 hold: same episode in both", () => {
+      const l = sameEpisode(
+        [
+          at(started(), 0),
+          at(working(), 0),
+          at(exact("e1", 5_000), 5_000),
+          at(working(null, { phase: "start", id: "t1" }), 6_000),
+        ],
+        30_000,
+      );
+      expect(l.attention).toEqual({ trigger: "tool" });
+      expect(l.episode!.waitingSince).toBe(5_000);
+    });
+
+    it("heuristic, then exact, then done: idle in both", () => {
+      const l = sameEpisode(
+        [
+          at(started(), 0),
+          at(working(), 0),
+          at(working(null, { phase: "start", id: "t1" }), 1_000),
+          at(exact("e1", 13_000), 13_000),
+          at(done(false), 14_000),
+        ],
+        15_000,
+      );
+      expect(l.state).toBe("idle");
+    });
+  });
+
+  it("an exact episode keeps the agent out of the idle walk-out (like R2)", () => {
+    let s = applyEvent(working0(), done(false), 1_000);
+    s = applyEvent(s, exact("e1", 61_000), 61_000);
+    s = tick(s, 1_000 + TUNING.idleLeaveMs + 1);
+    expect(stateOf(s)).toBe("attention");
+    expect(get(s)!.phase).toBe("working");
+    expect(get(s)!.idleSince).toBeNull();
+    s = tick(s, 61_000 + TUNING.attentionStaleMs - 1);
+    expect(stateOf(s)).toBe("attention");
+    s = tick(s, 61_000 + TUNING.attentionStaleMs);
+    expect(stateOf(s)).toBe("leaving");
+  });
+
+  it("an implausible waitingSince (0, negative, non-finite, future) falls back to the clock", () => {
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, 99_999_999]) {
+      const s = applyEvent(working0(), exact("e1", bad), 10_000);
+      expect(get(s)!.episode!.waitingSince, String(bad)).toBe(10_000);
+    }
+    const ok = applyEvent(working0(), exact("e1", 1), 10_000);
+    expect(get(ok)!.episode!.waitingSince).toBe(1);
+  });
+
+  it("activity not newer than the episode's waitingSince does not end it, live or replay", () => {
+    const at = (e: AgentEvent, ts: number): AgentEvent => ({ ...e, ts });
+    const evs: AgentEvent[] = [
+      at(started(), 0),
+      at(working(), 0),
+      at(exact("e1", 10_000), 10_000),
+      at(working(null, { phase: "start", id: "t1" }), 9_900),
+    ];
+    const now = 10_500;
+    let live = createOffice();
+    for (const e of evs) live = applyEvent(live, e, now);
+    const replayed = applyEvents(createOffice(), evs, now, { replay: true });
+    for (const s of [live, replayed]) {
+      expect(stateOf(s)).toBe("attention");
+      expect(get(s)!.attention).toEqual({ trigger: "exact" });
+    }
+    // newer activity does end it
+    const after = applyEvent(replayed, at(working(), 10_001), now);
+    expect(get(after)!.attention).toBeNull();
+  });
+
+  it("without any needs_attention event the exact path is never taken", () => {
+    let s = applyEvent(working0(), done(true), 10_000);
+    expect(get(s)!.attention).toEqual({ trigger: "question" });
+    expect(get(s)!.episode!.exactId).toBeUndefined();
+    s = applyEvent(s, working(null, { phase: "start", id: "t" }), 11_000);
+    s = tick(s, 11_000 + TUNING.toolTimerMs);
+    expect(get(s)!.attention).toEqual({ trigger: "tool" });
+  });
+});
+
 describe("async flow through normalize into the machine", () => {
   it("never sends the parent to coffee, and a child walks out on completion", () => {
     const st = createNormalizerState({ projectId: "p1", subagent: false });
@@ -810,5 +1092,56 @@ describe("ids that collide with Object.prototype", () => {
     expect(Object.keys(get(s)!.openTools)).toEqual(["x"]);
     expect(get(s)!.waitingOn).toEqual(["x"]);
     expect(stateOf(s)).toBe("waiting-on-subagents");
+  });
+});
+
+describe("out-of-order done keeps an exact attention episode", () => {
+  const exactAt = (ts: number): AgentEvent => ({
+    ...base,
+    kind: "needs_attention",
+    agentId: null,
+    ts,
+    waitingSince: ts,
+    episodeId: "e1",
+  });
+
+  it("a done no newer than the episode does not idle the agent or end attention", () => {
+    let s = applyEvent(working0(), exactAt(10_000), 10_000);
+    s = applyEvent(s, { ...done(false), ts: 9_900 }, 10_100);
+    expect(get(s)!.attention).toEqual({ trigger: "exact" });
+    expect(get(s)!.idleSince).toBeNull();
+    s = tick(s, 10_100 + TUNING.idleLeaveMs + 1_000);
+    expect(stateOf(s)).toBe("attention");
+  });
+});
+
+describe("a replayed exact needs_attention and the stale window", () => {
+  const replayed = (age: number) => {
+    const now = 10 * HOUR;
+    const ts = now - age;
+    const events: AgentEvent[] = [
+      { ...started(), ts },
+      { ...working(), ts },
+      {
+        ...base,
+        kind: "needs_attention",
+        agentId: null,
+        ts,
+        waitingSince: ts,
+        episodeId: "e1",
+      } as AgentEvent,
+    ];
+    const s = applyEvents(createOffice(), events, now, { replay: true });
+    return { s, now };
+  };
+
+  it("older than attentionStaleMs expires on the first tick", () => {
+    const { s, now } = replayed(TUNING.attentionStaleMs + 1);
+    expect(stateOf(tick(s, now))).toBe("leaving");
+  });
+
+  it("just inside the window stays in attention", () => {
+    const { s, now } = replayed(TUNING.attentionStaleMs - 1_000);
+    expect(stateOf(tick(s, now))).toBe("attention");
   });
 });
