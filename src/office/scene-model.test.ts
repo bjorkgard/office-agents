@@ -116,20 +116,19 @@ describe("bubbleText", () => {
 });
 
 describe("assignShirts", () => {
-  it("keeps a project's shirt while it stays active, gives new ones distinct shirts", () => {
-    const a = assignShirts({}, { a: "/x/a", b: "/x/b" }, ["a", "b"]);
+  it("keeps a session's shirt while it stays active, gives new ones distinct shirts", () => {
+    const a = assignShirts({}, ["a", "b"]);
     expect(a.a).not.toEqual(a.b);
-    const again = assignShirts(a, { a: "/x/a", b: "/x/b", c: "/x/c" }, ["c", "b", "a"]);
+    const again = assignShirts(a, ["a", "b", "c"]);
     expect(again.a).toEqual(a.a);
     expect(again.b).toEqual(a.b);
     expect(again.c).not.toEqual(a.a);
     expect(again.c).not.toEqual(a.b);
   });
 
-  it("drops inactive projects and skips unknown paths", () => {
-    const a = assignShirts({}, { a: "/x/a" }, ["a", "ghost"]);
-    expect(Object.keys(a)).toEqual(["a"]);
-    expect(Object.keys(assignShirts(a, { a: "/x/a" }, []))).toEqual([]);
+  it("drops inactive sessions", () => {
+    const a = assignShirts({}, ["a"]);
+    expect(Object.keys(assignShirts(a, []))).toEqual([]);
   });
 });
 

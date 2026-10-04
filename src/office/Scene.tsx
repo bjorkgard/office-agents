@@ -222,8 +222,8 @@ export function Scene({
   // it changes); `now` is a 15 s tick, far finer than an hour.
   const scene = windowScene(activeSceneId(now));
 
-  const active = [...new Set(agents.filter((a) => a.state !== "leaving").map((a) => a.projectId))];
-  const nextShirts = assignShirts(shirts, projects, [...active].sort());
+  const active = [...new Set(agents.filter((a) => a.state !== "leaving").map((a) => a.sessionId))];
+  const nextShirts = assignShirts(shirts, [...active].sort());
   if (!sameShirts(shirts, nextShirts)) setShirts(nextShirts);
 
   const motion = planMotion({
@@ -506,7 +506,7 @@ export function Scene({
         {agents.map((a) => {
           const p = placed.get(a.key);
           if (!p) return null;
-          const shirt = nextShirts[a.projectId] ?? null;
+          const shirt = nextShirts[a.sessionId] ?? null;
           return (
             <Character
               key={a.key}

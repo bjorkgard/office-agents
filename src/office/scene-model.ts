@@ -40,19 +40,18 @@ export const bubbleText = (trigger: AttentionTrigger | undefined): string =>
   trigger === "tool" ? "Stuck?" : "Asking you";
 
 /**
- * Shirts per project, kept while the project stays active so a shirt never changes under a
- * running agent; new projects take a shirt no active project holds. Unknown paths get none.
+ * Shirts per session, kept while the session stays active so a shirt never changes under a
+ * running agent; a new session takes a hashed-random shirt no active session holds. Subagents
+ * share their parent's session id, so they wear the parent's shirt.
  */
 export function assignShirts(
   prev: Record<string, ShirtChoice>,
-  projects: Record<string, string>,
   active: readonly string[],
 ): Record<string, ShirtChoice> {
   const next: Record<string, ShirtChoice> = {};
-  const ids = active.filter((id) => id in projects);
-  for (const id of ids) if (prev[id]) next[id] = prev[id];
-  for (const id of ids) {
-    if (!next[id]) next[id] = pickShirt(projects[id], Object.values(next));
+  for (const id of active) if (prev[id]) next[id] = prev[id];
+  for (const id of active) {
+    if (!next[id]) next[id] = pickShirt(id, Object.values(next));
   }
   return next;
 }
