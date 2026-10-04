@@ -11,6 +11,7 @@
 
 - The feed server is stricter about who can talk to it. It refuses requests from other origins, forwarded requests and cross-site fetches, keeps the event stream alive with a heartbeat, will not follow a symlinked or FIFO transcript, and notices when a transcript file is replaced instead of read from the wrong place.
 - One bad line in a transcript now costs that line, not the whole batch. A session's identity comes from its file, so a crafted record can no longer claim another session's seat, and results of several parallel tool calls are matched to the right subagent.
+- A subagent that Claude Code reports as stopped (through the optional hooks) now walks out right away instead of lingering, and a nested subagent finds its parent even when its transcript is read before its parent's. An old, out-of-order transcript line can no longer age a live agent out of the office.
 - A waiting agent that asked a question stays visible to a page that reconnects. After a transcript is truncated the agent gets its seat back, and one timestamp far in the future can no longer blank the office.
 - The scene is announced as a group for screen readers, the "+N more helpers" count is read with the parent's button, and ids such as `__proto__` are treated as plain names.
 - The end-to-end suite starts every dev server with its own private hook directory, so a test run can no longer touch your real hook setup, and its screenshot test no longer depends on whether macOS shows scrollbars (the baseline is regenerated).
