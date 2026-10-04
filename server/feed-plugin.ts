@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
 import { ATTENTION_STALE_MS, DESKS_PER_ROW } from "../shared/tuning.ts";
+import { parseAgentEvent } from "../shared/events.ts";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, normalizeBatch } from "./normalize.ts";
 import type { NormalizerState } from "./normalize.ts";
@@ -264,11 +265,23 @@ type Tracked = {
   /** Identity of the file read so far: inode and a hash of its first bytes. */
   ident: { dev?: number; ino?: number } | null;
   head: { len: number; hash: string } | null;
+  /** A subagent file whose launcher was not tracked yet when its agent_started went out. */
+  parentPending: boolean;
+  /** That agent_started (ts and cwd), kept to re-emit it once the parent is known. */
+  pendingStart: { ts: number; projectPath: string } | null;
 };
 
 type Candidate = Omit<
   Tracked,
-  "state" | "offset" | "pending" | "discarding" | "cold" | "ident" | "head"
+  | "state"
+  | "offset"
+  | "pending"
+  | "discarding"
+  | "cold"
+  | "ident"
+  | "head"
+  | "parentPending"
+  | "pendingStart"
 >;
 
 const errCode = (e: unknown): string | undefined => (e as NodeJS.ErrnoException | null)?.code;
@@ -466,20 +479,73 @@ export function createTailer(opts: TailerOptions) {
   }
 
   /** Session id comes from the path, never the record body; a parent is looked up among the
-   * session's other files' launches (a top-level parent has no agentId, so that stays null). */
+   * session's other files' launches (a top-level parent has no agentId, so that stays null).
+   * A launcher not tracked yet (it sorts after the child) leaves the file pending: see
+   * `correctParents`. */
   function stateFor(file: Candidate): NormalizerState {
     return createNormalizerState({
       projectId: file.projectId,
       subagent: file.agentId !== null,
       sessionId: file.sessionId,
       parentOf: (agentId) => {
+        let found = false;
+        let by: string | null = null;
         for (const t of tracked.values()) {
           if (t.sessionId !== file.sessionId || t.path === file.path) continue;
-          for (const l of t.state.launches.values()) if (l.agentId === agentId) return l.by;
+          for (const l of t.state.launches.values()) {
+            if (l.agentId === agentId) {
+              found = true;
+              by = l.by;
+              break;
+            }
+          }
+          if (found) break;
         }
-        return null;
+        const own = tracked.get(file.path);
+        if (own !== undefined) own.parentPending = !found;
+        return by;
       },
     });
+  }
+
+  /** Re-emits agent_started, once, for a subagent whose launcher became known after it started
+   * and whose parent is a subagent. The ring replaces `started` and the machine overwrites
+   * parentAgentId, so both converge. Scans only while a file is pending, one index per pass. */
+  function correctParents(): void {
+    let index: Map<string, { by: string | null; path: string }> | null = null;
+    for (const file of tracked.values()) {
+      if (!file.parentPending || file.agentId === null) continue;
+      if (file.pendingStart === null) {
+        file.parentPending = false;
+        continue;
+      }
+      if (index === null) {
+        index = new Map();
+        for (const t of tracked.values()) {
+          for (const l of t.state.launches.values()) {
+            const k = `${t.sessionId}\u0000${l.agentId}`;
+            if (l.agentId !== null && !index.has(k)) index.set(k, { by: l.by, path: t.path });
+          }
+        }
+      }
+      const hit = index.get(`${file.sessionId}\u0000${file.agentId}`);
+      if (hit === undefined || hit.path === file.path) continue;
+      const start = file.pendingStart;
+      file.parentPending = false;
+      file.pendingStart = null;
+      if (hit.by === null) continue; // a first-level child: null is the contract
+      const parsed = parseAgentEvent({
+        kind: "agent_started",
+        sessionId: file.sessionId,
+        agentId: file.agentId,
+        projectId: file.projectId,
+        ts: start.ts,
+        projectPath: start.projectPath,
+        parentAgentId: hit.by,
+      });
+      if (parsed === null) continue;
+      buckets.set(file, [...(buckets.get(file) ?? []), parsed]);
+    }
   }
 
   function emit(file: Tracked, lines: string[]): void {
@@ -489,6 +555,12 @@ export function createTailer(opts: TailerOptions) {
         failed("normalizer_error", "normalizing", e, file),
       );
       if (events.length > 0) buckets.set(file, [...(buckets.get(file) ?? []), ...events]);
+      if (file.parentPending && file.pendingStart === null) {
+        const first = events.find((e) => e.kind === "agent_started" && e.agentId === file.agentId);
+        if (first?.kind === "agent_started") {
+          file.pendingStart = { ts: first.ts, projectPath: first.projectPath };
+        }
+      }
     } catch (e) {
       failed("normalizer_error", "normalizing", e, file);
     }
@@ -585,6 +657,8 @@ export function createTailer(opts: TailerOptions) {
         // Truncated or replaced: reset offset and state; the agent is re-synthesized.
         addDrift(retiredDrift, file.state.drift);
         file.state = stateFor(file);
+        file.parentPending = false;
+        file.pendingStart = null;
         file.offset = 0;
         file.pending = Buffer.alloc(0);
         file.discarding = false;
@@ -625,6 +699,8 @@ export function createTailer(opts: TailerOptions) {
           cold: true,
           ident: null,
           head: null,
+          parentPending: false,
+          pendingStart: null,
         });
       }
     }
@@ -632,6 +708,7 @@ export function createTailer(opts: TailerOptions) {
       if (stopped) return;
       await pollFile(file);
     }
+    correctParents();
     flush();
     lastScanMs = now() - began;
     if (!didFirstScan) {

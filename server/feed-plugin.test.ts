@@ -1139,6 +1139,181 @@ describe("feed", () => {
     expect(feed.clients.size).toBe(0);
   });
 
+  describe("nested parent resolution is independent of scan order", () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const launcherLines = (id: string, kid: string) =>
+      [
+        line(
+          {
+            type: "assistant",
+            agentId: id,
+            message: {
+              role: "assistant",
+              stop_reason: "tool_use",
+              content: [
+                { type: "tool_use", id: "tu2", name: "Agent", input: { run_in_background: true } },
+              ],
+            },
+          },
+          1,
+        ),
+        line(
+          {
+            type: "user",
+            agentId: id,
+            message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2" }] },
+            toolUseResult: { status: "async_launched", agentId: kid },
+          },
+          2,
+        ),
+      ].join("\n") + "\n";
+    const childLine = (id: string) =>
+      line(
+        {
+          type: "assistant",
+          agentId: id,
+          message: { role: "assistant", stop_reason: "tool_use", content: [] },
+        },
+        3,
+      ) + "\n";
+    const subDir = () => {
+      const dir = join(root, "p1", "ps", "subagents");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    };
+    const topLauncher = () =>
+      putTop(
+        "p1",
+        "top-live",
+        [
+          line(
+            {
+              type: "assistant",
+              message: {
+                role: "assistant",
+                stop_reason: "tool_use",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "tu1",
+                    name: "Agent",
+                    input: { run_in_background: true },
+                  },
+                ],
+              },
+            },
+            0,
+          ),
+          line(
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1" }] },
+              toolUseResult: { status: "async_launched", agentId: "fl" },
+            },
+            1,
+          ),
+        ].join("\n") + "\n",
+        "ps",
+      );
+    const startsOf = (events: AgentEvent[], id: string) =>
+      events.filter((e) => e.kind === "agent_started" && e.agentId === id);
+
+    it("corrects a child that sorted before its launcher, once", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-akid.jsonl"), childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      const starts = startsOf(events, "akid");
+      expect(starts.map((e) => e.kind === "agent_started" && e.parentAgentId)).toEqual([
+        null,
+        "zmid",
+      ]);
+      expect(starts[1]).toMatchObject({ projectPath: "/x", projectId: "p1", sessionId: "ps" });
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "akid")).toHaveLength(2);
+    });
+
+    it("emits no correction when the launcher sorts first", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-amid.jsonl"), launcherLines("amid", "kid"));
+      writeFileSync(join(dir, "agent-kid.jsonl"), childLine("kid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "kid")).toMatchObject([{ parentAgentId: "amid" }]);
+    });
+
+    it("emits no correction for a first-level child or a stray one", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-fl.jsonl"), childLine("fl"));
+      writeFileSync(join(dir, "agent-stray.jsonl"), childLine("stray"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "fl")).toMatchObject([{ parentAgentId: null }]);
+      expect(startsOf(events, "stray")).toMatchObject([{ parentAgentId: null }]);
+    });
+
+    it("a first-level child that sorted before its top-level launcher stays null", async () => {
+      // Same session id under a later project dir, so the child's file is read first.
+      const dir = join(root, "p1", "ps", "subagents");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "agent-fl.jsonl"), childLine("fl"));
+      const top = join(root, "p9");
+      mkdirSync(top, { recursive: true });
+      writeFileSync(join(top, "ps.jsonl"), readFileSync(topLauncher(), "utf8"));
+      rmSync(join(root, "p1", "ps.jsonl"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "fl")).toMatchObject([{ parentAgentId: null }]);
+    });
+
+    it("a late-snapshot client sees the corrected parent", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-akid.jsonl"), childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const feed = createFeed({ root, log: () => {} });
+      await feed.scanOnce();
+      const snap = frame(call(feed, fakeReq("/__office/events")).res.written[0]);
+      const kid = snap.events.filter(
+        (e: AgentEvent) => e.kind === "agent_started" && e.agentId === "akid",
+      );
+      expect(kid).toMatchObject([{ parentAgentId: "zmid" }]);
+    });
+
+    it("a truncation reset does not duplicate or lose the correction", async () => {
+      topLauncher();
+      const dir = subDir();
+      const child = join(dir, "agent-akid.jsonl");
+      writeFileSync(child, childLine("akid") + childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      expect(startsOf(events, "akid")).toHaveLength(2);
+      truncateSync(child, 0);
+      writeFileSync(child, childLine("akid"));
+      await t.scanOnce();
+      await t.scanOnce();
+      const starts = startsOf(events, "akid");
+      expect(starts).toHaveLength(3); // the reset re-synthesizes once, with the parent known
+      expect(starts[2]).toMatchObject({ parentAgentId: "zmid" });
+    });
+  });
+
   const aged = () => new Date(Date.now() - ATTENTION_STALE_MS - 60_000);
   const gones = (res: { written: string[] }) =>
     res.written.map(frame).filter((f) => f.type === "gone");
