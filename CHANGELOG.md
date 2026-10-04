@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0.0] - 2026-10-04
+
+### Added
+
+- `vp run criteria` checks the success criteria and prints PASS, FAIL or SKIPPED for each one. Criterion 1 reads your real `~/.claude/projects` (local only, over loopback) and prints only counts and timings, never transcript text; perf and hero use a temporary feed. A criterion that cannot be checked in time is SKIPPED, never PASS.
+- `vp run perf` measures the 95th percentile frame time at 12 and 24 agents and the style recalculation cost of a row change in headless Chrome. Frames stay near 16.7 ms at both sizes, inside the 20 ms and 33 ms budgets.
+- `vp run hero` redraws the README picture in `docs/hero.png` from a temporary feed, so your own sessions never end up in it.
+- The README now shows a picture of the office at the top.
+
+### Known
+
+- Adding a row costs about 48 to 79 ms of style recalculation across runs on headless Chrome (48 to 49 ms at 12 agents, 63 to 79 ms at 24), over the 16 ms goal. Safari has not been measured. It is tracked in TODOS.md.
+
 ## [0.4.0.0] - 2026-10-04
 
 ### Added

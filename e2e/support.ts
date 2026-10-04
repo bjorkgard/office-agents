@@ -237,18 +237,22 @@ export function coreSessions(): {
 const TWELVE_KINDS = ["top-finished-question", "working", "async-flow", "top-live"] as const;
 
 /**
- * Twelve distinct sessions that all render (a finished plain session is dropped at first sight):
- * three each of a question, a working agent, an async flow (question) and a stuck tool call.
+ * `count` distinct sessions that all render (a finished plain session is dropped at first sight):
+ * an even mix of a question, a working agent, an async flow (question) and a stuck tool call.
  */
-export function twelveAgentFixtureSet(): FixtureFile[] {
+export function agentFixtureSet(count: number): FixtureFile[] {
   const project = "-fixture-twelve";
-  return Array.from({ length: 12 }, (_, i) => {
+  return Array.from({ length: count }, (_, i) => {
     const name = TWELVE_KINDS[i % TWELVE_KINDS.length]!;
     const session = hashId(`twelve:${i}`);
     return name === "working"
       ? { path: `${project}/${session}.jsonl`, text: workingText(session) }
       : sessionFile(project, session, name);
   });
+}
+
+export function twelveAgentFixtureSet(): FixtureFile[] {
+  return agentFixtureSet(12);
 }
 
 // ---- live lines -----------------------------------------------------------------------

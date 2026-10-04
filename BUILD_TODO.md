@@ -133,9 +133,13 @@ Plan and decisions: `docs/designs/office-life-ceo-review.md` (settled; do not re
 
 ## Phase 6: Finish
 
-- [ ] **6.1 Success criteria pass.** Live session appears within seconds with no config; subagent walk-in and handoff visible; wave fires on a real attention request; 12 agents on screen hold up.
-- [ ] **6.2 Housekeeping.** Tick the README roadmap items, update `CHANGELOG.md` and `VERSION`, move finished items out of this file.
-- [ ] **6.3 Next.** Pick from [TODOS.md](TODOS.md): hooks adapter first (resolves both shortcut markers).
+- [ ] **6.1 Success criteria pass.** Tooling shipped in 0.5.0.0: `vp run criteria` (PASS, FAIL or SKIPPED per criterion), `vp run perf` and `vp run hero`, all in `e2e/release.ts`. Perf numbers are in DESIGN.md "Performance". Left: record a real-session `vp run criteria` run in docs/success-criteria.md ("Evidence" section) and the Safari perf pass.
+- [x] **6.2 Housekeeping.** README roadmap ticked, `CHANGELOG.md` and `VERSION` at 0.5.0.0, `package.json` at 0.5.0.
+- [x] **6.3 Next.** Phase 7 below; the row-change recalc miss is in [TODOS.md](TODOS.md) ("Row-change style recalc over budget").
+
+## Phase 7: Hooks adapter (next)
+
+- [ ] **7.1 Hooks adapter.** Consent-gated Claude Code hooks as a second adapter behind `shared/events.ts`; replaces the two heuristic markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)`. Scope and cons in [TODOS.md](TODOS.md) "Hooks adapter for exact attention and subagent lifecycle". Not started; needs its own brief and plan.
 
 ---
 

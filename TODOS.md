@@ -112,6 +112,18 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** None
 
+#### Row-change style recalc over budget (2026-10-04)
+
+**What:** Adding a row costs 48 to 49 ms of style recalculation at 12 agents and 63 to 79 ms at 24 on headless Chrome (M1 Max, `vp run perf`, 4 runs), against the 16 ms budget. Find what the registered `--fit-*` transition invalidates and cut it.
+
+**Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 ms against 20 and 33 ms).
+
+**Context:** Numbers are in DESIGN.md "Performance". Safari is not measured. This unblocks "Frame cost and caches in the break and paper code" below, which was gated on this measurement; start there.
+
+**Effort:** M
+**Priority:** P1
+**Depends on:** None
+
 #### Frame cost and caches in the break and paper code
 
 **What:** Cache per-cycle trip segments so a waiting parent builds its timeline once per frame (`choreo.ts:381`), evict one plan instead of clearing all (`breaks.ts:112`), group subagents by session once (`paper.ts:139`), and memoize `DeskLayer`, `RoomDecor` and `RoomShell` (`Scene.tsx:300`).
@@ -122,7 +134,7 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Effort:** M
 **Priority:** P3
-**Depends on:** M10 browser pass
+**Depends on:** Row-change style recalc over budget (measured 2026-10-04: pressure found)
 
 #### Reload-stable breaks and spot assignment
 
@@ -732,3 +744,17 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** Bubble layout and hit-area spacing (M9)
 **Completed:** v0.3.0.0 (2026-10-03)
+
+## Demo mode
+
+### Demo mode for the README and first run
+
+**What:** `?demo` already exists (`src/office/demo.ts`, `src/main.tsx:41`) but is dev only and scripted. What is missing is a fixture replay for the live feed: play recorded transcript fixtures through the real feed source so the office can be shown from a production build without real Claude Code sessions.
+
+**Why:** Deferred from phase-6-finish (decision D5); the README picture comes from `vp run hero` with a temporary feed instead.
+
+**Context:** The demo module is excluded from `dist/` on purpose (marker `__OFFICE_DEMO__`), so a production replay needs its own path.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None

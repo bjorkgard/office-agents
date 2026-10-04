@@ -273,6 +273,17 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 - Text contrast 4.5:1 minimum; graphics 3:1.
 - Phone and touch layouts are out of scope (feed refuses non-loopback, R3).
 
+## Performance
+
+Measured 2026-10-04 with `vp run perf` (4 runs), headless Chrome 153.0.8010.12 on an Apple M1 Max. Method: `e2e/release.ts` starts a temporary feed with 12 and with 24 agents; frame time is the 95th percentile (p95) of requestAnimationFrame deltas; row-change recalc is style recalculation time (`RecalcStyleDuration`), not main-thread time, measured as the largest 100 ms chunk minus the median chunk, while one row of 4 agents is added (budget 16 ms).
+
+| Agents | p95 frame (budget)            | Row-change recalc (budget 16 ms)                  |
+| ------ | ----------------------------- | ------------------------------------------------- |
+| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                             |
+| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms (about 48 to 79 ms across runs), FAIL |
+
+Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass). The recalc miss is tracked in TODOS.md "Row-change style recalc over budget".
+
 ## Open items
 
 - Phase 0 is done: no single CC0 pack covers the needed poses, so characters and props are drawn in one consistent style (notes in `docs/designs/phase-0-sprite-notes.md`). Decisions 4A and 4B in the design doc assumed a sprite pack and were amended to the all-drawn route on 2026-10-01.

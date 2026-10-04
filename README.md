@@ -2,6 +2,8 @@
 
 A local web app that shows your running Claude Code agents and subagents as people in an isometric office.
 
+![The office with a few agents at their desks](docs/hero.png)
+
 > **Status: early development.** The live office works in `vp dev`: the feed, the scene and the top bar are built. Some of the behavior below is still planned; progress is tracked in the roadmap.
 
 Run it with `vp dev` and open the page. Every recently active Claude Code session appears as a character sitting at a computer (only macOS is exercised at first). Agents of the same project wear the same shirt color, and each gets a generated name and gender that stay the same across reloads.
@@ -44,7 +46,10 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 - [x] Reduced motion, keyboard and screen reader support
 - [x] Office life: wall clock, hour-matched windows and floor light, two desk kinds, working screens, desk paper, subagent laptops and tablets, drink breaks (coffee and water dispenser), rows that grow to 24 desks, debug hooks
 - [x] End-to-end test with fixture transcripts (Playwright, `vp run e2e`)
-- [ ] Hooks adapter for exact attention signals
+- [x] Release checks: success criteria, frame budget and README picture (`vp run criteria`, `vp run perf`, `vp run hero`)
+- [ ] Hooks adapter for exact attention signals (BUILD_TODO Phase 7)
+
+The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
 
 ### Roadmap rules
 
