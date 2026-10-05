@@ -23,6 +23,12 @@ export const MIN_SCALE = 0.5;
 /** Smallest hit-area edge and center spacing, in screen px. */
 export const HIT_MIN = 24;
 
+/** Attention-ring stroke width in scene px, so it draws 2 screen px at `scale`. */
+export function ringStroke(scale: number): number {
+  // A JS value, not an inherited CSS var: --scale restyled ~41k elements per fit change.
+  return 2 / (Number.isNaN(scale) ? MIN_SCALE : Math.max(MIN_SCALE, scale));
+}
+
 // Slack around the room shell, unscaled.
 const PAD_TOP = 16;
 const PAD_SIDE = 16;

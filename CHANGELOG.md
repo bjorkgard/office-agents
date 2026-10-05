@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.1.0] - 2026-10-05
+
+### Changed
+
+- Adding a row of desks is much cheaper. A style variable that every element in the room inherited made the browser re-check about 41,000 elements each time the room zoomed to fit; it is gone, and at 12 agents the style work for a new row fell from about 48 ms to about 15 ms. The pulsing floor ring still draws 2 px wide at every zoom.
+- `vp run perf` now judges the worst single style recalculation in a frame, taken as the median of three fresh runs on a settled page, against the 16 ms budget. The frame-time sample runs on its own page, and a trace that loses data fails the run instead of passing on partial numbers. The old 100 ms "burst" figure is no longer printed.
+
+### Known
+
+- At 24 agents a new row still costs about 19 to 23 ms of style recalculation, over the 16 ms budget, and the cause is not found yet. At 12 agents the median sits close to the 16 ms line (14.7 to 17.3 ms over four runs), so that check can fail on a noisy machine. Safari has not been measured.
+
 ## [0.6.0.0] - 2026-10-04
 
 ### Added

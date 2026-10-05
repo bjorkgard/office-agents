@@ -364,9 +364,19 @@ async function criteria(): Promise<number> {
 /** Budgets from the phase 6 decisions: p95 frame ms by agent count, and row-change style recalc ms. */
 export const FRAME_BUDGET_MS: Record<number, number> = { 12: 20, 24: 33 };
 export const RECALC_BUDGET_MS = 16;
+/** A passing median above this share of the budget is flagged as marginal. */
+const MARGINAL_RATIO = 0.9;
 const STEADY_MS = 5_000;
-const CHUNK_MS = 100;
-const TAIL_MS = 1_000;
+/** How long after the new agents rendered the traced row-change window stays open. */
+const ROW_TRACE_TAIL_MS = 1_500;
+/** How long to wait for Chromium to flush the trace after Tracing.end, and after an abort in cleanup. */
+const TRACE_FLUSH_MS = 10_000;
+const TRACE_ABORT_FLUSH_MS = 2_000;
+/** Plain idle before each row write: the gate measures a settled page (D8), not one fresh off load. */
+const ROW_SETTLE_MS = 5_000;
+const REPEATS = 3;
+const TRACE_CATEGORIES =
+  "devtools.timeline,disabled-by-default-devtools.timeline,blink.user_timing";
 const ROW_APPEAR_MS = 15_000;
 const PERF_AGENTS = [12, 24] as const;
 
@@ -385,63 +395,91 @@ export function budgetVerdict(label: string, ms: number | null, budget: number):
   };
 }
 
-/** Row-change recalc from consecutive style-recalc chunks: the largest chunk minus the median (the ambient). */
-export function burstRecalc(chunks: number[]): {
-  burstMs: number;
-  maxMs: number;
-  medianMs: number;
-  maxIndex: number;
-} | null {
-  if (chunks.length === 0) return null;
-  const sorted = [...chunks].sort((x, y) => x - y);
-  const mid = sorted.length >> 1;
-  const medianMs = sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
-  const maxMs = sorted[sorted.length - 1]!;
-  return {
-    burstMs: Math.max(0, maxMs - medianMs),
-    maxMs,
-    medianMs,
-    maxIndex: chunks.indexOf(maxMs),
-  };
+export type TraceEvent = { name?: string; ph?: string; ts?: number; dur?: number };
+
+/**
+ * Largest single UpdateLayoutTree (style recalc) complete event, in ms, from the `row-write` mark until
+ * windowMs after it. Null without the mark or without such an event, which must never read as a pass.
+ */
+export function worstRecalc(events: TraceEvent[], windowMs: number): number | null {
+  return worstRecalcEvent(events, windowMs)?.durMs ?? null;
 }
 
-/** Row-change verdict on the burst figure; it only counts once the new agents rendered. */
-export function rowChangeVerdict(m: {
-  appearedMs: number | null;
-  recalcMs: number;
-  chunkCount: number;
-}): Verdict {
-  if (m.appearedMs === null) {
+/** worstRecalc's event, with its start offset from the `row-write` mark, both in ms. */
+export function worstRecalcEvent(
+  events: TraceEvent[],
+  windowMs: number,
+): { durMs: number; offsetMs: number } | null {
+  const mark = events.find((e) => e.name === "row-write" && typeof e.ts === "number");
+  if (!mark) return null;
+  const from = mark.ts!;
+  const to = from + windowMs * 1000;
+  let worst: { dur: number; ts: number } | null = null;
+  for (const e of events) {
+    if (e.name !== "UpdateLayoutTree" || e.ph !== "X") continue;
+    if (typeof e.ts !== "number" || typeof e.dur !== "number") continue;
+    if (e.ts < from || e.ts > to) continue;
+    if (worst === null || e.dur > worst.dur) worst = { dur: e.dur, ts: e.ts };
+  }
+  return worst === null ? null : { durMs: worst.dur / 1000, offsetMs: (worst.ts - from) / 1000 };
+}
+
+/** worstRecalc, but null when Chromium reported that the trace lost data: a partial trace must never read as a pass. */
+export function tracedWorstMs(
+  events: TraceEvent[],
+  windowMs: number,
+  dataLossOccurred: boolean,
+): number | null {
+  return dataLossOccurred ? null : worstRecalc(events, windowMs);
+}
+
+export function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((x, y) => x - y);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+export type RowRepeat = { appearedMs: number | null; worstMs: number | null };
+
+/** Row-change verdict: the median across repeats of the worst single style recalc event. */
+export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
+  const fmt = (v: number | null) => (v === null ? "n/a" : v.toFixed(1));
+  const worst = repeats.map((r) => fmt(r.worstMs)).join("/");
+  const appeared = repeats.map((r) => r.appearedMs ?? "never").join("/");
+  const info = `row appeared ${appeared} ms after write`;
+  if (repeats.length === 0) {
+    return { status: "FAIL", measured: "row-change style recalc: no repeats measured" };
+  }
+  if (repeats.some((r) => r.appearedMs === null)) {
     return {
       status: "FAIL",
-      measured: `row-change style recalc: new agents never appeared within ${ROW_APPEAR_MS} ms`,
+      measured: `row-change style recalc: new agents never appeared within ${ROW_APPEAR_MS} ms in a repeat (worst events ${worst} ms; ${info})`,
     };
   }
-  const v = budgetVerdict(
-    "row-change style recalc",
-    m.chunkCount === 0 ? null : m.recalcMs,
-    RECALC_BUDGET_MS,
-  );
+  const worsts = repeats.map((r) => r.worstMs);
+  if (worsts.some((w) => w === null)) {
+    return {
+      status: "FAIL",
+      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info})`,
+    };
+  }
+  const median = medianOf(worsts as number[])!;
+  const status = median <= RECALC_BUDGET_MS ? "PASS" : "FAIL";
+  const marginal =
+    status === "PASS" && median > MARGINAL_RATIO * RECALC_BUDGET_MS
+      ? "; marginal: within 10% of the budget"
+      : "";
   return {
-    status: v.status,
-    measured: `${v.measured}, row appeared ${m.appearedMs} ms after write`,
+    status,
+    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${marginal})`,
   };
 }
 
-type Sample = { frames: number[]; recalcMs: number };
+type Sample = { frames: number[] };
 
-async function readRecalcMs(cdp: import("@playwright/test").CDPSession): Promise<number> {
-  const { metrics } = await cdp.send("Performance.getMetrics");
-  return (metrics.find((m) => m.name === "RecalcStyleDuration")?.value ?? 0) * 1000;
-}
-
-/** Frame deltas (rAF) over a window, plus the style recalc time Chromium spent in it (CDP Performance). */
-async function sampleWindow(
-  page: import("@playwright/test").Page,
-  cdp: import("@playwright/test").CDPSession,
-  ms: number,
-): Promise<Sample> {
-  const before = await readRecalcMs(cdp);
+/** Frame deltas (rAF) over a window. */
+async function sampleWindow(page: import("@playwright/test").Page, ms: number): Promise<Sample> {
   await page.evaluate(() => {
     const w = window as unknown as { __frames: number[]; __run: boolean };
     w.__frames = [];
@@ -460,19 +498,32 @@ async function sampleWindow(
     w.__run = false;
     return w.__frames.slice(1);
   });
-  return { frames, recalcMs: (await readRecalcMs(cdp)) - before };
+  return { frames };
 }
 
-async function perfAt(
+type OfficePage = {
+  page: import("@playwright/test").Page;
+  cdp: import("@playwright/test").CDPSession;
+  root: string;
+  files: ReturnType<typeof agentFixtureSet>;
+};
+
+/**
+ * One fresh office with `agents` fixture agents (the fixture set also holds `extra` more, for a later write)
+ * in its own page, loaded until all agents render; cleans up in reverse order however `fn` ends.
+ */
+async function withOfficePage<T>(
   agents: number,
+  extra: number,
   headed: boolean,
   info: { chrome: string },
-): Promise<Verdict[]> {
+  fn: (ctx: OfficePage) => Promise<T>,
+): Promise<T> {
   const root = makeRunRoot();
   tempDirs.add(root);
   let office: Office | null = null;
   try {
-    const files = agentFixtureSet(agents + DESKS_PER_ROW);
+    const files = agentFixtureSet(agents + extra);
     writeFixtureSet(root, files.slice(0, agents), { anchorNow: Date.now() });
     office = await startOffice({ root });
     const { chromium } = await import("@playwright/test");
@@ -481,29 +532,57 @@ async function perfAt(
       info.chrome = browser.version();
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
       const cdp = await page.context().newCDPSession(page);
-      await cdp.send("Performance.enable");
       await page.goto(office.url);
       await page.waitForFunction(
         (n) => document.querySelectorAll(".agent[data-state]").length >= n,
         agents,
         { timeout: SMOKE_MS },
       );
-      const steady = await sampleWindow(page, cdp, STEADY_MS);
-      // Row growth: the feed finds new files on a tree walk. Sample recalc in CHUNK_MS chunks from before the
-      // write until TAIL_MS after the new row rendered; the burst is the largest chunk over the median chunk.
-      const target = agents + DESKS_PER_ROW;
-      const chunks: { at: number; ms: number }[] = [];
-      let sampling = true;
+      return await fn({ page, cdp, root, files });
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    office?.stop();
+    removeRoot(root);
+    tempDirs.delete(root);
+  }
+}
+
+/** One fresh office at `agents` in its own page, steady frame sample only. */
+function frameSample(agents: number, headed: boolean, info: { chrome: string }): Promise<Sample> {
+  return withOfficePage(agents, 0, headed, info, ({ page }) => sampleWindow(page, STEADY_MS));
+}
+
+/** One fresh office at `agents`, idle ROW_SETTLE_MS, then one traced row write. */
+function rowRepeat(
+  agents: number,
+  headed: boolean,
+  info: { chrome: string },
+  label: string,
+): Promise<RowRepeat> {
+  return withOfficePage(agents, DESKS_PER_ROW, headed, info, async ({ page, cdp, root, files }) => {
+    await new Promise((r) => setTimeout(r, ROW_SETTLE_MS));
+    // Row growth: the feed finds new files on a tree walk. Trace only this phase. The gate is the worst single
+    // UpdateLayoutTree after the row-write mark.
+    const target = agents + DESKS_PER_ROW;
+    const events: TraceEvent[] = [];
+    const onData = (e: { value: TraceEvent[] }) => void events.push(...e.value);
+    cdp.on("Tracing.dataCollected", onData);
+    const complete = new Promise<boolean>((r) =>
+      cdp.once("Tracing.tracingComplete", (e: { dataLossOccurred?: boolean }) =>
+        r(e.dataLossOccurred === true),
+      ),
+    );
+    let tracing = false;
+    try {
+      await cdp.send("Tracing.start", {
+        categories: TRACE_CATEGORIES,
+        transferMode: "ReportEvents",
+      });
+      tracing = true;
+      await page.evaluate(() => performance.mark("row-write"));
       const wroteAt = Date.now();
-      const sampler = (async () => {
-        let prev = await readRecalcMs(cdp);
-        while (sampling) {
-          await new Promise((r) => setTimeout(r, CHUNK_MS));
-          const cur = await readRecalcMs(cdp);
-          chunks.push({ at: Date.now() - wroteAt, ms: cur - prev });
-          prev = cur;
-        }
-      })();
       writeFixtureSet(root, files.slice(agents), { anchorNow: wroteAt });
       const appeared = await page
         .waitForFunction(
@@ -514,36 +593,88 @@ async function perfAt(
         .then(() => true)
         .catch(() => false);
       const appearedMs = appeared ? Date.now() - wroteAt : null;
-      if (appeared) await new Promise((r) => setTimeout(r, TAIL_MS));
-      sampling = false;
-      await sampler;
-      const burst = burstRecalc(chunks.map((c) => c.ms));
+      if (appeared) await new Promise((r) => setTimeout(r, ROW_TRACE_TAIL_MS));
+      tracing = false;
+      await cdp.send("Tracing.end");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("tracingComplete timeout")), TRACE_FLUSH_MS);
+      });
+      let dataLost: boolean;
+      try {
+        dataLost = await Promise.race([complete, timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (dataLost) console.log(`  ${agents} agents ${label}: the trace lost data, repeat failed`);
+      const worstMs =
+        appearedMs === null
+          ? null
+          : tracedWorstMs(events, appearedMs + ROW_TRACE_TAIL_MS, dataLost);
+      const worstEvent =
+        worstMs === null ? null : worstRecalcEvent(events, appearedMs! + ROW_TRACE_TAIL_MS);
+      const at =
+        worstEvent === null ? "" : ` at +${worstEvent.offsetMs.toFixed(0)} ms after the write`;
       console.log(
-        `  ${agents} agents row appeared ${appearedMs ?? "never"} ms after write; ${chunks.length} chunks of ${CHUNK_MS} ms: ` +
-          (burst === null
-            ? "n/a"
-            : `max ${burst.maxMs.toFixed(1)} ms (chunk ending ${chunks[burst.maxIndex]!.at} ms after write), median ${burst.medianMs.toFixed(1)} ms, burst ${burst.burstMs.toFixed(1)} ms`),
+        `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms${at}, row appeared ${appearedMs ?? "never"} ms`,
       );
-      return [
-        budgetVerdict(
+      return { appearedMs, worstMs };
+    } finally {
+      if (tracing) {
+        await cdp.send("Tracing.end").catch(() => {});
+        await Promise.race([complete, new Promise((r) => setTimeout(r, TRACE_ABORT_FLUSH_MS))]);
+      }
+      cdp.off("Tracing.dataCollected", onData);
+    }
+  });
+}
+
+/** The two perf verdicts for one agent count: p95 frame of the steady sample, then the row-change recalc. */
+export function perfVerdicts(
+  agents: number,
+  steady: Sample | null,
+  repeats: RowRepeat[],
+): Verdict[] {
+  return [
+    steady === null || steady.frames.length === 0
+      ? { status: "FAIL", measured: "p95 frame: no frames measured" }
+      : budgetVerdict(
           `p95 frame, ${steady.frames.length} frames`,
           p95(steady.frames),
           FRAME_BUDGET_MS[agents]!,
         ),
-        rowChangeVerdict({
-          appearedMs,
-          recalcMs: burst?.burstMs ?? 0,
-          chunkCount: chunks.length,
-        }),
-      ];
-    } finally {
-      await browser.close();
+    rowChangeVerdict(repeats),
+  ];
+}
+
+async function perfAt(
+  agents: number,
+  headed: boolean,
+  info: { chrome: string },
+): Promise<Verdict[]> {
+  let steady: Sample | null = null;
+  if (!shuttingDown) {
+    try {
+      steady = await frameSample(agents, headed, info);
+    } catch (e) {
+      console.log(
+        `  ${agents} agents frame sample: failed, ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
-  } finally {
-    office?.stop();
-    removeRoot(root);
-    tempDirs.delete(root);
   }
+  const repeats: RowRepeat[] = [];
+  for (let i = 1; i <= REPEATS; i++) {
+    if (shuttingDown) break;
+    try {
+      repeats.push(await rowRepeat(agents, headed, info, `repeat ${i}`));
+    } catch (e) {
+      console.log(
+        `  ${agents} agents repeat ${i}: failed, ${e instanceof Error ? e.message : String(e)}`,
+      );
+      repeats.push({ appearedMs: null, worstMs: null });
+    }
+  }
+  return perfVerdicts(agents, steady, repeats);
 }
 
 async function perf(): Promise<number> {

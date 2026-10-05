@@ -60,13 +60,13 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** None
 
-#### Row-change style recalc over budget (2026-10-04)
+#### Row-change style recalc at 24 agents over budget (2026-10-05)
 
-**What:** Adding a row costs 48 to 49 ms of style recalculation at 12 agents and 63 to 79 ms at 24 on headless Chrome (M1 Max, `vp run perf`, 4 runs), against the 16 ms budget. Find what the registered `--fit-*` transition invalidates and cut it.
+**What:** Find what a settled 24-agent row insertion restyles and cut it. At 12 agents the large miss is fixed (the 12-agent gate is unstable near the line, with one failing run in four, and has no owner yet): the inherited `--scale` property is gone and the worst style-recalc event went from an old burst figure of about 48 ms to a median worst event of 14.7 to 17.3 ms over four runs (different metrics, budget 16 ms). The 12-agent gate sits on the 16 ms line and can flip between runs: medians 14.9, 14.7, 15.6 and 17.3 ms, the last with repeats 17.3/14.8/22.2 ms. At 24 agents the settled median is still 19.1, 19.5, 19.3 and 22.6 ms (headless Chrome, M1 Max, `vp run perf`, 4 runs; fourth run repeats 19.6/22.6/34.2 ms). The fourth run overlapped with other work on the machine (review agents and an e2e run just before it), so it is noisier. The per-repeat line now prints the worst event's offset after the write; comparing it with the printed 'row appeared' time, in that run the worst 12-agent events fell within 50 ms of the new row appearing, while the 24-agent ones fell 17 to 280 ms before it, so the 24-agent cost is not yet tied to one step. The cause is unknown.
 
-**Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 ms against 20 and 33 ms).
+**Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 to 16.8 ms against 20 and 33 ms).
 
-**Context:** Numbers are in DESIGN.md "Performance". Safari is not measured. This unblocks "Frame cost and caches in the break and paper code" below, which was gated on this measurement; start there.
+**Context:** Numbers and method are in DESIGN.md "Performance". Next step: a trace breakdown of what the settled 24-agent insertion restyles. A fresh page restyles about 3,200 elements with no fit change and costs about 4.5 ms, so this looks like a page-age effect; the mechanism is untested. Safari is not measured.
 
 **Effort:** M
 **Priority:** P1
@@ -78,11 +78,11 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Why:** Avoids garbage and re-render work with 24 waiting parents; unmeasured, so do it only if M10 shows pressure.
 
-**Context:** `settled` also keeps a rAF loop for the first 2 s of idle (`motion.ts:183`); `nextChange` already knows the wake time.
+**Context:** `settled` also keeps a rAF loop for the first 2 s of idle (`motion.ts:183`); `nextChange` already knows the wake time. The 2026-10-05 measurement shows p95 frame passes at both sizes (16.7 to 16.8 ms) and the miss is style recalc, so these caches have no measured pressure yet.
 
 **Effort:** M
 **Priority:** P3
-**Depends on:** Row-change style recalc over budget (measured 2026-10-04: pressure found)
+**Depends on:** Row-change style recalc at 24 agents over budget (2026-10-05)
 
 #### Reload-stable breaks and spot assignment
 

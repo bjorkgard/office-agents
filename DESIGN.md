@@ -131,11 +131,11 @@ Light comes from the screen top-left and is fixed. Shading is pixel cells with t
 
 ### Outline and separation
 
-There are no 1 px stroke outlines on the pixel figures (the `calc(1px / var(--scale))` stroke rule does not apply to them). Dark parts (hair 1 and 4, trousers, shoes, wood) are separated from each other and from the shirt by palette steps and by sprite pixels: `--outline` highlight cells at 35% and light shoe soles. `--outline` is still a token: `#e1e6f2` is 13.92 on `--bg`, and each dark part reaches 3:1 against it (column above). Known weak pair: trousers against the orange, sky, green, vermillion and purple shirts is 1.3 to 2.2:1, so the waist relies on the shirt hem shape; judge it on the sheet. The attention floor ring below keeps its `calc(2px / var(--scale))` stroke.
+There are no 1 px stroke outlines on the pixel figures (the earlier 1 screen px outline stroke rule does not apply to them, and no `--scale` variable exists any more). Dark parts (hair 1 and 4, trousers, shoes, wood) are separated from each other and from the shirt by palette steps and by sprite pixels: `--outline` highlight cells at 35% and light shoe soles. `--outline` is still a token: `#e1e6f2` is 13.92 on `--bg`, and each dark part reaches 3:1 against it (column above). Known weak pair: trousers against the orange, sky, green, vermillion and purple shirts is 1.3 to 2.2:1, so the waist relies on the shirt hem shape; judge it on the sheet. The attention floor ring below draws its stroke through `ringStroke(scale)` (2 screen px).
 
 ### Floor ring, focus rectangle, hit area
 
-- Attention ring: an isometric ellipse in the scaled layer, under the character, drawn above the floor and below the chair, `--accent`, stroke `calc(2px / var(--scale))`. It is not in the unscaled overlay.
+- Attention ring: an isometric ellipse in the scaled layer, under the character, drawn above the floor and below the chair, `--accent`, stroke `ringStroke(scale)` in `src/office/iso.ts` (2 / scale in scene px, so 2 screen px at every scale; no inherited CSS variable). It is not in the unscaled overlay.
 - Keyboard focus is a separate rectangle in the unscaled overlay: `--accent`, 2px, 2px offset, around the hit area.
 - Hit area: transparent, at least 24x24 screen px, centered on the torso, in the unscaled overlay. It carries hover, click, focus and the tag position. Accessible name: first name, project, state. Centers stay at least 24 px apart at scale 0.5 for 12 agents.
 
@@ -275,14 +275,16 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 
 ## Performance
 
-Measured 2026-10-04 with `vp run perf` (4 runs), headless Chrome 153.0.8010.12 on an Apple M1 Max. Method: `e2e/release.ts` starts a temporary feed with 12 and with 24 agents; frame time is the 95th percentile (p95) of requestAnimationFrame deltas; row-change recalc is style recalculation time (`RecalcStyleDuration`), not main-thread time, measured as the largest 100 ms chunk minus the median chunk, while one row of 4 agents is added (budget 16 ms).
+Measured with `vp run perf` on headless Chrome 153.0.8010.12 and an Apple M1 Max. Method: `e2e/release.ts` starts a temporary feed with 12 and with 24 agents. Frame time is the 95th percentile (p95) of requestAnimationFrame deltas, sampled on its own fixture page. Row-change recalc is the worst single style-recalculation event (`UpdateLayoutTree`) while one row of 4 agents is added, taken as the median of 3 repeats and compared with 16 ms (one frame). Each repeat waits 5 s idle on a settled page before the write, because a row written right after page load costs about 4.5 ms at 24 agents and 17.5 to 29.8 ms after 5 s idle (in diagnostic runs). The old figure (largest 100 ms chunk minus the median chunk, called "burst") was the gate through 2026-10-04 and was replaced on 2026-10-05; the table keeps its numbers as dated history. It was replaced because it compares a sum over about 6 frames with a 1-frame budget and it was unreliable: the 2026-10-05 baseline run before the fix gave 57.3 ms and 20.1 ms in the same run.
 
-| Agents | p95 frame (budget)            | Row-change recalc (budget 16 ms)                  |
-| ------ | ----------------------------- | ------------------------------------------------- |
-| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                             |
-| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms (about 48 to 79 ms across runs), FAIL |
+Cause and fix: the unregistered custom property `--scale` was set inline on `.scene-scaled` and inherited, so each fit change restyled about 41,000 elements at 12 agents. The ring stroke is now computed in JS (`ringStroke(scale)` in `src/office/iso.ts`) and `--scale` is gone. The registered `--fit-*` transition and the desk-pop animation were tested and did not matter. Earlier design docs (`docs/designs/character-art-ceo-review.md` D7 and D8) mention `--scale` strokes, which no longer exist; `docs/designs/character-art-merged-tasks.md` and `docs/designs/office-life-ceo-review.md` also still describe `--scale`. The pending Safari item M10 should check the JS `ringStroke` path now.
 
-Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass). The recalc miss is tracked in TODOS.md "Row-change style recalc over budget".
+| Agents | p95 frame (budget)            | Old: burst, 2026-10-04 (before the fix) | New: worst event, median of 3, 2026-10-05 (after the fix)                                                                   |
+| ------ | ----------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                   | 14.9, 14.7, 15.6 and 17.3 ms in four runs (the 17.3 ms run had repeats 17.3, 14.8 and 22.2 ms), FAIL in the fourth          |
+| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms, FAIL                       | 19.1, 19.5, 19.3 and 22.6 ms in four runs (single repeats 18.6 to 34.2 ms; fourth run repeats 19.6, 22.6 and 34.2 ms), FAIL |
+
+The 12-agent gate sits on the 16 ms line and can flip between runs: three medians were 0.4 to 1.3 ms under the budget and the fourth was 1.3 ms over. A single 12-agent repeat reached 22.2 ms. The fourth run overlapped with other work on the machine (review agents and an e2e run just before it), so it is noisier. The per-repeat line now prints the worst event's offset after the write; comparing it with the printed 'row appeared' time, in that run the worst 12-agent events fell within 50 ms of the new row appearing, while the 24-agent ones fell 17 to 280 ms before it, so the 24-agent cost is not yet tied to one step. The 24-agent miss has no known cause and is tracked in TODOS.md "Row-change style recalc at 24 agents over budget (2026-10-05)". Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass).
 
 ## Open items
 
