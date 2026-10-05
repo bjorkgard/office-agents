@@ -465,6 +465,15 @@ describe("rowChangeVerdict", () => {
       expect(v.measured).toContain("16.04");
     });
 
+    it("decides the band on the printed 2-decimal median: 16.004 PASS, 17.504 INCONCLUSIVE", () => {
+      const pass = six([16.004, 16.004, 16.004, 16.004, 16.004, 16.004]);
+      expect(pass.status).toBe("PASS");
+      expect(pass.measured).toContain("16.00");
+      const inconclusive = six([17.504, 17.504, 17.504, 17.504, 17.504, 17.504]);
+      expect(inconclusive.status).toBe("INCONCLUSIVE");
+      expect(inconclusive.measured).toContain("17.50");
+    });
+
     it("reports a thrown repeat as repeat failed, not as never appeared", () => {
       const reps: RowRepeat[] = [5, 5, 5, 5, 5, 5].map((m) => rep(m));
       reps[2] = { appearedMs: null, worstMs: null, runError: "page crashed" };

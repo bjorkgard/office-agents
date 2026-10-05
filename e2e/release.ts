@@ -367,6 +367,7 @@ export const FRAME_BUDGET_MS: Record<number, number> = { 12: 20, 24: 33 };
 export const RECALC_BUDGET_MS = 16;
 /**
  * Above RECALC_BUDGET_MS, a row-change median up to this is INCONCLUSIVE (exit 0, printed); above it is FAIL.
+ * The band is decided on the median rounded to the 2 decimals that are printed.
  */
 export const RECALC_INCONCLUSIVE_MS = 17.5;
 /** How long after the new agents rendered an UpdateLayoutTree still counts as the entrance ease, not idle. */
@@ -499,7 +500,8 @@ export function settleRuns(worsts: number[]): { kept: number[]; dropped: boolean
 
 /**
  * Row-change verdict: the median across repeats (warm-up per settleRuns) of the worst single style recalc event.
- * PASS <= budget, INCONCLUSIVE up to RECALC_INCONCLUSIVE_MS, FAIL above.
+ * PASS <= budget, INCONCLUSIVE up to RECALC_INCONCLUSIVE_MS, FAIL above, decided on the median rounded to the
+ * 2 decimals that are printed so the text and the status cannot disagree.
  */
 export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   const fmt = (v: number | null) => (v === null ? "n/a" : v.toFixed(1));
@@ -530,7 +532,7 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
     };
   }
   const { kept, dropped } = settleRuns(worsts as number[]);
-  const median = medianOf(kept)!;
+  const median = Number(medianOf(kept)!.toFixed(2));
   const status =
     median <= RECALC_BUDGET_MS
       ? "PASS"
