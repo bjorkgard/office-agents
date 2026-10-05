@@ -599,12 +599,15 @@ export function abDelta(arms: {
   };
 }
 
+/** Prefix of every `--ab` verdict's measured text; abSkippedLine matches on it. */
+export const AB_PREFIX = "animations A/B";
+
 /** The "A/B not measured" count line for `perf --ab`, or null when not in `--ab` or nothing was skipped. */
 export function abSkippedLine(all: Verdict[], ab: boolean): string | null {
   const skipped = all.filter(
-    (v) => v.status === "SKIPPED" && v.measured.startsWith("animations A/B"),
+    (v) => v.status === "SKIPPED" && v.measured.startsWith(AB_PREFIX),
   ).length;
-  return ab && skipped > 0 ? `${skipped} SKIPPED (A/B not measured, exit 0)` : null;
+  return ab && skipped > 0 ? `${skipped} SKIPPED (A/B not measured)` : null;
 }
 
 function noWorstText(name: string, arm: AbArm): string | null {
@@ -623,13 +626,19 @@ export function abVerdict(arms: { animated: AbArm; frozen: AbArm }): Verdict {
       frozen.error ??
       noWorstText("with animations", animated) ??
       noWorstText("without animations", frozen) ??
-      "no animation count in an arm";
-    return { status: "SKIPPED", measured: `animations A/B: not measured (${why})` };
+      (animated.medianMs === null || frozen.medianMs === null
+        ? "no median worst event in an arm"
+        : "no animation count in an arm");
+    return { status: "SKIPPED", measured: `${AB_PREFIX}: not measured (${why})` };
   }
   const sign = delta.deltaMs >= 0 ? "+" : "";
+  const stillAnimating =
+    frozen.animations! > 0
+      ? `; frozen arm still had ${frozen.animations!.toFixed(0)} animations`
+      : "";
   return {
     status: "PASS",
-    measured: `animations A/B: with animations ${animated.medianMs!.toFixed(1)} ms, ${animated.animations!.toFixed(0)} animations; without ${frozen.medianMs!.toFixed(1)} ms, ${frozen.animations!.toFixed(0)} animations; delta ${sign}${delta.deltaMs.toFixed(1)} ms, ${delta.deltaAnimations.toFixed(0)} animations`,
+    measured: `${AB_PREFIX}: with animations ${animated.medianMs!.toFixed(1)} ms, ${animated.animations!.toFixed(0)} animations; without ${frozen.medianMs!.toFixed(1)} ms, ${frozen.animations!.toFixed(0)} animations; delta ${sign}${delta.deltaMs.toFixed(1)} ms, ${delta.deltaAnimations.toFixed(0)} animations${stillAnimating}`,
   };
 }
 
@@ -890,7 +899,7 @@ async function perf(ab: boolean): Promise<number> {
     }
   }
   const inconclusive = all.filter((v) => v.status === "INCONCLUSIVE").length;
-  if (inconclusive > 0) console.log(`${inconclusive} INCONCLUSIVE (exit 0)`);
+  if (inconclusive > 0) console.log(`${inconclusive} INCONCLUSIVE (does not fail the run)`);
   const skippedLine = abSkippedLine(all, ab);
   if (skippedLine !== null) console.log(skippedLine);
   console.log(`chrome ${info.chrome}`);

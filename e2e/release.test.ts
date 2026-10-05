@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
+  AB_PREFIX,
   abArm,
   abDelta,
   abSkippedLine,
@@ -474,7 +475,7 @@ describe("rowChangeVerdict", () => {
     });
 
     it("keeps the first run when it is not higher, median of all 6", () => {
-      // runs 2-6 median 10; first 10 is not greater, kept; sorted [3,10,10,10,12,20] median 10
+      // runs 2-6 median 10; first 10 is not greater than that, so it is kept; all 6 sorted [3,10,10,10,12,20] median 10
       const v = six([10, 20, 10, 12, 10, 3]);
       expect(v.measured).toContain("warm-up run 1 kept");
       expect(v.measured).toContain("median worst event 10.0 ms");
@@ -603,7 +604,22 @@ describe("abDelta and abVerdict", () => {
   it("is SKIPPED with a reason when timing data is missing", () => {
     const v = abVerdict({ animated: arm(null, 3), frozen: arm(12, 0) });
     expect(v.status).toBe("SKIPPED");
-    expect(v.measured).toContain("not measured");
+    expect(v.measured).toBe("animations A/B: not measured (no median worst event in an arm)");
+  });
+
+  it("says the animation count is missing when only the count is missing", () => {
+    const v = abVerdict({ animated: arm(12, 3), frozen: arm(12, null) });
+    expect(v.status).toBe("SKIPPED");
+    expect(v.measured).toBe("animations A/B: not measured (no animation count in an arm)");
+  });
+
+  it("notes animations still running in the frozen arm without changing the status", () => {
+    const v = abVerdict({ animated: arm(18, 40), frozen: arm(12, 2) });
+    expect(v.status).toBe("PASS");
+    expect(v.measured).toContain("; frozen arm still had 2 animations");
+    expect(abVerdict({ animated: arm(18, 40), frozen: arm(12, 0) }).measured).not.toContain(
+      "frozen arm still had",
+    );
   });
 
   it("prints idle animation counts rounded", () => {
@@ -619,11 +635,21 @@ describe("abSkippedLine", () => {
   it("counts SKIPPED verdicts only when --ab is set", () => {
     const ab = { status: "SKIPPED" as const, measured: "animations A/B: not measured (x)" };
     const all = [v("PASS"), ab, ab];
-    expect(abSkippedLine(all, true)).toBe("2 SKIPPED (A/B not measured, exit 0)");
+    expect(abSkippedLine(all, true)).toBe("2 SKIPPED (A/B not measured)");
     expect(abSkippedLine(all, false)).toBeNull();
-    expect(abSkippedLine([v("SKIPPED"), ab], true)).toBe("1 SKIPPED (A/B not measured, exit 0)");
+    expect(abSkippedLine([v("SKIPPED"), ab], true)).toBe("1 SKIPPED (A/B not measured)");
     expect(abSkippedLine([v("SKIPPED")], true)).toBeNull();
     expect(abSkippedLine([v("PASS"), v("INCONCLUSIVE")], true)).toBeNull();
+  });
+
+  it("counts a SKIPPED verdict built by abVerdict itself", () => {
+    const skipped = abVerdict({
+      animated: { medianMs: 1, animations: null, error: null, noWorst: 0, total: 3 },
+      frozen: { medianMs: 1, animations: 0, error: null, noWorst: 0, total: 3 },
+    });
+    expect(skipped.status).toBe("SKIPPED");
+    expect(skipped.measured.startsWith(AB_PREFIX)).toBe(true);
+    expect(abSkippedLine([skipped], true)).toBe("1 SKIPPED (A/B not measured)");
   });
 });
 
@@ -660,6 +686,11 @@ describe("abArm", () => {
     expect(v.status).toBe("SKIPPED");
     expect(v.measured).toContain("repeat failed: page crashed");
     expect(v.measured).not.toContain("probe");
+  });
+
+  it("reports the probe error when one arm has both a probe error and a thrown repeat", () => {
+    const a = abArm([run(10, null, "boom"), run(null, null, null, "page crashed")]);
+    expect(a.error).toBe("probe failed: boom");
   });
 
   it("nulls the median when a run has no worst event or no runs exist", () => {

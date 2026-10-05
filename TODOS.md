@@ -88,6 +88,30 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P4
 **Depends on:** Row-change style recalc at 24 agents over budget (2026-10-05)
 
+#### Perf runner deadline for `perf --ab`
+
+**What:** Add a total and per-repeat deadline to the perf runner so a hung page cannot stall `perf --ab`.
+
+**Why:** `perf --ab` runs about 24 sequential browser sessions, so a single hang can stall it for 20+ minutes in the worst case.
+
+**Context:** Deferred from the 2026-10-05 /ship review.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+#### Strict mode for INCONCLUSIVE perf verdicts
+
+**What:** Add an opt-in strict mode that exits with a distinct code when a perf verdict is INCONCLUSIVE.
+
+**Why:** INCONCLUSIVE exits 0 today (approved gate design), which a CI calling `perf` would read as a pass.
+
+**Context:** Deferred from the 2026-10-05 /ship review. No workflow calls `perf` today, so this only matters once one does.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
 #### Frame cost and caches in the break and paper code
 
 **What:** Cache per-cycle trip segments so a waiting parent builds its timeline once per frame (`choreo.ts:381`), evict one plan instead of clearing all (`breaks.ts:112`), group subagents by session once (`paper.ts:139`), and memoize `DeskLayer` and `RoomShell` (`Scene.tsx:300`).
