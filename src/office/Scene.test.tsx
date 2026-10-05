@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { layoutOffice } from "./iso";
 import { agentKey, type Agent, type OfficeState } from "./machine";
 import { Scene } from "./Scene";
@@ -1108,5 +1108,27 @@ describe("window css", () => {
         ),
         sel,
       ).toBe(true);
+  });
+
+  it("default timers are called unbound: a browser's clearTimeout throws as an object method", () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal("setTimeout", function (this: unknown) {
+      seen.push(this);
+      return 1;
+    });
+    vi.stubGlobal("clearTimeout", function (this: unknown) {
+      seen.push(this);
+    });
+    try {
+      const el = fakeHit();
+      const p = pulser(() => el, 1200);
+      p.pulse("k");
+      p.pulse("k");
+      p.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const t of seen) expect(t).toBeUndefined();
   });
 });

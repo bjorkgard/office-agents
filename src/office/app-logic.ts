@@ -64,7 +64,12 @@ export function pulser(
   timers: {
     set: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
     clear: (id: ReturnType<typeof setTimeout> | undefined) => void;
-  } = { set: setTimeout, clear: clearTimeout },
+  } = {
+    // Arrows, not bare references: a browser's setTimeout/clearTimeout throw "Illegal invocation"
+    // when called as methods of this object.
+    set: (fn, delay) => setTimeout(fn, delay),
+    clear: (id) => clearTimeout(id),
+  },
 ) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pulsed: PulseEl | null = null;
