@@ -347,3 +347,35 @@ export function officeEnv(env: Record<string, string | undefined>): {
   if (cacheDir !== undefined && cacheDir !== "") out.cacheDir = cacheDir;
   return out;
 }
+
+// ---- failure context ------------------------------------------------------------------
+
+export type FeedStatusAttachment = { name: "feed-status"; contentType: string; body: string };
+export type StatusFetch = () => Promise<{ status: number; body: string }>;
+
+/** The `/__office/status` body for a failed test: verbatim on 200, else text saying why. Never throws. */
+export async function feedStatusAttachment(
+  fetchStatus: StatusFetch,
+  timeoutMs = 2000,
+): Promise<FeedStatusAttachment> {
+  const text = (body: string): FeedStatusAttachment => ({
+    name: "feed-status",
+    contentType: "text/plain",
+    body,
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs);
+    });
+    const res = await Promise.race([fetchStatus(), timeout]);
+    if (res.status === 200) {
+      return { name: "feed-status", contentType: "application/json", body: res.body };
+    }
+    return text(`status fetch returned ${res.status}: ${res.body}`);
+  } catch (e) {
+    return text(`status fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}

@@ -15,6 +15,7 @@ import {
   appendLive,
   coreFixtureSet,
   coreSessions,
+  feedStatusAttachment,
   isRunRoot,
   liveLine,
   makeTempRoot,
@@ -281,5 +282,35 @@ describe("live lines", () => {
         expect(last.message.content?.at(-1)?.text?.endsWith("?")).toBe(true);
       }
     }
+  });
+});
+
+describe("feedStatusAttachment", () => {
+  it("ok status body is attached verbatim", async () => {
+    const body = '{"tracked":3,\n "ok":true}';
+    const a = await feedStatusAttachment(async () => ({ status: 200, body }));
+    expect(a).toEqual({ name: "feed-status", contentType: "application/json", body });
+  });
+
+  it("status fetch failure becomes an attachment, not a throw", async () => {
+    const a = await feedStatusAttachment(async () => {
+      throw new Error("connect ECONNREFUSED");
+    });
+    expect(a.name).toBe("feed-status");
+    expect(a.contentType).toBe("text/plain");
+    expect(a.body).toContain("ECONNREFUSED");
+  });
+
+  it("a non-200 status keeps its code and body as text", async () => {
+    const a = await feedStatusAttachment(async () => ({ status: 403, body: "nope" }));
+    expect(a.contentType).toBe("text/plain");
+    expect(a.body).toContain("403");
+    expect(a.body).toContain("nope");
+  });
+
+  it("a hung fetch times out into an attachment", async () => {
+    const a = await feedStatusAttachment(() => new Promise<never>(() => {}), 20);
+    expect(a.contentType).toBe("text/plain");
+    expect(a.body).toContain("timed out");
   });
 });
