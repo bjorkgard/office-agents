@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   appendFileSync,
@@ -19,7 +20,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite-plus";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { ATTENTION_STALE_MS } from "../shared/tuning.ts";
 import {
   assignSeat,
@@ -158,6 +159,78 @@ describe("tailer", () => {
     expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
   });
 
+  it("re-reads from the start when the file is replaced and grows past the old offset", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const resets: string[] = [];
+    const { t, events } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(1);
+    // A different inode, longer than the old offset: size alone cannot tell.
+    const next = file + ".new";
+    writeFileSync(next, lines.join("\n") + "\n" + lines[2] + "\n");
+    renameSync(next, file);
+    await t.scanOnce();
+    expect(resets).toHaveLength(1);
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
+  });
+
+  it("re-reads from the start when the same inode is rewritten with a different head", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const resets: string[] = [];
+    const { t, events } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    writeFileSync(file, "{}\n" + lines.join("\n") + "\n" + lines[2] + "\n");
+    await t.scanOnce();
+    expect(resets).toHaveLength(1);
+    expect(kinds(events).filter((k) => k === "agent_started")).toHaveLength(2);
+  });
+
+  it("does not reset a file that only grows, even while its head is shorter than the head window", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines[0] + "\n");
+    const resets: string[] = [];
+    const { t } = tailer({ onReset: (f) => resets.push(f.sessionId) });
+    await t.scanOnce();
+    for (const l of lines.slice(1)) {
+      appendFileSync(file, l + "\n");
+      await t.scanOnce();
+    }
+    expect(resets).toEqual([]);
+  });
+
+  it("does not follow a leaf swapped for a symlink after it was tracked", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const other = join(root, "elsewhere.jsonl");
+    writeFileSync(other, lines.join("\n") + "\n" + lines.join("\n") + "\n");
+    const { t, events, logs } = tailer();
+    await t.scanOnce();
+    const n = events.length;
+    unlinkSync(file);
+    symlinkSync(other, file);
+    await t.scanOnce();
+    expect(events).toHaveLength(n);
+    expect(t.status().filesTracked).toBe(0);
+    expect(logs.some((l) => l.includes("skipping"))).toBe(true);
+  });
+
+  it("rejects a FIFO swapped in for a tracked file without blocking, logging once", async () => {
+    const file = putTop("p1", "top-live");
+    const { t, logs } = tailer();
+    await t.scanOnce();
+    unlinkSync(file);
+    execFileSync("mkfifo", [file]);
+    await t.scanOnce();
+    await t.scanOnce();
+    expect(t.status().filesTracked).toBe(0);
+    const skipped = logs.filter((l) => l.includes("skipping"));
+    expect(skipped).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(skipped[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+  }, 3000);
+
   it("retries a transient read error on the next scan and logs once", async () => {
     putTop("p1", "top-live");
     const fs = await import("node:fs/promises");
@@ -196,6 +269,22 @@ describe("tailer", () => {
     expect(reads).toBe(5);
   });
 
+  it("a record claiming another session keeps the file's own session id", async () => {
+    putTop(
+      "p1",
+      "top-live",
+      readFileSync(join(fixtures, "top-live.jsonl"), "utf8").replaceAll(
+        sessionOf("top-live"),
+        "spoofed",
+      ),
+      "real-session",
+    );
+    const { t, events } = tailer();
+    await t.scanOnce();
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.sessionId === "real-session")).toBe(true);
+  });
+
   it("a throwing consumer does not deny the file", async () => {
     const file = putTop("p1", "top-live");
     let throwNext = true;
@@ -221,6 +310,107 @@ describe("tailer", () => {
     appendFileSync(file, fixtureLines("top-live")[2] + "\n");
     await t.scanOnce();
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it("a throwing line costs one line and logs once per file", async () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const boom = line(
+      {
+        type: "assistant",
+        message: {
+          role: "assistant",
+          stop_reason: "tool_use",
+          content: [
+            { type: "tool_use", id: "BOOM", name: "Agent", input: { run_in_background: true } },
+          ],
+        },
+      },
+      1,
+    );
+    const ok = (n: number) => line({ type: "user", message: { role: "user", content: "x" } }, n);
+    putTop("p1", "top-live", [ok(0), boom, ok(2), boom, ok(3)].join("\n") + "\n", "ps");
+    const set: typeof Map.prototype.set = Reflect.get(Map.prototype, "set");
+    Map.prototype.set = function (this: Map<unknown, unknown>, k: unknown, v: unknown) {
+      if (k === "BOOM") throw new Error("launch bug");
+      return set.call(this, k, v);
+    } as typeof Map.prototype.set;
+    const { t, events, logs } = tailer();
+    try {
+      await t.scanOnce();
+    } finally {
+      Map.prototype.set = set;
+    }
+    expect(events.length).toBeGreaterThan(0);
+    expect(t.status().drift.normalizer_error).toBe(2);
+    expect(logs.filter((l) => l.includes("normalizing failed"))).toHaveLength(1);
+    expect(logs.join("\n")).not.toContain('x"');
+  });
+
+  it("fills parentAgentId from a tracked launcher file, else null", async () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const launcher = [
+      line(
+        {
+          type: "assistant",
+          agentId: "amid",
+          message: {
+            role: "assistant",
+            stop_reason: "tool_use",
+            content: [
+              { type: "tool_use", id: "tu2", name: "Agent", input: { run_in_background: true } },
+            ],
+          },
+        },
+        1,
+      ),
+      line(
+        {
+          type: "user",
+          agentId: "amid",
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2" }] },
+          toolUseResult: { status: "async_launched", agentId: "kid" },
+        },
+        2,
+      ),
+    ];
+    const child = (id: string) =>
+      line(
+        {
+          type: "assistant",
+          agentId: id,
+          message: { role: "assistant", stop_reason: "tool_use", content: [] },
+        },
+        3,
+      );
+    putTop("p1", "top-live", line({ type: "user", message: { content: "x" } }, 0) + "\n", "ps");
+    const dir = join(root, "p1", "ps", "subagents");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "agent-amid.jsonl"), launcher.join("\n") + "\n");
+    let skew = 0;
+    const { t, events } = tailer({ now: () => Date.now() + skew });
+    await t.scanOnce();
+    skew = 10_000; // past the tree-walk throttle so the new files are found
+    writeFileSync(join(dir, "agent-kid.jsonl"), child("kid") + "\n");
+    writeFileSync(join(dir, "agent-stray.jsonl"), child("stray") + "\n");
+    await t.scanOnce();
+    const started = (id: string) =>
+      events.find((e) => e.kind === "agent_started" && e.agentId === id);
+    expect(started("kid")).toMatchObject({ parentAgentId: "amid" });
+    expect(started("stray")).toMatchObject({ parentAgentId: null });
   });
 
   it("runs a later scan after a scan rejects while a follow-up was queued", async () => {
@@ -752,6 +942,107 @@ describe("feed", () => {
     expect(logs.filter((l) => l.includes("refused"))).toHaveLength(2);
   });
 
+  const withHeaders = (url: string, headers: Record<string, string>) => {
+    const r = fakeReq(url);
+    Object.assign(r.headers, headers);
+    return r;
+  };
+
+  it.each([
+    [{ origin: "http://evil.example" }, 403],
+    [{ origin: "null" }, 403],
+    [{ origin: "http://localhost.evil.example:5173" }, 403],
+    [{ origin: "http://localhost:5173" }, 200],
+    [{ origin: "http://127.0.0.1:3000" }, 200],
+    [{ origin: "http://[::1]:8080" }, 200],
+    [{ "x-forwarded-for": "10.0.0.1" }, 403],
+    [{ "x-forwarded-host": "evil.example" }, 403],
+    [{ "sec-fetch-site": "cross-site" }, 403],
+    [{ "sec-fetch-site": "same-site" }, 403],
+    [{ "sec-fetch-site": "same-origin" }, 200],
+    [{ "sec-fetch-site": "none" }, 200],
+    [{}, 200],
+  ])("request headers %j -> %s", (headers, code) => {
+    const feed = createFeed({ root, log: () => {} });
+    const { res } = call(feed, withHeaders("/__office/status", headers));
+    expect(res.statusCode).toBe(code);
+  });
+
+  it("logs a refused Host without control characters and within a bounded length", () => {
+    const logs: string[] = [];
+    const feed = createFeed({ root, log: (l) => logs.push(l) });
+    const host = `evil\r\n[office] forged\u001b[31m${"x".repeat(5000)}`;
+    call(feed, fakeReq("/__office/status", host));
+    expect(logs).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(logs[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(logs[0].length).toBeLessThan(400);
+  });
+
+  it("logs a refused path and remote address without control characters", () => {
+    const logs: string[] = [];
+    const feed = createFeed({ root, log: (l) => logs.push(l) });
+    const req = fakeReq(
+      "/__office/a\r\n[office] forged\u001b[31m",
+      "evil.example",
+      "10.0.0.1\r\nx",
+    );
+    call(feed, req);
+    expect(logs).toHaveLength(1);
+    // oxlint-disable-next-line no-control-regex
+    expect(logs[0]).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    expect(logs[0]).toContain("forged");
+  });
+
+  it("refuses an array-valued or comma-joined (duplicate) Origin header", () => {
+    const feed = createFeed({ root, log: () => {} });
+    const twice = ["http://localhost:5173", "http://localhost:5173"];
+    const arr = withHeaders("/__office/status", {});
+    Object.assign(arr.headers, { origin: twice });
+    expect(call(feed, arr).res.statusCode).toBe(403);
+    const joined = withHeaders("/__office/status", {
+      origin: "http://localhost:5173, http://evil.example",
+    });
+    expect(call(feed, joined).res.statusCode).toBe(403);
+  });
+
+  it("does not let the heartbeat timer keep the process alive", () => {
+    const spy = vi.spyOn(globalThis, "setInterval");
+    try {
+      const feed = createFeed({ root, log: () => {} });
+      call(feed, fakeReq("/__office/events"));
+      const timer = spy.mock.results[0].value as NodeJS.Timeout;
+      expect(timer.hasRef()).toBe(false);
+      feed.stop();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("pings SSE clients every 15 s and clears the timer once the last client closes", () => {
+    vi.useFakeTimers();
+    try {
+      const feed = createFeed({ root, log: () => {} });
+      const reqA = fakeReq("/__office/events");
+      const a = call(feed, reqA);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(14_999);
+      expect(a.res.written).toHaveLength(1);
+      vi.advanceTimersByTime(1);
+      expect(a.res.written[1]).toBe(": ping\n\n");
+      reqA.emit("close");
+      expect(vi.getTimerCount()).toBe(0);
+      const b = call(feed, fakeReq("/__office/events"));
+      expect(vi.getTimerCount()).toBe(1);
+      feed.stop();
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(b.res.written).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("serves status JSON on loopback", async () => {
     putTop("p1", "top-live");
     const feed = createFeed({ root, log: () => {} });
@@ -848,6 +1139,181 @@ describe("feed", () => {
     expect(feed.clients.size).toBe(0);
   });
 
+  describe("nested parent resolution is independent of scan order", () => {
+    const T = 1_800_000_000_000;
+    const line = (o: object, n: number) =>
+      JSON.stringify({
+        sessionId: "ps",
+        cwd: "/x",
+        timestamp: new Date(T + n * 1000).toISOString(),
+        ...o,
+      });
+    const launcherLines = (id: string, kid: string) =>
+      [
+        line(
+          {
+            type: "assistant",
+            agentId: id,
+            message: {
+              role: "assistant",
+              stop_reason: "tool_use",
+              content: [
+                { type: "tool_use", id: "tu2", name: "Agent", input: { run_in_background: true } },
+              ],
+            },
+          },
+          1,
+        ),
+        line(
+          {
+            type: "user",
+            agentId: id,
+            message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2" }] },
+            toolUseResult: { status: "async_launched", agentId: kid },
+          },
+          2,
+        ),
+      ].join("\n") + "\n";
+    const childLine = (id: string) =>
+      line(
+        {
+          type: "assistant",
+          agentId: id,
+          message: { role: "assistant", stop_reason: "tool_use", content: [] },
+        },
+        3,
+      ) + "\n";
+    const subDir = () => {
+      const dir = join(root, "p1", "ps", "subagents");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    };
+    const topLauncher = () =>
+      putTop(
+        "p1",
+        "top-live",
+        [
+          line(
+            {
+              type: "assistant",
+              message: {
+                role: "assistant",
+                stop_reason: "tool_use",
+                content: [
+                  {
+                    type: "tool_use",
+                    id: "tu1",
+                    name: "Agent",
+                    input: { run_in_background: true },
+                  },
+                ],
+              },
+            },
+            0,
+          ),
+          line(
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1" }] },
+              toolUseResult: { status: "async_launched", agentId: "fl" },
+            },
+            1,
+          ),
+        ].join("\n") + "\n",
+        "ps",
+      );
+    const startsOf = (events: AgentEvent[], id: string) =>
+      events.filter((e) => e.kind === "agent_started" && e.agentId === id);
+
+    it("corrects a child that sorted before its launcher, once", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-akid.jsonl"), childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      const starts = startsOf(events, "akid");
+      expect(starts.map((e) => e.kind === "agent_started" && e.parentAgentId)).toEqual([
+        null,
+        "zmid",
+      ]);
+      expect(starts[1]).toMatchObject({ projectPath: "/x", projectId: "p1", sessionId: "ps" });
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "akid")).toHaveLength(2);
+    });
+
+    it("emits no correction when the launcher sorts first", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-amid.jsonl"), launcherLines("amid", "kid"));
+      writeFileSync(join(dir, "agent-kid.jsonl"), childLine("kid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "kid")).toMatchObject([{ parentAgentId: "amid" }]);
+    });
+
+    it("emits no correction for a first-level child or a stray one", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-fl.jsonl"), childLine("fl"));
+      writeFileSync(join(dir, "agent-stray.jsonl"), childLine("stray"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "fl")).toMatchObject([{ parentAgentId: null }]);
+      expect(startsOf(events, "stray")).toMatchObject([{ parentAgentId: null }]);
+    });
+
+    it("a first-level child that sorted before its top-level launcher stays null", async () => {
+      // Same session id under a later project dir, so the child's file is read first.
+      const dir = join(root, "p1", "ps", "subagents");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "agent-fl.jsonl"), childLine("fl"));
+      const top = join(root, "p9");
+      mkdirSync(top, { recursive: true });
+      writeFileSync(join(top, "ps.jsonl"), readFileSync(topLauncher(), "utf8"));
+      rmSync(join(root, "p1", "ps.jsonl"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(startsOf(events, "fl")).toMatchObject([{ parentAgentId: null }]);
+    });
+
+    it("a late-snapshot client sees the corrected parent", async () => {
+      topLauncher();
+      const dir = subDir();
+      writeFileSync(join(dir, "agent-akid.jsonl"), childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const feed = createFeed({ root, log: () => {} });
+      await feed.scanOnce();
+      const snap = frame(call(feed, fakeReq("/__office/events")).res.written[0]);
+      const kid = snap.events.filter(
+        (e: AgentEvent) => e.kind === "agent_started" && e.agentId === "akid",
+      );
+      expect(kid).toMatchObject([{ parentAgentId: "zmid" }]);
+    });
+
+    it("a truncation reset does not duplicate or lose the correction", async () => {
+      topLauncher();
+      const dir = subDir();
+      const child = join(dir, "agent-akid.jsonl");
+      writeFileSync(child, childLine("akid") + childLine("akid"));
+      writeFileSync(join(dir, "agent-zmid.jsonl"), launcherLines("zmid", "akid"));
+      const { t, events } = tailer();
+      await t.scanOnce();
+      expect(startsOf(events, "akid")).toHaveLength(2);
+      truncateSync(child, 0);
+      writeFileSync(child, childLine("akid"));
+      await t.scanOnce();
+      await t.scanOnce();
+      const starts = startsOf(events, "akid");
+      expect(starts).toHaveLength(3); // the reset re-synthesizes once, with the parent known
+      expect(starts[2]).toMatchObject({ parentAgentId: "zmid" });
+    });
+  });
+
   const aged = () => new Date(Date.now() - ATTENTION_STALE_MS - 60_000);
   const gones = (res: { written: string[] }) =>
     res.written.map(frame).filter((f) => f.type === "gone");
@@ -909,6 +1375,41 @@ describe("feed", () => {
     expect(feed.status().filesTracked).toBe(0);
   });
 
+  it("resends the seat after gone when a top-level file is truncated", async () => {
+    const lines = fixtureLines("top-live");
+    const file = putTop("p1", "top-live", lines.join("\n") + "\n");
+    const feed = createFeed({ root, log: () => {} });
+    await feed.scanOnce();
+    const { res } = call(feed, fakeReq("/__office/events"));
+    truncateSync(file, 0);
+    writeFileSync(file, lines[0] + "\n");
+    await feed.scanOnce();
+    const types = res.written.map(frame).map((f) => f.type);
+    expect(types.indexOf("seat")).toBeGreaterThan(types.indexOf("gone"));
+    expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([
+      { type: "seat", sessionId: sessionOf("top-live"), desk: 0 },
+    ]);
+    expect(snapshotOf(feed).seats).toEqual({ [sessionOf("top-live")]: 0 });
+  });
+
+  it("sends no seat when a subagent file is truncated", async () => {
+    const session = sessionOf("sub-live");
+    putTop("p1", "top-live", undefined, session);
+    const sub = putSub("p1", "sub-live");
+    const feed = createFeed({ root, log: () => {} });
+    await feed.scanOnce();
+    const { res } = call(feed, fakeReq("/__office/events"));
+    const first = readFileSync(sub, "utf8").split("\n")[0];
+    truncateSync(sub, 0);
+    writeFileSync(sub, first + "\n");
+    await feed.scanOnce();
+    expect(gones(res)).toEqual([
+      { type: "gone", sessionId: session, agentId: agentOf("sub-live") },
+    ]);
+    expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([]);
+    expect(snapshotOf(feed).seats).toEqual({ [session]: 0 });
+  });
+
   it("purges the ring and sends gone when a file is truncated", async () => {
     const lines = fixtureLines("top-live");
     const file = putTop("p1", "top-live", lines.join("\n") + "\n");
@@ -967,6 +1468,42 @@ describe("feed", () => {
     expect(hasBack).toBe(true);
   });
 
+  describe("returned-child memory bound", () => {
+    // MAX_RETURNED_SEEN in feed-plugin.ts is 10_000.
+    const CAP = 10_000;
+    const back = (sessionId: string, ts: number): AgentEvent => ({
+      sessionId,
+      projectId: "p1",
+      agentId: null,
+      ts,
+      kind: "handoff",
+      fromAgentId: null,
+      toAgentId: "kid",
+      direction: "back",
+    });
+
+    it("forgets the oldest returned child once more than the cap are remembered", () => {
+      const ring = createSnapshotRing();
+      for (let i = 0; i < CAP + 5; i++) ring.add(back(`s${i}`, 1_800_000_000_000 + i));
+      expect(ring.wasReturned("s0", "kid")).toBe(false);
+      expect(ring.wasReturned("s4", "kid")).toBe(false);
+      expect(ring.wasReturned("s5", "kid")).toBe(true);
+      expect(ring.wasReturned(`s${CAP + 4}`, "kid")).toBe(true);
+    });
+
+    it("keeps a child that was handed back again recently (LRU re-insert)", () => {
+      const ring = createSnapshotRing();
+      let ts = 1_800_000_000_000;
+      ring.add(back("old", ts++));
+      for (let i = 0; i < CAP - 1; i++) ring.add(back(`s${i}`, ts++));
+      ring.add(back("old", ts++)); // now the newest again
+      ring.add(back("extra1", ts++));
+      ring.add(back("extra2", ts++));
+      expect(ring.wasReturned("old", "kid")).toBe(true);
+      expect(ring.wasReturned("s0", "kid")).toBe(false);
+    });
+  });
+
   describe("ring essentials", () => {
     const at = { sessionId: "e-s", projectId: "p1" } as const;
     const started = (agentId: string | null): AgentEvent => ({
@@ -997,6 +1534,120 @@ describe("feed", () => {
       for (let i = 0; i < n; i++) ring.add({ ...at, agentId: null, ts: from + i, kind: "working" });
     };
     const T = 1_800_000_001_000;
+
+    const done = (agentId: string | null, ts: number, endsWithQuestion: boolean): AgentEvent => ({
+      ...at,
+      agentId,
+      ts,
+      kind: "done",
+      endsWithQuestion,
+    });
+    const crowd = (ring: ReturnType<typeof createSnapshotRing>, agents: number, each: number) => {
+      for (let a = 0; a < agents; a++) {
+        const id = `busy-${a}`;
+        ring.add(started(id));
+        for (let i = 0; i < each; i++) {
+          ring.add({ ...at, agentId: id, ts: T + a * 100 + i, kind: "working" });
+        }
+      }
+    };
+
+    it("keeps an agent waiting on a question when busier agents fill the ring", () => {
+      const ring = createSnapshotRing();
+      ring.add(started("asker"));
+      ring.add(done("asker", T, true));
+      crowd(ring, 80, 40);
+      const mine = ring.events().filter((e) => e.agentId === "asker");
+      expect(mine.map((e) => e.kind)).toEqual(["agent_started", "done"]);
+      expect(ring.events().length).toBeLessThanOrEqual(2000);
+    });
+
+    it("lets a questioning agent be evicted again once it resumes work", () => {
+      const ring = createSnapshotRing();
+      ring.add(started("asker"));
+      ring.add(done("asker", T, true));
+      ring.add({ ...at, agentId: "asker", ts: T + 1, kind: "working" });
+      crowd(ring, 80, 40);
+      expect(ring.events().some((e) => e.agentId === "asker")).toBe(false);
+    });
+
+    it("keeps one question done per agent and bounds the total with many askers", () => {
+      const ring = createSnapshotRing();
+      for (let a = 0; a < 3000; a++) {
+        ring.add(started(`q-${a}`));
+        ring.add(done(`q-${a}`, T + a, true));
+        ring.add(done(`q-${a}`, T + a + 1, true));
+      }
+      const events = ring.events();
+      expect(events.length).toBeLessThanOrEqual(2000);
+      expect(events.filter((e) => e.agentId === "q-2999")).toHaveLength(2);
+    });
+
+    describe("standing needs_attention", () => {
+      const attn = (ts: number): AgentEvent => ({
+        ...at,
+        agentId: null,
+        ts,
+        kind: "needs_attention",
+        waitingSince: 10_000,
+        episodeId: "e1",
+      });
+      const start = (ts: number): AgentEvent => tool(ts, "t1", "start");
+      const survives = (ring: ReturnType<typeof createSnapshotRing>) =>
+        ring.events().some((e) => e.kind === "needs_attention");
+
+      it("keeps it through activity older than its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add(start(9_900));
+        expect(survives(ring)).toBe(true);
+      });
+
+      it("keeps it through activity at exactly its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add({ ...at, agentId: null, ts: 10_000, kind: "working" });
+        expect(survives(ring)).toBe(true);
+      });
+
+      it("drops it on activity newer than its waitingSince", () => {
+        const ring = createSnapshotRing();
+        ring.add(started(null));
+        ring.add(attn(10_000));
+        ring.add(start(10_001));
+        expect(survives(ring)).toBe(false);
+      });
+
+      it("still prefers evicting agents without a standing question", () => {
+        const ring = createSnapshotRing();
+        ring.add(started("asker"));
+        ring.add({ ...attn(10_000), agentId: "asker" });
+        ring.add({ ...at, agentId: "asker", ts: 9_900, kind: "working" });
+        crowd(ring, 80, 40);
+        expect(ring.events().some((e) => e.kind === "needs_attention")).toBe(true);
+      });
+
+      // The machine side of this live == replay equivalence is covered by src/office/machine.test.ts
+      // ("activity not newer than the episode's waitingSince does not end it, live or replay").
+      it("replays the standing episode through older activity and drops it on newer", () => {
+        const ring = createSnapshotRing();
+        ring.add({ ...started(null), ts: 0 });
+        ring.add({ ...at, agentId: null, ts: 0, kind: "working" });
+        ring.add(attn(10_000));
+        ring.add(start(9_900));
+        const standing = ring.events().filter((e) => e.kind === "needs_attention");
+        expect(standing).toHaveLength(1);
+        expect(standing[0]).toMatchObject({
+          kind: "needs_attention",
+          episodeId: "e1",
+          waitingSince: 10_000,
+        });
+        ring.add(start(10_001));
+        expect(survives(ring)).toBe(false);
+      });
+    });
 
     it("keeps a waiting marker through 100 events and drops it when the tool ends", () => {
       const ring = createSnapshotRing();
@@ -1371,7 +2022,7 @@ describe("plugin", () => {
       configFile: false,
       root: repo,
       logLevel: "silent",
-      plugins: [react(), officeFeed({ root, log: () => {} })],
+      plugins: [react(), officeFeed({ root, log: () => {}, hookDir: join(root, "hook") })],
       server: { port: 0, host: "127.0.0.1", hmr: false, watch: null },
       optimizeDeps: { noDiscovery: true, include: [] },
     });

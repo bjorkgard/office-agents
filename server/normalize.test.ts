@@ -385,6 +385,42 @@ describe("fixture leak check (ET5)", () => {
     expect(sanitizeFileName("agent-abc123.meta.json")).toBe(`agent-${hashId("abc123")}.meta.json`);
     expect(sanitizeFileName("sess-1.jsonl")).toBe(`${hashId("sess-1")}.jsonl`);
   });
+
+  it("a salt changes every hash but keeps links between ids within one run", () => {
+    expect(hashId("abc123", "pepper")).not.toBe(hashId("abc123"));
+    expect(hashId("abc123", "pepper")).toBe(hashId("abc123", "pepper"));
+    expect(hashId("abc123", "pepper")).not.toBe(hashId("abc123", "salt"));
+    const line = (extra: object) =>
+      JSON.stringify({ type: "assistant", sessionId: "s", agentId: "a1", ...extra });
+    const use = {
+      message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash" }] },
+    };
+    const res = {
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1" }] },
+    };
+    const out = sanitizeTranscript([line(use), line(res)].join("\n"), "pepper");
+    expect(out).toContain(`"id":"${hashId("t1", "pepper")}"`);
+    expect(out).toContain(`"tool_use_id":"${hashId("t1", "pepper")}"`);
+    expect(out).toContain(`"agentId":"${hashId("a1", "pepper")}"`);
+    expect(out).not.toContain(hashId("t1"));
+    expect(sanitizeFileName("agent-abc123.jsonl", "pepper")).toBe(
+      `agent-${hashId("abc123", "pepper")}.jsonl`,
+    );
+  });
+
+  it("maps a tool name outside the known list to a fixed placeholder", () => {
+    const line = (name: string) =>
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "tool_use", id: "t", name }] },
+      });
+    const names = (name: string) =>
+      JSON.parse(sanitizeTranscript(line(name)).trim()).message.content[0].name;
+    expect(names("Bash")).toBe("Bash");
+    expect(names("SendMessage")).toBe("SendMessage");
+    expect(names("mcp__acme-payroll__fire_jane")).toBe("x");
+    expect(names("jane-doe-deploy")).toBe("x");
+  });
 });
 
 describe("over-long cwd", () => {
@@ -454,5 +490,109 @@ describe("atomic handlers", () => {
     expect(events).toEqual([]);
     expect(state.launches.size).toBe(0);
     expect(state.drift.bad_shape).toBe(1);
+  });
+});
+
+describe("backlog follow-ups", () => {
+  const env = { sessionId: "S", cwd: "/x", timestamp: "2026-10-02T10:00:00.000Z" };
+  const rec = (type: string, extra: object) => JSON.stringify({ type, ...env, ...extra });
+  const launch = (id: string) =>
+    rec("assistant", {
+      message: {
+        stop_reason: "tool_use",
+        content: [{ type: "tool_use", id, name: "Agent", input: { run_in_background: true } }],
+      },
+    });
+
+  it("pairs each tool_result in one record with its own toolUseResult (array or object)", () => {
+    const state = top();
+    normalize(state, launch("T1"));
+    normalize(state, launch("T2"));
+    const user = (toolUseResult: unknown) =>
+      rec("user", {
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "T1" },
+            { type: "tool_result", tool_use_id: "T2" },
+          ],
+        },
+        toolUseResult,
+      });
+    const events = normalize(
+      state,
+      user([
+        { tool_use_id: "T2", status: "async_launched", agentId: "B" },
+        { tool_use_id: "T1", status: "async_launched", agentId: "A" },
+      ]),
+    );
+    expect(handoffs(events)).toEqual(["A:out", "B:out"]);
+    // A lone object cannot be told apart across two blocks, so it maps to neither.
+    const s2 = top();
+    normalize(s2, launch("T1"));
+    normalize(s2, launch("T2"));
+    expect(handoffs(normalize(s2, user({ status: "async_launched", agentId: "A" })))).toEqual([]);
+  });
+
+  it("falls back by position only for array entries that name no block", () => {
+    const state = top();
+    normalize(state, launch("T1"));
+    normalize(state, launch("T2"));
+    const events = normalize(
+      state,
+      rec("user", {
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: "T1" },
+            { type: "tool_result", tool_use_id: "T2" },
+          ],
+        },
+        toolUseResult: [
+          { tool_use_id: "T2", status: "async_launched", agentId: "B" },
+          { status: "async_launched", agentId: "A" },
+        ],
+      }),
+    );
+    expect(handoffs(events)).toEqual(["A:out", "B:out"]);
+  });
+
+  it("takes the session id from the file path, not the record body", () => {
+    const state = createNormalizerState({ projectId: "p1", subagent: false, sessionId: "FILE" });
+    const events = normalize(state, rec("user", { sessionId: "OTHER", message: { content: "x" } }));
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.sessionId === "FILE")).toBe(true);
+  });
+
+  it("fills parentAgentId from the launcher when known, else null", () => {
+    const state = createNormalizerState({
+      projectId: "p1",
+      subagent: true,
+      parentOf: (id) => (id === "kid" ? "mid" : null),
+    });
+    const line = rec("user", { agentId: "kid", message: { content: "x" } });
+    expect(normalize(state, line)[0]).toMatchObject({
+      kind: "agent_started",
+      parentAgentId: "mid",
+    });
+    const none = createNormalizerState({ projectId: "p1", subagent: true });
+    expect(normalize(none, line)[0]).toMatchObject({ parentAgentId: null });
+  });
+
+  it("normalizeBatch isolates a throwing line and reports it", () => {
+    const state = top();
+    const seen: unknown[] = [];
+    const orig = state.launches.set.bind(state.launches);
+    state.launches.set = () => {
+      throw new Error("boom");
+    };
+    const events = normalizeBatch(
+      state,
+      [launch("T1"), rec("user", { message: { content: "x" } })],
+      (e) => seen.push(e),
+    );
+    state.launches.set = orig;
+    expect(seen).toHaveLength(1);
+    expect(events.length).toBeGreaterThan(0);
   });
 });

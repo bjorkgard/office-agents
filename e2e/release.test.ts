@@ -1,5 +1,5 @@
 import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
@@ -8,6 +8,7 @@ import {
   decide,
   hero,
   makeRunRoot,
+  officeEnv,
   p95,
   RECALC_BUDGET_MS,
   ROWS,
@@ -144,6 +145,30 @@ describe("temp root guard", () => {
     made.push(notRoot);
     mkdirSync(notRoot, { recursive: true });
     await expect(startOffice({ root: notRoot })).rejects.toThrow("refusing");
+  });
+});
+
+describe("officeEnv", () => {
+  it("gives every server its own hook dir, outside the home dir", () => {
+    const a = officeEnv(null, join(tmpdir(), "office-e2e-hook-a"));
+    const b = officeEnv(null, join(tmpdir(), "office-e2e-hook-b"));
+    expect(a.OFFICE_HOOK_DIR).toBe(join(tmpdir(), "office-e2e-hook-a"));
+    expect(a.OFFICE_HOOK_DIR).not.toBe(b.OFFICE_HOOK_DIR);
+    expect(a.OFFICE_HOOK_DIR?.startsWith(homedir())).toBe(false);
+  });
+
+  it("overrides an inherited OFFICE_HOOK_DIR and drops inherited feed vars", () => {
+    process.env.OFFICE_HOOK_DIR = "/inherited";
+    process.env.OFFICE_E2E_CACHE = "/inherited-cache";
+    try {
+      const env = officeEnv(null, "/h");
+      expect(env.OFFICE_HOOK_DIR).toBe("/h");
+      expect(env.OFFICE_E2E_ROOT).toBeUndefined();
+      expect(env.OFFICE_E2E_CACHE).toBeUndefined();
+    } finally {
+      delete process.env.OFFICE_HOOK_DIR;
+      delete process.env.OFFICE_E2E_CACHE;
+    }
   });
 });
 

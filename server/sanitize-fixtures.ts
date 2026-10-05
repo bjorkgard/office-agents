@@ -5,9 +5,12 @@
  * task-id, tool-use-id, status. All text becomes `x`, or `x?` when the original ended in
  * a question mark (same predicate the normalizer uses). Everything else is dropped.
  *
- * Usage: node server/sanitize-fixtures.ts <out-dir> <transcript.jsonl>...
+ * Ids are hashed with a per-run salt (random unless OFFICE_FIXTURE_SALT or --salt is given, so
+ * committed fixtures stay reproducible); tool names outside KNOWN_TOOLS become "x".
+ *
+ * Usage: node server/sanitize-fixtures.ts [--salt <salt>] <out-dir> <transcript.jsonl>...
  */
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,21 +19,53 @@ import type { Json } from "./normalize.ts";
 
 export const PLACEHOLDER_CWD = "/fixture/project";
 
-/** One hash for agentId, tool ids, session ids and file names so links survive. */
-export function hashId(id: string): string {
-  return createHash("sha256").update(`office-fixture:${id}`).digest("hex").slice(0, 16);
+/** Tool names kept as they are; anything else (custom, MCP) could name a person or project. */
+export const KNOWN_TOOLS: ReadonlySet<string> = new Set([
+  "Agent",
+  "AskUserQuestion",
+  "Bash",
+  "BashOutput",
+  "Edit",
+  "ExitPlanMode",
+  "Glob",
+  "Grep",
+  "KillShell",
+  "MultiEdit",
+  "NotebookEdit",
+  "Read",
+  "SendMessage",
+  "Skill",
+  "SlashCommand",
+  "Task",
+  "TaskOutput",
+  "TaskStop",
+  "TodoWrite",
+  "WebFetch",
+  "WebSearch",
+  "Write",
+]);
+
+/**
+ * One hash for agentId, tool ids, session ids and file names so links survive. An empty salt
+ * is the reproducible form the committed fixtures use.
+ */
+export function hashId(id: string, salt = ""): string {
+  const input = salt === "" ? `office-fixture:${id}` : `office-fixture:${salt}:${id}`;
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 
 /** `agent-<id>.jsonl`, `agent-<id>.meta.json` and `<session>.jsonl` get hashed ids. */
-export function sanitizeFileName(name: string): string {
+export function sanitizeFileName(name: string, salt = ""): string {
   const m = /^(agent-)?(.+?)(\.meta\.json|\.jsonl)$/.exec(name);
-  if (m === null) return `${hashId(name)}.jsonl`;
-  return `${m[1] ?? ""}${hashId(m[2])}${m[3]}`;
+  if (m === null) return `${hashId(name, salt)}.jsonl`;
+  return `${m[1] ?? ""}${hashId(m[2], salt)}${m[3]}`;
 }
 
+type Hash = (id: string) => string;
+
 const text = (v: unknown): string => (typeof v === "string" && endsWithQuestion(v) ? "x?" : "x");
-const hashed = (v: unknown): string | undefined =>
-  typeof v === "string" && v ? hashId(v) : undefined;
+const hashed = (v: unknown, h: Hash): string | undefined =>
+  typeof v === "string" && v ? h(v) : undefined;
 const keep = (o: Json, keys: string[]): Json =>
   Object.fromEntries(keys.filter((k) => typeof o[k] === "boolean").map((k) => [k, o[k]]));
 
@@ -38,7 +73,7 @@ function enumOf(v: unknown, allowed: readonly string[]): string | undefined {
   return typeof v === "string" && allowed.includes(v) ? v : undefined;
 }
 
-function block(b: Json): Json | null {
+function block(b: Json, h: Hash): Json | null {
   switch (b.type) {
     case "text":
     case "thinking":
@@ -47,24 +82,24 @@ function block(b: Json): Json | null {
       const input = isObj(b.input) ? b.input : {};
       return {
         type: "tool_use",
-        id: hashed(b.id),
-        name: typeof b.name === "string" && /^[\w:.-]{1,64}$/.test(b.name) ? b.name : "x",
-        input: { ...keep(input, ["run_in_background"]), to: hashed(input.to) },
+        id: hashed(b.id, h),
+        name: typeof b.name === "string" && KNOWN_TOOLS.has(b.name) ? b.name : "x",
+        input: { ...keep(input, ["run_in_background"]), to: hashed(input.to, h) },
       };
     }
     case "tool_result":
-      return { type: "tool_result", tool_use_id: hashed(b.tool_use_id), content: "x" };
+      return { type: "tool_result", tool_use_id: hashed(b.tool_use_id, h), content: "x" };
     default:
       return null;
   }
 }
 
-function message(m: unknown): Json | undefined {
+function message(m: unknown, h: Hash): Json | undefined {
   if (!isObj(m)) return undefined;
   const content = Array.isArray(m.content)
     ? m.content
         .filter(isObj)
-        .map(block)
+        .map((b) => block(b, h))
         .filter((b) => b !== null)
     : text(m.content);
   return {
@@ -75,7 +110,7 @@ function message(m: unknown): Json | undefined {
 }
 
 /** Rebuilds a notification keeping only task-id, tool-use-id, status. */
-function notification(content: unknown): string {
+function notification(content: unknown, h: Hash): string {
   if (typeof content !== "string" || !content.includes("<task-notification>")) return "x";
   const taskId = tag(content, "task-id");
   const toolUseId = tag(content, "tool-use-id");
@@ -83,19 +118,19 @@ function notification(content: unknown): string {
   if (taskId === null || toolUseId === null || status === undefined) return "x";
   return (
     "<task-notification>" +
-    `<task-id>${hashId(taskId)}</task-id><tool-use-id>${hashId(toolUseId)}</tool-use-id>` +
+    `<task-id>${h(taskId)}</task-id><tool-use-id>${h(toolUseId)}</tool-use-id>` +
     `<status>${status}</status></task-notification>`
   );
 }
 
 const LINE_TYPES = ["assistant", "user", "queue-operation", "system", "attachment"] as const;
 
-function sanitizeLine(rec: Json): Json {
+function sanitizeLine(rec: Json, h: Hash): Json {
   const type = enumOf(rec.type, LINE_TYPES) ?? "other";
   const out: Json = {
     type,
-    sessionId: hashed(rec.sessionId),
-    agentId: hashed(rec.agentId),
+    sessionId: hashed(rec.sessionId, h),
+    agentId: hashed(rec.agentId, h),
     ...keep(rec, ["isSidechain"]),
     cwd: typeof rec.cwd === "string" ? PLACEHOLDER_CWD : undefined,
     // Re-serialized, so text that merely parses as a date cannot ride along.
@@ -104,10 +139,10 @@ function sanitizeLine(rec: Json): Json {
         ? new Date(Date.parse(rec.timestamp)).toISOString()
         : undefined,
   };
-  if (type === "assistant" || type === "user") out.message = message(rec.message);
+  if (type === "assistant" || type === "user") out.message = message(rec.message, h);
   if (type === "queue-operation") {
     out.operation = enumOf(rec.operation, ["enqueue", "remove", "dequeue", "popAll"]);
-    out.content = notification(rec.content);
+    out.content = notification(rec.content, h);
   }
   if (type === "system")
     out.subtype = enumOf(rec.subtype, ["turn_duration", "stop_hook_summary", "informational"]);
@@ -115,7 +150,7 @@ function sanitizeLine(rec: Json): Json {
     const r = rec.toolUseResult;
     out.toolUseResult = {
       status: enumOf(r.status, ["async_launched", "completed", "failed"]),
-      agentId: hashed(r.agentId),
+      agentId: hashed(r.agentId, h),
       ...keep(r, ["isAsync"]),
     };
   }
@@ -123,7 +158,8 @@ function sanitizeLine(rec: Json): Json {
 }
 
 /** Sanitizes a whole transcript; unparseable lines are dropped. Output is JSONL. */
-export function sanitizeTranscript(raw: string): string {
+export function sanitizeTranscript(raw: string, salt = ""): string {
+  const h: Hash = (id) => hashId(id, salt);
   const lines: string[] = [];
   for (const line of raw.split("\n")) {
     if (line.trim() === "") continue;
@@ -133,22 +169,30 @@ export function sanitizeTranscript(raw: string): string {
     } catch {
       continue;
     }
-    if (isObj(rec)) lines.push(JSON.stringify(sanitizeLine(rec)));
+    if (isObj(rec)) lines.push(JSON.stringify(sanitizeLine(rec, h)));
   }
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [outDir, ...inputs] = process.argv.slice(2);
-  if (!outDir || inputs.length === 0) {
-    console.error("usage: node server/sanitize-fixtures.ts <out-dir> <transcript.jsonl>...");
+  const args = process.argv.slice(2);
+  let salt = process.env.OFFICE_FIXTURE_SALT ?? randomBytes(16).toString("hex");
+  if (args[0] === "--salt") {
+    salt = args[1] ?? "";
+    args.splice(0, 2);
+  }
+  const [outDir, ...inputs] = args;
+  if (!outDir || inputs.length === 0 || salt === "") {
+    console.error(
+      "usage: node server/sanitize-fixtures.ts [--salt <salt>] <out-dir> <transcript.jsonl>...",
+    );
     process.exit(2);
   }
   mkdirSync(outDir, { recursive: true });
   for (const file of inputs) {
     writeFileSync(
-      join(outDir, sanitizeFileName(basename(file))),
-      sanitizeTranscript(readFileSync(file, "utf8")),
+      join(outDir, sanitizeFileName(basename(file), salt)),
+      sanitizeTranscript(readFileSync(file, "utf8"), salt),
     );
   }
 }

@@ -11,6 +11,7 @@ import { CELL } from "./pixel";
 import { DESK, FRAMES, HEAD_ANCHOR } from "./sprites";
 import {
   assignShirts,
+  shirtOf,
   deskCountFor,
   deskDemand,
   deskZ,
@@ -116,20 +117,37 @@ describe("bubbleText", () => {
 });
 
 describe("assignShirts", () => {
-  it("keeps a project's shirt while it stays active, gives new ones distinct shirts", () => {
-    const a = assignShirts({}, { a: "/x/a", b: "/x/b" }, ["a", "b"]);
+  it("keeps a session's shirt while it stays active, gives new ones distinct shirts", () => {
+    const a = assignShirts({}, ["a", "b"]);
     expect(a.a).not.toEqual(a.b);
-    const again = assignShirts(a, { a: "/x/a", b: "/x/b", c: "/x/c" }, ["c", "b", "a"]);
+    const again = assignShirts(a, ["a", "b", "c"]);
     expect(again.a).toEqual(a.a);
     expect(again.b).toEqual(a.b);
     expect(again.c).not.toEqual(a.a);
     expect(again.c).not.toEqual(a.b);
   });
 
-  it("drops inactive projects and skips unknown paths", () => {
-    const a = assignShirts({}, { a: "/x/a" }, ["a", "ghost"]);
-    expect(Object.keys(a)).toEqual(["a"]);
-    expect(Object.keys(assignShirts(a, { a: "/x/a" }, []))).toEqual([]);
+  it("treats session ids like __proto__ and constructor as plain data", () => {
+    const ids = ["__proto__", "constructor", "toString", "hasOwnProperty"];
+    const a = assignShirts({}, ids);
+    expect(Object.getPrototypeOf(a)).toBe(Object.prototype);
+    expect(Object.keys(a).sort()).toEqual([...ids].sort());
+    for (const id of ids) {
+      const shirt = shirtOf(a, id);
+      expect(typeof shirt?.index).toBe("number");
+      expect(Object.hasOwn(a, id)).toBe(true);
+    }
+    const again = assignShirts(a, ids);
+    expect(Object.getPrototypeOf(again)).toBe(Object.prototype);
+    for (const id of ids) expect(shirtOf(again, id)).toEqual(shirtOf(a, id));
+    expect(shirtOf({}, "constructor")).toBeUndefined();
+    expect(shirtOf({}, "__proto__")).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("drops inactive sessions", () => {
+    const a = assignShirts({}, ["a"]);
+    expect(Object.keys(assignShirts(a, []))).toEqual([]);
   });
 });
 

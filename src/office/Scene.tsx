@@ -47,6 +47,7 @@ import { RoomDecor } from "./RoomDecor";
 import { roomShell, type RoomShell as RoomShellGeometry } from "./room";
 import {
   assignShirts,
+  shirtOf,
   DESK_POP_MS,
   deskCountFor,
   sceneDemand,
@@ -113,7 +114,7 @@ function sameShirts(a: Record<string, ShirtChoice>, b: Record<string, ShirtChoic
   const keys = Object.keys(a);
   return (
     keys.length === Object.keys(b).length &&
-    keys.every((k) => b[k]?.index === a[k].index && b[k]?.stripe === a[k].stripe)
+    keys.every((k) => shirtOf(b, k)?.index === a[k].index && shirtOf(b, k)?.stripe === a[k].stripe)
   );
 }
 
@@ -222,8 +223,8 @@ export function Scene({
   // it changes); `now` is a 15 s tick, far finer than an hour.
   const scene = windowScene(activeSceneId(now));
 
-  const active = [...new Set(agents.filter((a) => a.state !== "leaving").map((a) => a.projectId))];
-  const nextShirts = assignShirts(shirts, projects, [...active].sort());
+  const active = [...new Set(agents.filter((a) => a.state !== "leaving").map((a) => a.sessionId))];
+  const nextShirts = assignShirts(shirts, [...active].sort());
   if (!sameShirts(shirts, nextShirts)) setShirts(nextShirts);
 
   const motion = planMotion({
@@ -436,6 +437,7 @@ export function Scene({
       data-desks={layout.desks.length}
       ref={sceneRef}
       tabIndex={-1}
+      role="group"
       aria-label="Office"
       onFocus={(e) => {
         focused.current = e.target;
@@ -506,7 +508,7 @@ export function Scene({
         {agents.map((a) => {
           const p = placed.get(a.key);
           if (!p) return null;
-          const shirt = nextShirts[a.projectId] ?? null;
+          const shirt = shirtOf(nextShirts, a.sessionId) ?? null;
           return (
             <Character
               key={a.key}
@@ -548,13 +550,18 @@ export function Scene({
               <button
                 type="button"
                 className="hit"
-                aria-label={`${name}, ${project}, ${STATE_LABEL[a.state]}`}
+                aria-label={`${name}, ${project}, ${STATE_LABEL[a.state]}${
+                  a.agentId === null && extra > 0
+                    ? `, ${extra} more ${extra === 1 ? "helper" : "helpers"}`
+                    : ""
+                }`}
                 ref={bindOverlay(a.key, "hit")}
                 style={{ left: at.hit.left, top: at.hit.top, width: hit, height: hit }}
                 onClick={() => onSelect?.(a.key)}
               />
               <div
                 className="tag"
+                aria-hidden="true"
                 data-waving={waiting ? "" : undefined}
                 ref={bindOverlay(a.key, "tag")}
                 style={{ left: at.tag.left, top: at.tag.top }}

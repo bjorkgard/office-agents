@@ -56,7 +56,7 @@ export type Agent = {
   waitingOn: string[];
   attention: { trigger: AttentionTrigger } | null;
   /** Owned by the machine (T12). `exitedAt` is set while the agent is out of attention. */
-  episode: { id: string; waitingSince: number; exitedAt: number | null } | null;
+  episode: { id: string; waitingSince: number; exitedAt: number | null; exactId?: string } | null;
 };
 
 export type OfficeState = {
@@ -89,15 +89,20 @@ export function removeAgent(
   return { ...state, agents, returned };
 }
 
+/** Sets an own property, so an id like `__proto__` is data and not the prototype setter. */
+function setOwn<T>(o: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(o, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 function stateOf(a: Agent): AgentState {
   if (a.phase === "leaving") return "leaving";
   if (a.attention) return "attention";
-  if (a.waitingOn.some((id) => id in a.openTools)) return "waiting-on-subagents";
+  if (a.waitingOn.some((id) => Object.hasOwn(a.openTools, id))) return "waiting-on-subagents";
   return a.phase;
 }
 
 function settle(a: Agent): void {
-  a.waitingOn = a.waitingOn.filter((id) => id in a.openTools);
+  a.waitingOn = a.waitingOn.filter((id) => Object.hasOwn(a.openTools, id));
   a.state = stateOf(a);
 }
 
@@ -136,7 +141,7 @@ function touch(
     a = arrive(sessionId, agentId, projectId, now);
     s.agents[key] = a;
   } else {
-    a.lastEventAt = now;
+    a.lastEventAt = Math.max(a.lastEventAt, now); // a delayed event must not rewind liveness
   }
   return a;
 }
@@ -157,12 +162,53 @@ function enterAttention(
       a.episode = { id: `${a.key}#${s.episodeSeq}`, waitingSince, exitedAt: null };
     }
   }
-  a.attention = { trigger };
+  // A heuristic firing for a wait the hooks already announced keeps the exact trigger.
+  if (a.attention?.trigger !== "exact") a.attention = { trigger };
   settle(a);
 }
 
+/**
+ * The hooks adapter's exact signal. One wave per `episodeId`: a repeat (or replay) of the
+ * open or just-ended id changes nothing. A new id always wins (D35): it supersedes an open
+ * exact episode, and replaces an open heuristic one in place (same id, so live and replay
+ * agree), taking the event's since-time. A 0, negative, non-finite or future `waitingSince`
+ * is implausible and falls back to the clock; it must never read as an epoch-sized wait.
+ */
+function enterExact(
+  s: OfficeState,
+  a: Agent,
+  episodeId: string,
+  waitingSince: number,
+  now: number,
+): void {
+  const since =
+    Number.isFinite(waitingSince) && waitingSince > 0 ? Math.min(waitingSince, now) : now;
+  if (a.attention && a.episode && a.attention.trigger !== "exact") {
+    a.episode.waitingSince = since;
+    a.episode.exactId = episodeId;
+  } else {
+    s.episodeSeq += 1;
+    a.episode = {
+      id: `${a.key}#${s.episodeSeq}`,
+      waitingSince: since,
+      exitedAt: null,
+      exactId: episodeId,
+    };
+  }
+  a.attention = { trigger: "exact" };
+  // Like R2: an agent in attention is not idle, so the idle walk-out must not take it.
+  a.phase = "working";
+  a.idleSince = null;
+  settle(a);
+}
+
+/**
+ * Ends attention (optionally only for some triggers). Activity no newer than an exact
+ * episode's since-time predates it (events arrive out of order), so it cannot end it.
+ */
 function clearAttention(a: Agent, now: number, only?: (t: AttentionTrigger) => boolean): void {
   if (!a.attention || (only && !only(a.attention.trigger))) return;
+  if (a.attention.trigger === "exact" && a.episode && now <= a.episode.waitingSince) return;
   a.attention = null;
   if (a.episode) a.episode.exitedAt = now;
 }
@@ -198,6 +244,22 @@ function waitsOn(
   return !!a && Object.keys(a.unresolved).some((id) => waitsOn(s, sessionId, id, target, seen));
 }
 
+/** Sends a returned child out and remembers it, so its late events cannot resurrect it. */
+function walkOut(
+  s: OfficeState,
+  key: string,
+  child: Agent | undefined,
+  ts: number,
+  now: number,
+): void {
+  delete s.returned[key]; // re-insert last so the oldest is the first key
+  s.returned[key] = Math.min(ts, now); // a far-future ts must not block the child forever
+  const keys = Object.keys(s.returned);
+  if (keys.length > RETURNED_CAP) delete s.returned[keys[0]];
+  // `now`, not the event's ts: the leaving walk-out is timed from when we see it, not a replayed ts.
+  if (child && child.phase !== "leaving") leave(child, now);
+}
+
 export function applyEvent(state: OfficeState, event: AgentEvent, now: number): OfficeState {
   return applyOwned(structuredClone(state), event, now, state);
 }
@@ -214,7 +276,7 @@ export function applyEvents(
 ): OfficeState {
   if (events.length === 0) return state;
   let s = structuredClone(state);
-  for (const e of events) s = applyOwned(s, e, opts.replay ? e.ts : now, s);
+  for (const e of events) s = applyOwned(s, e, opts.replay ? Math.min(e.ts, now) : now, s);
   return s;
 }
 
@@ -244,7 +306,7 @@ function applyOwned(
       const a = touch(s, sessionId, event.agentId, projectId, clock);
       const tool = event.tool;
       if (tool?.phase === "start") {
-        a.openTools[tool.id] = { startedAt: clock, isSubagent: tool.isSubagent };
+        setOwn(a.openTools, tool.id, { startedAt: clock, isSubagent: tool.isSubagent });
         clearAttention(a, clock, (t) => t !== "tool");
       } else {
         if (tool) delete a.openTools[tool.id];
@@ -271,9 +333,13 @@ function applyOwned(
       break;
     }
     case "needs_attention": {
-      // Reserved for the hooks adapter; the transcript normalizer never emits it.
+      // Exact adapters only (hooks); the transcript normalizer never emits it.
+      const known = s.agents[agentKey(sessionId, event.agentId)];
+      // A repeat of the open or just-ended episode is old news: no touch, so it cannot
+      // refresh the agent's silence clock or re-trigger the wave.
+      if (known && known.phase !== "leaving" && known.episode?.exactId === event.episodeId) break;
       const a = touch(s, sessionId, event.agentId, projectId, clock);
-      enterAttention(s, a, "exact", clock);
+      enterExact(s, a, event.episodeId, event.waitingSince, clock);
       break;
     }
     case "handoff": {
@@ -283,35 +349,39 @@ function applyOwned(
         // A launch that would close a wait loop could never expire; ignore it.
         const loop =
           event.fromAgentId !== null && waitsOn(s, sessionId, event.toAgentId, event.fromAgentId);
-        if (!loop) parent.unresolved[event.toAgentId] = clock;
+        if (!loop) setOwn(parent.unresolved, event.toAgentId, clock);
       } else {
         delete parent.unresolved[event.toAgentId];
-        const key = agentKey(sessionId, event.toAgentId);
-        delete s.returned[key]; // re-insert last so the oldest is the first key
-        s.returned[key] = Math.min(event.ts, now); // a far-future ts must not block the child forever
-        const keys = Object.keys(s.returned);
-        if (keys.length > RETURNED_CAP) delete s.returned[keys[0]];
-        // `now`, not the event's ts: the leaving walk-out is timed from when we see it, not a replayed ts.
-        if (child && child.phase !== "leaving") leave(child, now);
+        walkOut(s, agentKey(sessionId, event.toAgentId), child, event.ts, now);
       }
       settle(parent);
       break;
     }
     case "done": {
-      // E1: a subagent's own turn end is not a `done`; its completion comes from the parent.
-      if (event.agentId !== null) break;
+      // E1: the normalizer never emits a subagent `done`; only the hooks adapter does
+      // (SubagentStop), and it is that child's exact completion. An unknown or already
+      // leaving child is ignored, so a stop can never create a ghost.
+      if (event.agentId !== null) {
+        const key = agentKey(sessionId, event.agentId);
+        const child = s.agents[key];
+        if (child && child.phase !== "leaving") walkOut(s, key, child, event.ts, now);
+        break;
+      }
       const a = touch(s, sessionId, null, projectId, clock);
       a.openTools = {};
       a.waitingOn = [];
-      // gstack-shortcut(dec-R2): trailing "?" heuristic; upgrade when the hooks adapter lands
+      // gstack-shortcut(dec-R2): trailing "?" heuristic; fallback, exact signal preferred when the hooks adapter supplies it
       if (event.endsWithQuestion) {
         a.phase = "working";
         a.idleSince = null;
         enterAttention(s, a, "question", clock);
       } else {
         clearAttention(a, clock);
-        a.phase = "idle";
-        a.idleSince = clock;
+        // An out-of-order done that the guard ignored keeps enterExact's working phase.
+        if (!a.attention) {
+          a.phase = "idle";
+          a.idleSince = clock;
+        }
         settle(a);
       }
       break;
@@ -373,7 +443,7 @@ function pass(s: OfficeState, now: number): boolean {
       changed = true;
       continue;
     }
-    // gstack-shortcut(dec-R1): tool-call timer heuristic; upgrade when the hooks adapter lands
+    // gstack-shortcut(dec-R1): tool-call timer heuristic; fallback, exact signal preferred when the hooks adapter supplies it
     if (a.state === "working") {
       let since = Infinity;
       for (const t of Object.values(a.openTools)) {

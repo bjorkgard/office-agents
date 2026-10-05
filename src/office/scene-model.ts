@@ -40,21 +40,34 @@ export const bubbleText = (trigger: AttentionTrigger | undefined): string =>
   trigger === "tool" ? "Stuck?" : "Asking you";
 
 /**
- * Shirts per project, kept while the project stays active so a shirt never changes under a
- * running agent; new projects take a shirt no active project holds. Unknown paths get none.
+ * Shirts per session, kept while the session stays active so a shirt never changes under a
+ * running agent; a new session takes a hashed-random shirt no active session holds. Subagents
+ * share their parent's session id, so they wear the parent's shirt.
  */
 export function assignShirts(
   prev: Record<string, ShirtChoice>,
-  projects: Record<string, string>,
   active: readonly string[],
 ): Record<string, ShirtChoice> {
   const next: Record<string, ShirtChoice> = {};
-  const ids = active.filter((id) => id in projects);
-  for (const id of ids) if (prev[id]) next[id] = prev[id];
-  for (const id of ids) {
-    if (!next[id]) next[id] = pickShirt(projects[id], Object.values(next));
+  for (const id of active) {
+    const kept = shirtOf(prev, id);
+    if (kept) setOwn(next, id, kept);
+  }
+  for (const id of active) {
+    if (!shirtOf(next, id)) setOwn(next, id, pickShirt(id, Object.values(next)));
   }
   return next;
+}
+
+/** A session's own shirt; an id like `constructor` never reaches the prototype. */
+export const shirtOf = (
+  shirts: Record<string, ShirtChoice>,
+  id: string,
+): ShirtChoice | undefined => (Object.hasOwn(shirts, id) ? shirts[id] : undefined);
+
+/** Own-key write, so an id like `__proto__` is data and not the prototype setter. */
+function setOwn(o: Record<string, ShirtChoice>, key: string, value: ShirtChoice): void {
+  Object.defineProperty(o, key, { value, writable: true, enumerable: true, configurable: true });
 }
 
 /** Highest seat of a present agent plus one (a leaver keeps its seat while it walks out). */

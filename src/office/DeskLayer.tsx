@@ -1,5 +1,5 @@
 // DeskLayer: <DeskLayer layout geo occupant worker paper fresh/> the desks, their screens following whoever sits there.
-// A subagent at a work desk works on its own laptop or tablet and leaves the monitor dark.
+// A subagent at a work desk also has its own laptop or tablet, and its monitor follows its state like a parent's.
 // New desks pop in (fresh). A subagent's paper lies on its parent's desk (paper), fading in and out.
 import type { CSSProperties } from "react";
 import { PixelProp, SharedDesk } from "./CharacterRig";
@@ -76,7 +76,7 @@ export function DeskLayer({
         const sitter = who ?? worker.get(i);
         const state: Look["screen"] = sitter ? lookFor(sitter.state).screen : "off";
         const sub = !who && worker.get(i);
-        const screen: Look["screen"] = sub ? "off" : state;
+        const screen = state;
         const device = sub ? deviceFor(sub.key) : undefined;
         const deviceLook: DeviceLook =
           state === "live" ? "lit" : state === "still" ? "half" : "dark";

@@ -89,7 +89,7 @@ export type Trip = {
 function waitStart(a: Agent, now: number): number {
   let since = now;
   for (const id of a.waitingOn) {
-    const t = a.openTools[id];
+    const t = Object.hasOwn(a.openTools, id) ? a.openTools[id] : undefined;
     if (t) since = Math.min(since, t.startedAt);
   }
   return since;

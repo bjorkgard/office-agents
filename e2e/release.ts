@@ -146,12 +146,31 @@ export type Office = { url: string; stop: () => void };
 
 const READY_MS = 60_000;
 
-/** Starts `vp dev` on loopback; `root` null reads the real transcript root, else a guarded temp root. */
-export async function startOffice(opts: { root: string | null }): Promise<Office> {
+/** The dev server's env: feed root/cache from the guarded root only, and a private hook dir so it never writes the real hook.json. */
+export function officeEnv(root: string | null, hookDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.OFFICE_E2E_ROOT;
   delete env.OFFICE_E2E_CACHE;
-  if (opts.root !== null) env.OFFICE_E2E_ROOT = assertTempRoot(opts.root);
+  if (root !== null) env.OFFICE_E2E_ROOT = assertTempRoot(root);
+  env.OFFICE_HOOK_DIR = hookDir;
+  return env;
+}
+
+/** Starts `vp dev` on loopback; `root` null reads the real transcript root, else a guarded temp root. */
+export async function startOffice(opts: { root: string | null }): Promise<Office> {
+  const hookDir = mkdtempSync(join(tmpdir(), "office-e2e-hook-"));
+  tempDirs.add(hookDir);
+  const dropHookDir = () => {
+    tempDirs.delete(hookDir);
+    removeRoot(hookDir);
+  };
+  let env: NodeJS.ProcessEnv;
+  try {
+    env = officeEnv(opts.root, hookDir);
+  } catch (err) {
+    dropHookDir();
+    throw err;
+  }
   const port = await freePort();
   const child = spawnGroup(
     "vp",
@@ -168,12 +187,14 @@ export async function startOffice(opts: { root: string | null }): Promise<Office
   child.on("exit", () => (exited = true));
   const url = `http://127.0.0.1:${port}`;
   const stop = () => {
-    if (child.pid === undefined || exited) return;
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      // already gone
+    if (child.pid !== undefined && !exited) {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        // already gone
+      }
     }
+    dropHookDir();
   };
   const deadline = Date.now() + READY_MS;
   while (Date.now() < deadline) {

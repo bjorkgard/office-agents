@@ -385,12 +385,11 @@ test(
   { tag: "@live" },
   async ({ page }, info) => {
     const session = sessionFor(info);
+    await page.clock.install();
     await openLive(page);
     await startWorking(page, session, hashId(`${session}:t`));
-    // A last line stamped 45 minutes ago: past STALE_MS, so the next tick expires the agent.
-    appendLive(liveRoot(), sessionPath(session), [
-      liveLine(session, { type: "tool_use", id: hashId(`${session}:old`), ageMs: 45 * 60 * 1000 }),
-    ]);
+    // 45 minutes of silence: past STALE_MS, so the next tick expires the agent.
+    await page.clock.fastForward("45:00");
     await expect(wrapper(page, session)).toHaveCount(0);
     await expect(mine(page)).toHaveAttribute("data-state", "leaving");
     await expect(mine(page)).toHaveCount(0);
@@ -402,13 +401,12 @@ test(
   { tag: "@live" },
   async ({ page }, info) => {
     const session = sessionFor(info);
+    await page.clock.install();
     await openLive(page);
     await startWorking(page, session, hashId(`${session}:t`));
     await hit(page, session).focus();
     await expect(hit(page, session)).toBeFocused();
-    appendLive(liveRoot(), sessionPath(session), [
-      liveLine(session, { type: "tool_use", id: hashId(`${session}:old`), ageMs: 45 * 60 * 1000 }),
-    ]);
+    await page.clock.fastForward("45:00");
     await expect(wrapper(page, session)).toHaveCount(0);
     await expect(page.getByTestId("scene")).toBeFocused();
   },
@@ -521,6 +519,10 @@ test("the office scene looks as designed", { tag: "@visual" }, async ({ page }) 
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/?hour=14&seed=e2e&scene=afternoon");
+  // The scene sits in an overflow-y container: a classic scrollbar (macOS with a mouse attached)
+  // would shrink the shot by 15px, an overlay scrollbar (trackpad only) would not. Hide it so the
+  // baseline does not depend on the OS scrollbar setting.
+  await page.addStyleTag({ content: "* { scrollbar-width: none !important; }" });
   await expect(page.locator(".agent")).toHaveCount(4);
   await expect(page).toHaveTitle(titleFor(3));
   await expect(page.locator('.agent[data-state="attention"]')).toHaveCount(3);

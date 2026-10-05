@@ -2,59 +2,7 @@
 
 ## Feed
 
-### Hooks adapter for exact attention and subagent lifecycle
-
-**What:** Consent-gated Claude Code hooks (Notification, PermissionRequest, SubagentStart/Stop) that POST to the loopback feed as a second adapter behind `shared/events.ts`.
-
-**Why:** Replaces the slice 1 heuristics (trailing "?" and tool-call timer, markers `gstack-shortcut(dec-R1)` and `gstack-shortcut(dec-R2)`) with exact signals, so the wave never fires falsely and never misses a permission prompt.
-
-**Context:** Slice 1 reads `~/.claude/projects/**/*.jsonl` only. Pros: no false waves, resolves both shortcut markers. Cons: edits `~/.claude/settings.json`, adds an installer, a token-checked 127.0.0.1 endpoint and a hook script (about 3 files); sessions started before install stay silent. The normalized event interface already exists, so this is an added adapter; start from `shared/events.ts`. Ideas only from pixel-agents (`../pixel-agents/CLAUDE.md:30,284`), no code copied without license attribution (MIT).
-
-**Effort:** L (human ~1.5 days / CC ~1h)
-**Priority:** P2
-**Depends on:** Slice 1 shipped
-
-### Event guard hardening before the first producer (DONE: parseAgentEvent in shared/events.ts)
-
-**What:** In `shared/events.ts`, add a `parseAgentEvent` that returns a fresh object holding only the declared fields (including the nested `tool`). The normalizer (BUILD_TODO 2.1) must build each event field by field, never spread raw transcript JSON.
-
-**Why:** The guard ignores extra fields and returns the original object, so a spread transcript entry would carry assistant text past the guard, against the file's "no transcript text" rule. It is not reachable today (no producer exists).
-
-**Context:** Found in the Phase 1 /ship adversarial review, confirmed by the red-team pass; deferred by the user because fixing it would have hit the three-cycle review cap. Extra fields are ignored by design (approved contract P1-S1-1), so the copy function is additive. Also decide then whether empty-string ids and negative or fractional `ts` should be rejected (skipped in Phase 1).
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P1
-**Depends on:** Land before BUILD_TODO 2.1 emits its first event
-
 ## Office
-
-### Displayed-state hook for characters (M8)
-
-**Status:** DONE in Phase 4 (`src/office/Character.tsx`, `swap.ts`).
-
-**What:** Add `src/office/Character.tsx`, a hook that swaps the displayed pose only when the current animation loop ends, using `nextDisplayed` from `poses.ts`.
-
-**Why:** Without it, state changes cut poses off mid-motion, and `nextDisplayed` and `poseForState` have no production caller yet.
-
-**Context:** Deferred from plan: docs/designs/character-art-merged-tasks.md (M8). The pure swap logic and its 900ms timeout exist and are tested. Needs the reduced-motion path (new pose at once) and a background-tab return to the current pose.
-
-**Effort:** M (human ~1 day / CC ~30min)
-**Priority:** P1
-**Depends on:** None
-
-### Bubble layout and hit-area spacing (M9)
-
-**Status:** DONE in Phase 4 (`placeBubbles` in `src/office/iso.ts`); M10 profiling stays open.
-
-**What:** Add `src/office/iso.ts` with `placeBubbles` and `iso.test.ts`.
-
-**Why:** Overlapping speech bubbles and 24px hit areas need to hold at 50% scale with 12 agents.
-
-**Context:** Deferred from plan: docs/designs/character-art-merged-tasks.md (M9). Tests needed for 0, 1, 2 and 3 overlapping bubbles, and hit-area centers at least 24px apart at scale 0.5. M10 profiling (12 and 24 agents in Chrome and Safari, Safari 50% hit area) was dropped from the art PR and belongs with scene step 4.4.
-
-**Effort:** M (human ~1 day / CC ~30min)
-**Priority:** P1
-**Depends on:** BUILD_TODO 4.1
 
 ### Paper hover-text with redaction
 
@@ -94,7 +42,7 @@
 
 ## Office life (make the room feel alive)
 
-Nine visual updates from the user, 2026-10-02. Goal: the room should never look dead. Order after the CEO review (docs/designs/office-life-ceo-review.md, 2026-10-02): V8, V6, V3, V2, V5, V7, V9, V4, V1, behind a behavior-preserving prep refactor of `Scene.tsx` and `planMotion`. V6 comes first among the desk items because it defines the desk-kind table (screen rect, paper slot, device slot) that V2, V3 and V4 consume; V9 anchors room coordinates so a new row does not move desks, and ships only with the M10 measurements.
+The nine office-life updates V1 to V9 shipped in v0.3.0.0 (see ARCHIVE.md). What remains is below.
 
 ### Office life follow-ups from the 0.3.0.0 /ship review (2026-10-03)
 
@@ -158,18 +106,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Effort:** M
 **Priority:** P3
-**Depends on:** None
-
-#### Accessibility of the scene root and tags
-
-**What:** Give the scene root a `role` so its label is exposed, and `aria-hidden` on the `.tag` divs (each hit button already names the agent).
-
-**Why:** Screen readers ignore `aria-label` on a plain div and may read each agent twice (`Scene.tsx:439`).
-
-**Context:** From the design specialist in the final review pass; not run through a screen reader.
-
-**Effort:** S
-**Priority:** P2
 **Depends on:** None
 
 #### Stronger tests for the office-life items
@@ -296,18 +232,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** Verify the normalizer against real transcripts
 
-### Per-line try/catch around the normalizer in emit()
-
-**What:** The emit() catch drops a whole batch when the normalizer throws on one line.
-
-**Why:** One bad line should cost one line, not every event in the batch.
-
-**Context:** Wrap each line's normalizer call in its own try/catch. Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P2
-**Depends on:** None
-
 ### Simplify the flush() projectId handling
 
 **What:** `server/feed-plugin.ts` flush(): simplify the projectId handling.
@@ -320,18 +244,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** None
 
-### Trust the filename session id, not the record body
-
-**What:** `server/normalize.ts` (~273) reads sessionId from each record; use the transcript's filename as the session id instead.
-
-**Why:** A crafted record can claim another session and spoof its agent.
-
-**Context:** Local files only today, so low risk; matters once other adapters feed the same events.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
 ### Validate id format in parseAgentEvent
 
 **What:** Reject ids that do not match a conservative pattern (length and character set).
@@ -339,42 +251,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
 
 **Context:** Add after the id formats of real transcripts are confirmed (see the real-transcript item).
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Origin and X-Forwarded-* check, sanitized Host in the refusal log
-
-**What:** In `server/feed-plugin.ts` (~524) also refuse requests with a foreign Origin or X-Forwarded-* headers, and strip control characters from the logged Host.
-
-**Why:** The loopback guard checks Host and socket only; the refusal log prints the raw Host header.
-
-**Context:** Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Close the leaf-file symlink TOCTOU
-
-**What:** Open transcript files with O_NOFOLLOW and fstat the handle instead of lstat-then-open.
-
-**Why:** A file swapped for a symlink between the lstat and the open would be followed.
-
-**Context:** Directories are already not followed; this is the leaf file only. Needs a TailerIo change.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Fixture id salt and tool-name allowlist
-
-**What:** Salt the id hashes in `server/sanitize-fixtures.ts` per run and restrict tool names to a known list.
-
-**Why:** Unsalted short-input hashes can be reversed by guessing, and a custom tool name can identify a person or project.
-
-**Context:** Found in the Phase 2-3 /ship review.
 
 **Effort:** S (human ~2h / CC ~15min)
 **Priority:** P2
@@ -392,66 +268,16 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** None
 
-### parentAgentId is always null
+### parentAgentId is null for first-level subagents
 
-**What:** The normalizer always emits `parentAgentId: null` for agent_started.
+**What:** Since batch A the normalizer fills `parentAgentId` only for nested subagents (a subagent launching a subagent). A top-level parent has no agentId, so first-level subagents still get null. Also the parent lookup in `server/feed-plugin.ts` (`stateFor`) ignores projectId, and a launcher whose path sorts after its child returns null.
 
 **Why:** The machine and UI cannot draw a parent link from the event alone; they rely on handoffs.
 
-**Context:** Fill it from the Agent tool launch (launch id to the subagent file) or the hooks adapter.
+**Context:** Decide what `parentAgentId` means for a top-level parent (its session id?) before changing `shared/events.ts`, or fill it from the hooks adapter. Real nested subagents unseen in the sanitized sample.
 
 **Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Wire identity.ts or drop it
-
-**Status:** DONE in Phase 4 (`label.ts` `agentIdentity` consumes it).
-
-**What:** `src/office/identity.ts` has no consumer yet and exports `shirtFor`, the same name as the one in `poses.ts`.
-
-**Why:** An unused module drifts, and two functions with one name invite a wrong import.
-
-**Context:** Connect it in Phase 4 (name tags and shirt choice) or rename one of the two.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P2
-**Depends on:** BUILD_TODO 4.4
-
-### Detect file rotation by more than size
-
-**What:** `server/feed-plugin.ts` detects a replaced file only when its size shrinks.
-
-**Why:** A rotated file that grows past the old offset is read from the wrong place.
-
-**Context:** Compare inode and a hash of the first bytes as well; re-read from 0 on change.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Open transcripts without blocking on FIFOs
-
-**What:** Open with `O_NOFOLLOW` and reject non-regular files (FIFO) before reading.
-
-**Why:** A FIFO named `*.jsonl` would hang the read; a leaf symlink swap is a TOCTOU gap (see the leaf symlink item).
-
-**Context:** Pair with the leaf symlink item.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### Keep question-attention agents in the snapshot ring
-
-**What:** Retain the `done` event of an agent waiting on a question beyond the recent window.
-
-**Why:** A late client may not see a waiting agent that was quiet while others were busy.
-
-**Context:** Ring retention is per agent today (`createSnapshotRing`).
-
-**Effort:** S (human ~1h / CC ~15min)
-**Priority:** P2
+**Priority:** P3
 **Depends on:** None
 
 ### Key sessions by filename, not record sessionId, for resumed sessions
@@ -466,30 +292,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** Verify the normalizer against real transcripts
 
-### Use Map or Object.create(null) for id-keyed objects in the machine
-
-**What:** `src/office/machine.ts` keys plain objects by transcript ids (`agents`, `returned`, `openTools`, `unresolved`).
-
-**Why:** An id such as `__proto__` or `constructor` can collide with prototype members.
-
-**Context:** Ids pass the string guard only, not a charset check.
-
-**Effort:** S (human ~1h / CC ~15min)
-**Priority:** P2
-**Depends on:** None
-
-### SSE heartbeat
-
-**What:** Send a comment frame (`: ping`) every ~15 s on /__office/events.
-
-**Why:** Idle proxies and browsers close a silent stream, and a dead client is only noticed on the next write.
-
-**Context:** Doubles as a dead-client probe.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P3
-**Depends on:** None
-
 ### Anchor the task-notification match in the normalizer
 
 **What:** `onQueueOperation` in `server/normalize.ts` tests whether the content includes the task-notification tag anywhere.
@@ -501,18 +303,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Effort:** S (human ~1h / CC ~10min)
 **Priority:** P3
 **Depends on:** None
-
-### Map every tool_result's toolUseResult, not one per record
-
-**What:** `onUser` reads a single `toolUseResult` for a record that may hold several `tool_result` blocks.
-
-**Why:** Parallel sub-agent results in one record would all use the first result's agentId and status.
-
-**Context:** Check real transcripts for the multi-result shape.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** Verify the normalizer against real transcripts
 
 ### identityFor covers only 24 identities
 
@@ -526,53 +316,41 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** BUILD_TODO 4.4
 
+### Batch B2 leftovers (2026-10-04)
+
+**What:** (1) A unix socket swapped in for a transcript is not refused at once: on macOS opening it fails with errno -102, which takes the transient-retry path for up to 5 scans before denial (`server/feed-plugin.ts:329`). (2) A same-size in-place rewrite is not detected as rotation (the head is re-read only when the file grew). (3) No test checks that the read handle is closed on every reject path. (4) `server/sanitize-fixtures.ts`: the CLI rejects an empty salt, so committed unsalted fixtures reproduce only via the library; `--salt` is only recognised as the first argument. (5) `needs_attention` now clears `openTools` and `waiting` in the ring (`feed-plugin.ts:729`), latent until the hooks adapter emits it; and a resumed asker's question `done` leaves the snapshot.
+
+**Why:** Informational findings from the round-1 refuter pass; none blocks.
+
+**Context:** Linux errno for a socket open is ENXIO, untested. Ring eviction scans all agents when full of askers (O(N), fine at the 2000 cap).
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
 ## Phase 4 review follow-ups
 
-### Client ignores `gone` frames for subagents, and drops the seat on a transcript reset (DONE: gone removes the agent in `feed-client.ts`; server resend of `seat` after `onReset` stays open)
+### Feed server hardening: truncation detection and tracked-file cap
 
-**What:** `src/office/feed-client.ts` (`gone` handling, ~179) only deletes the seat of a top-level session. A `gone` frame with an `agentId` is ignored, and a truncated transcript (`onReset`) deletes the client seat while the server keeps it.
+**What:** In `server/feed-plugin.ts`: truncation is detected only as `size < offset` (see "Detect file rotation by more than size"), and there is no cap on tracked files. Also refuse `Forwarded:` (RFC 7239) and `X-Real-IP` like X-Forwarded-*.
 
-**Why:** Ghost agents linger until the stale timeout (30 min, 4 h in attention). After a reset the replayed agent stays unseated at the door until the stream reconnects. A fresh snapshot shows a different office than the live view.
+**Why:** A hostile or odd file set can grow memory and scan time without bound.
 
-**Context:** Found in the Phase 4 /ship review (red-team). Deferred by the user because it touches the D12 replay contract. Fix by removing or leaving the matching agent on `gone`, and have the server resend `seat` after `onReset`.
+**Context:** Split from the Phase 4 umbrella item; session identity, Origin check and heartbeat are DONE (see ARCHIVE.md).
 
-**Effort:** M (human ~4h / CC ~30min)
-**Priority:** P2
+**Effort:** S (human ~2h / CC ~20min)
+**Priority:** P3
 **Depends on:** None
 
-### Replay clocks every event at its own `ts` with no future cap
+### Waiting agent past QUEUE_VISIBLE is unreachable
 
-**What:** `src/office/machine.ts:205` passes `e.ts` as the clock during replay. One far-future `ts` expires every other agent in the snapshot, and the agent with the future `ts` never expires.
-
-**Why:** Clock skew or an odd transcript line can blank the office on reconnect. The live path and the handoff-back branch already use `Math.min(ts, now)`.
-
-**Context:** Use `Math.min(e.ts, now)` in `applyEvents` replay and optionally clamp in the server normalizer. Add a test with a future-dated event.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P2
-**Depends on:** None
-
-### Feed server hardening (session identity, origin check, heartbeat)
-
-**What:** In `server/feed-plugin.ts` and `server/normalize.ts`: (1) the session id comes from transcript content while release and forget use the file name, so a resumed or mislabelled file can release a live session's seat and ring; (2) the SSE endpoint checks only Host and the socket, so any web page can open all 8 SSE slots; (3) there is no SSE heartbeat, so half-open connections hold a slot; (4) truncation is detected only as `size < offset`; (5) there is no cap on tracked files.
-
-**Why:** Wrong seats and history for live sessions, and a 503 for the real UI from a hostile page.
-
-**Context:** Found in the Phase 4 /ship adversarial review; all items sit in the Phase 2 and 3 server code, not this diff. Check `Sec-Fetch-Site` and `Origin` first.
-
-**Effort:** M (human ~1 day / CC ~1h)
-**Priority:** P2
-**Depends on:** None
-
-### Queue overflow button does nothing and waiting agents past it are unreachable (DONE: button now a non-interactive `role="status"`; unreachable waiting agent and stable render order stay open)
-
-**What:** The `+N` button in `src/office/Scene.tsx` (~531) is a focusable button with no handler, and a waiting agent past `QUEUE_VISIBLE` has no `.hit` button, so its top-bar chip does nothing when clicked.
+**What:** A waiting agent past `QUEUE_VISIBLE` in `src/office/Scene.tsx` has no `.hit` button, so its top-bar chip does nothing when clicked. Make `pulse()` in `src/App.tsx` fall back to a visible target when the wrapper is missing, and consider a stable render order so focus survives an attention reorder.
 
 **Why:** Keyboard and screen reader users cannot reach the agent that needs them.
 
-**Context:** Render the count as a non-interactive status element, and make `pulse()` in `src/App.tsx` fall back to a visible target when the wrapper is missing. Also consider a stable render order so focus survives an attention reorder.
+**Context:** Split from "Queue overflow button does nothing" (the `+N` button half is DONE, see ARCHIVE.md).
 
-**Effort:** S (human ~2h / CC ~20min)
+**Effort:** S (human ~1h / CC ~15min)
 **Priority:** P3
 **Depends on:** None
 
@@ -626,125 +404,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** Phase 5 E2E harness (5.1, 5.2)
 
-## Completed
-
-### V1: Windows with a random outside world
-
-**What:** Windows on the walls showing a random outside scene per session (day, dusk, night, rain, snow, clouds, a passing bird or plane).
-
-**Why:** Gives the room a sense of place and time passing even when no agent moves.
-
-**Context:** Idea: pick the scene once per load, then let it change slowly; optionally follow the real local time of day, with a manual override in the dev style sheet. Draw the scene inside the window clip path so it stays flat vector like the rest. Respect `prefers-reduced-motion` (static sky, no rain). Keep the glass light off the characters, or add a faint light patch on the floor for depth.
-
-**Effort:** M (human ~1 day / CC ~40min)
-**Priority:** P3
-**Depends on:** None
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V2: Handoff paper lands on the desk, not the screen
-
-**What:** When a subagent leaves the paper, it ends up lying on the desk surface, not on the monitor.
-
-**Why:** The paper currently reads as pasted on the screen; the desk is where a physical handoff would rest.
-
-**Context:** Re-anchor the paper end position to a desk-top slot (per desk type, see V6) and draw it in desk perspective. Idea: the paper stays visible until the parent agent picks it up, then fades or is filed in a tray.
-
-**Effort:** S (human ~3h / CC ~20min)
-**Priority:** P1
-**Depends on:** None (re-check anchor after V6 and V9)
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V3: Animate every active screen
-
-**What:** Every screen on an active (working) desk shows animation: scrolling code lines, a blinking cursor, a spinner or test bars. Idle screens go dark or show a screensaver.
-
-**Why:** A lit, moving screen is the strongest "someone is working here" cue.
-
-**Context:** Idea: vary the content by tool kind (read, edit, shell, search) so a glance shows what the agent is doing. Use CSS animations on shared symbols, not per-frame JS, to stay inside the DOM budget (see "Share character drawings via symbols"). Reduced-motion path: a static lit screen.
-
-**Effort:** M (human ~1 day / CC ~40min)
-**Priority:** P1
-**Depends on:** None
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V4: Visible subagent typing on varied devices
-
-**What:** Subagents show a typing pose on their own device: laptop, tablet or desktop monitor, chosen per agent.
-
-**Why:** Parent and subagent are told apart at a glance, and the room gets variety.
-
-**Context:** Idea: parent agents keep the full desk monitor; subagents get a laptop or iPad-style tablet (propped or flat) so the extra desks V9 spawns stay small. Needs a typing pose variant for each device (hands position differs for a tablet). Device is picked from a stable hash of the agent id so it never flips between renders. Screens animate per V3.
-
-**Effort:** M (human ~1 day / CC ~45min)
-**Priority:** P2
-**Depends on:** V3, V9
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V5: Parent agent coffee break is short and random
-
-**What:** A waiting parent agent walks to the coffee station only for a random 5 to 20 seconds, then returns to the desk and keeps waiting there (idle at the desk, not stuck at the machine).
-
-**Why:** Today waiting reads as endless coffee drinking, which looks wrong when a subagent runs for minutes.
-
-**Context:** Idea: after the return, a cooldown (random 20 to 60s) before the next break, and idle fillers at the desk in between (stretch, look around, sip a mug already on the desk, phone check). Keep the random source seedable so tests are deterministic, and keep `machine.ts` free of timers (`now` is passed in). Break choice also feeds V7.
-
-**Effort:** M (human ~1 day / CC ~30min)
-**Priority:** P1
-**Depends on:** None
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V6: Two desk types with different props
-
-**What:** Two desk designs (for example a tidy desk with plant and lamp, and a cluttered desk with mug, books and sticky notes), assigned per seat.
-
-**Why:** Identical desks make the room look generated.
-
-**Context:** Idea: add small per-desk personality props (plant, photo frame, figurine, headphones). Assign by seat index, not random per render, so desks do not change on re-layout. Draw as shared symbols (desk is already shared, R5). Must leave a clear desk-top slot for the paper (V2) and a spot for the device (V4).
-
-**Effort:** M (human ~1 day / CC ~40min)
-**Priority:** P2
-**Depends on:** None
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V7: Water dispenser and random coffee or water choice
-
-**What:** Add a water dispenser to the office. When an agent takes a break, pick coffee or water at random (weighted, for example 60/40), with a matching walk, drink pose and prop (mug or paper cup).
-
-**Why:** Variety in breaks; one extra prop makes the pantry corner feel real.
-
-**Context:** Idea: a small queue spot at each station so two agents do not stack on one tile, and a short gurgle bubble animation on the dispenser. Place it next to the coffee station (placement settled in step 4.10). Seedable random for tests.
-
-**Effort:** M (human ~1 day / CC ~40min)
-**Priority:** P2
-**Depends on:** V5
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V8: Wall clock that looks like a clock
-
-**What:** Fix the wall clock: it is off perspective and shows nothing. Draw a round face with hour marks, hands and a second hand, skewed onto the wall plane, showing the real local time.
-
-**Why:** A broken-looking prop undermines the whole scene; a ticking clock is cheap, constant life.
-
-**Context:** Idea: draw the face flat in a group, then apply the wall plane transform so the perspective matches the other wall items; update hands once per second (or once per minute with a smooth second hand via CSS). Reduced-motion: update once per minute, no sweep. Add to the dev style sheet for a visual check at 50% scale.
-
-**Effort:** S (human ~3h / CC ~20min)
-**Priority:** P1
-**Depends on:** None
-**Completed:** v0.3.0.0 (2026-10-03)
-
-### V9: Every subagent gets a desk; spawn desks on demand
-
-**What:** No agent stands. When subagents arrive and no desk is free, add desks (and move the layout) so each one sits; remove extra desks when subagents finish.
-
-**Why:** Standing agents look like a bug and break the "everyone is working" read.
-
-**Context:** Idea: grow the room in rows or a second cluster, with a smooth desk-appear animation (drop in, or slide in with a light pop) and a cap with a graceful fallback (for example shrink the scene scale, then add a second room row) so 24 agents still fit. Desk count follows live agent count with a short hysteresis so desks do not flicker in and out. Check hit-area spacing (M9) and the DOM budget at 12 and 24 agents (M10).
-
-**Effort:** L (human ~2 days / CC ~1.5h)
-**Priority:** P1
-**Depends on:** Bubble layout and hit-area spacing (M9)
-**Completed:** v0.3.0.0 (2026-10-03)
-
 ## Demo mode
 
 ### Demo mode for the README and first run
@@ -756,5 +415,105 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Context:** The demo module is excluded from `dist/` on purpose (marker `__OFFICE_DEMO__`), so a production replay needs its own path.
 
 **Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+## Hooks adapter follow-ups (2026-10-04)
+
+### Make the hooks attention mapping exact, then retire the heuristics
+
+**What:** Run the interactive hook probe (a real `claude` session with `--settings <temp file>` and a logging hook that records field names and ids only) to learn which hook events fire for a permission prompt, an `AskUserQuestion` and an idle wait, and whether `matcher: ""` and `async: true` behave as assumed. Then fix the `HOOK_EVENTS` table in `server/hooks-adapter.ts`, make the episode id independent of the hook name if two hooks fire for one prompt, and decide whether the `dec-R1` and `dec-R2` heuristics in `src/office/machine.ts` can be suppressed for agents with exact signals.
+
+**Why:** The mapping for `PermissionRequest` and `Notification` types is tolerant but unverified; a headless `claude -p` run fires neither, and the agent-driven interactive probe was denied by the auto-mode classifier. The subagent mapping is verified (the hook `agent_id` equals the `agent-<id>.jsonl` id).
+
+**Context:** `.claude/scratch/todo-burndown/FINDINGS.md` ("Hook probe") has the facts and the exact probe command. Both hooks firing for one prompt would announce twice (episode id includes the hook name).
+
+**Effort:** S (human ~30min / CC ~20min)
+**Priority:** P2
+**Depends on:** The user running the probe
+
+### Hooks adapter leftovers
+
+**What:** (1) A hook payload over 256 KB (a huge `PermissionRequest` `tool_input`) is dropped whole, so that attention signal is lost; a reused pid sends the token to whatever listens on that port. (2) Installer: a failed rename leaves a `.<name>.<pid>.tmp` with the full settings; two runs in the same millisecond overwrite each other's backup; rename breaks hard links; apply then remove normalises the user's empty event arrays away; `echo /x/office-hook.mjs` counts as ours. (3) Hook discovery: both dev servers (5173 and 5199) use the default `~/.office-agents` dir, so the last writer wins; after SIGKILL a stale `hook.json` stays (the script checks the pid). (4) The `returnedSeen` ring set is never cleared, so a relaunched child with the same agent id would be dropped. (5) Machine: live and replay can still differ on hold-check versus tick timing and on a repeated `episodeId` after an idle exit; only the latest exact episode id per agent is remembered; the clamp accepts `waitingSince: 1`; an upgrade can reorder the attention list by since-time. (6) Not tested: a Windows host, real hook arrival latency.
+
+**Why:** Informational findings from the step 6 refuter passes; none blocks.
+
+**Context:** Reports in `.claude/scratch/todo-burndown/reports/refuter-17.md`, `-21.md`, `-26.md`, `-28.md`, `-31.md`, `-33.md`.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+## Pre-landing review follow-ups (2026-10-04, /ship cycle 1)
+
+### Hooks adapter: ring, machine and hook semantics to align
+
+**What:** (1) DONE in the PR review fixes: a hook `SubagentStop` `done` now walks the child out in the machine. (2) The ring clears `openTools` and the sync-launch wait marker on `needs_attention` (`server/feed-plugin.ts:749`) while the machine's `enterExact` does not: clear them only for the heuristic question `done`. (3) Hook-only agents have no tailer file, so nothing retires them from the ring (`server/feed-plugin.ts:1034`): add a TTL or ignore hook events for sessions the tailer does not track. (4) `PermissionRequest` and `Notification(permission_prompt)` hash different episode ids (hook name is in the hash), so both firing would supersede and re-announce; part of "Make the hooks attention mapping exact".
+
+**Why:** Red-team findings from the /ship review; each is a live-versus-replay or lifecycle gap, none reproduced end to end.
+
+**Context:** See `.claude/scratch/todo-burndown/DECISIONS.md` D35 to D37 for the rules the machine and ring already share.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** The user's interactive hook probe
+
+### Feed plugin: split the hook route and tighten small spots
+
+**What:** `server/feed-plugin.ts` is past 1,200 lines: move the hook route (`handleHook`, `readHookBody`, `hookAdmit`, `ingestHook`) into `server/hook-route.ts` like `hooks-adapter.ts` and `hook-discovery.ts`. The `Req.on` type was widened to `(event: string, cb: (arg: Buffer) => void)` (`:849`): use overloads for `close`, `data`, `end`, `error`. `hookSessions` evicts by insertion order, not recency (`:1014`): delete before set. `replaced()` re-opens, reads and hashes the file head on every scan for every grown file (`:556`): skip unless size shrank or the inode changed, or read the head on the same handle. `hookSessionCount` and several `HOOK_*` exports exist only for tests. The SIGINT handler re-raises unconditionally (`:1237`); verified fine for `vp dev` (refuter-21) but would double-run other plain listeners. `hooks/install.mjs:225` writes the settings temp file without `O_EXCL`/`O_NOFOLLOW` (needs write access to `~/.claude`, low impact).
+
+**Why:** Maintainability, performance and security informational findings; none is a defect today.
+
+**Context:** Advisory simplifications also listed: drop the redundant `chmodSync(tmp, 0o600)` in `server/hook-discovery.ts`, share one `reject(code)` closure in `readHookBody`, validate the root before `mkdtempSync` in `e2e/release.ts` `startOffice`.
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### sanitize-fixtures CLI usability
+
+**What:** `server/sanitize-fixtures.ts:179`: the default became a random per-run salt, so the committed fixtures can only be reproduced through the library function; an empty `OFFICE_FIXTURE_SALT` exits 2 with only the usage message; `--salt` is only recognised as the first argument. Document which salt regenerates the committed fixtures, treat an empty env var as unset, and parse flags anywhere.
+
+**Why:** api-contract findings from the /ship review.
+
+**Context:** Related to "Batch B2 leftovers" item 4.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Review cycle 2 leftovers (2026-10-04)
+
+**What:** (1) `server/feed-plugin.ts:7` header says every SSE frame is a `data:` JSON line; add the `: ping` comment frame and the token-gated `POST /__office/hook` route. (2) `server/feed-plugin.ts:58` the `HOOK_ROUTE` export sits between the body-cap comment and its constants; move it. (3) `hooks/office-hook.mjs:30` `MAX_VALUE = 512` is tied to `MAX_STRING_LENGTH` by a comment only: assert it in `hooks/office-hook.test.ts` (and that `ALLOWED` covers what `server/hooks-adapter.ts` reads). (4) `hooks/office-hook.test.ts:252` the `::1` host test has no skip guard for hosts without IPv6 loopback. (5) `hooks/install.mjs:80` `isOurs` matches any command whose script argument is named `office-hook.mjs` at any path, so `--remove` also removes another checkout's entry; the README says "only our entries": match this checkout's path or say so. (6) `hooks/install.mjs:236` no re-check before `renameSync` if another tool wrote the settings file meanwhile. (7) `server/hook-discovery.ts:86` `removeDiscovery` reads `hook.json` with a blocking `readFileSync` (a planted FIFO would hang SIGINT cleanup); harden like `readInfo` in the script. (8) `server/feed-plugin.ts:1041` events over the 20/s per-session or 100/s total window are dropped, so a burst could lose the one `needs_attention`: exempt it or reserve a budget.
+
+**Why:** Informational findings from the second /ship review pass; none blocks, all were skipped by the user's choice.
+
+**Context:** The first pass's findings are in "Pre-landing review follow-ups" above.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Adversarial review leftovers (2026-10-04)
+
+**What:** (1) `hooks/install.mjs` writes `async: true` and a `node '<path>'` command resolved through PATH: if Claude Code is started from a GUI with a minimal PATH, every hook event exits 127; consider the absolute `process.execPath` (or document it). Whether `async` is honoured is unverified (the probe). (2) `server/hook-discovery.ts` `hookHost` maps a specific non-loopback `--host` to `127.0.0.1`, where nothing listens, with no diagnostic: log one warning at publish time when the bind address is neither loopback nor wildcard; Vite middleware mode (no `httpServer`) also skips publishing silently. (3) `writeDiscovery` `chmodSync(dir, 0o700)` on a pre-existing `OFFICE_HOOK_DIR` changes a shared directory's mode and never checks ownership. (4) The 408 timer in `readHookBody` survives a client abort before `end` (clear it on `close`). (5) `readHookBody`'s `end` handler wraps `ingestHook` in the same try/catch as `JSON.parse`, so a bug in `ring.add` or `send` is logged as an unparseable payload and the ring and SSE clients can diverge: parse in its own try. (6) The per-file normalizer failure log writes `String(e)` (`server/feed-plugin.ts` ~416): log only `e.name`/code or route through `loggable()`. (7) The installer is a read-modify-write on `~/.claude/settings.json` (another writer between read and rename loses its update) and `.bak-<stamp>` backups accumulate unpruned with a full copy of the settings. (8) The 400 ms script deadline covers node cold start, stdin and the round trip; a dropped `needs_attention` leaves no trace on either side: add a server-side counter of received hooks per minute.
+
+**Why:** Native adversarial review (/ship Step 11). Its top finding (late transcript activity erasing a live exact attention because the guard compares the receipt clock) was refuted: `applyOwned` uses `clock = Math.min(event.ts, now)` in live and replay and `src/office/machine.test.ts` covers needs_attention@10000 followed by a tool start@9900.
+
+**Context:** All skipped by the user's choice (/ship D4).
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** The user's interactive hook probe (items 1 and 8)
+
+### Final review pass leftovers (2026-10-04)
+
+**What:** (1) A child handed back and later resumed (the normalizer's `state.resumes`) stays in `returnedSeen`, so its hook `needs_attention` and `agent_started` are dropped for good (`server/feed-plugin.ts` `ingestHook`): delete the key when a `handoff out` for that child arrives. (2) `hooks/office-hook.mjs` trusts `hook.json` without an owner or mode check and accepts any integer port: require owner equals the current uid, no group or other bits, and a port in 1024 to 65535. (3) `keyOf` and `episodeIdOf` join ids with `\u0000` and `idOf` accepts NUL in ids, so a token holder can collide session `a\0b` with session `a` plus agent `b`: reject NUL or length-prefix the key. (4) `hooks/install.mjs` rewrites settings through `JSON.parse`/`stringify`: duplicate keys and integers above 2^53 are lost and formatting is normalised without a warning. (5) One `node` process per hook event with a 400 ms deadline: a burst of many subagents costs CPU and events past the deadline vanish. (6) A hook-created top-level agent for a session the tailer has not read gets no seat. (7) `src/office/identity.ts:41` `pickShirt` and DESIGN.md (shirt sections, "unknown project: neutral gray") still say project although shirts are per session; `setOwn` is defined twice (`machine.ts` and `scene-model.ts`); `parentOf` in `server/feed-plugin.ts:475` scans every tracked file's launches linearly per subagent file.
+
+**Why:** Informational findings from the last /ship review pass, skipped by the user's choice (/ship D5).
+
+**Context:** Items 1, 3 and 6 are red-team or adversarial findings read from code, not reproduced end to end.
+
+**Effort:** M
 **Priority:** P3
 **Depends on:** None
