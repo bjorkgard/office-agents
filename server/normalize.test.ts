@@ -478,6 +478,20 @@ describe("atomic handlers", () => {
     expect(handoffs(normalize(state, note))).toEqual(["A1:back"]);
   });
 
+  it("ignores enqueue content that embeds the tag mid-string", () => {
+    const state = top();
+    const before = { ...state.drift };
+    const note = JSON.stringify({
+      type: "queue-operation",
+      ...env,
+      operation: "enqueue",
+      content:
+        "quoted: <task-notification><task-id>A1</task-id><tool-use-id>T1</tool-use-id><status>completed</status></task-notification>",
+    });
+    expect(normalize(state, note)).toEqual([]);
+    expect(state.drift).toEqual(before);
+  });
+
   it("a malformed later tool_use leaves no stale launch entry", () => {
     const state = top();
     const events = normalize(

@@ -303,7 +303,7 @@ export function tag(text: string, name: keyof typeof TAG_PATTERNS): string | nul
 const onQueueOperation: Handler = (ctx) => {
   const { state, rec } = ctx;
   if (rec.operation !== "enqueue") return []; // remove copies are not counted
-  if (typeof rec.content !== "string" || !rec.content.includes("<task-notification>")) return [];
+  if (typeof rec.content !== "string" || !rec.content.startsWith("<task-notification>")) return [];
   const taskId = tag(rec.content, "task-id");
   const toolUseId = tag(rec.content, "tool-use-id");
   const status = tag(rec.content, "status");

@@ -111,7 +111,7 @@ function message(m: unknown, h: Hash): Json | undefined {
 
 /** Rebuilds a notification keeping only task-id, tool-use-id, status. */
 function notification(content: unknown, h: Hash): string {
-  if (typeof content !== "string" || !content.includes("<task-notification>")) return "x";
+  if (typeof content !== "string" || !content.startsWith("<task-notification>")) return "x";
   const taskId = tag(content, "task-id");
   const toolUseId = tag(content, "tool-use-id");
   const status = enumOf(tag(content, "status") ?? "", ["completed", "failed"]);
