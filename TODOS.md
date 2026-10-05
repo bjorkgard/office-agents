@@ -62,7 +62,7 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 #### Row-change style recalc at 24 agents over budget (2026-10-05)
 
-**What:** Find what a settled 24-agent row insertion restyles and cut it. At 12 agents the miss is fixed: the inherited `--scale` property is gone and the worst style-recalc event fell from about 48 ms to a median of 14.7 to 15.6 ms over three runs (budget 16 ms; close to the line). At 24 agents the settled median is still 19.1 to 19.5 ms (headless Chrome, M1 Max, `vp run perf`, 3 runs). The cause is unknown.
+**What:** Find what a settled 24-agent row insertion restyles and cut it. At 12 agents the miss is fixed: the inherited `--scale` property is gone and the worst style-recalc event went from an old burst figure of about 48 ms to a median worst event of 14.7 to 15.6 ms over three runs (different metrics, budget 16 ms; close to the line). At 24 agents the settled median is still 19.1 to 19.5 ms (headless Chrome, M1 Max, `vp run perf`, 3 runs). The cause is unknown.
 
 **Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 to 16.8 ms against 20 and 33 ms).
 

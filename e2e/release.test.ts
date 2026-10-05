@@ -21,6 +21,7 @@ import {
   startOffice,
   tracedWorstMs,
   worstRecalc,
+  worstRecalcEvent,
 } from "./release.ts";
 import { agentFixtureSet, removeRoot, twelveAgentFixtureSet } from "./support.ts";
 
@@ -259,6 +260,22 @@ describe("worstRecalc", () => {
   });
 });
 
+describe("worstRecalcEvent", () => {
+  const mark = { name: "row-write", ph: "R", ts: 1_000_000 };
+  const layout = (ts: number, dur: number) => ({ name: "UpdateLayoutTree", ph: "X", ts, dur });
+
+  it("returns the duration and the offset from the mark of the worst event, in ms", () => {
+    const events = [mark, layout(1_100_000, 4_000), layout(1_250_000, 12_500)];
+    expect(worstRecalcEvent(events, 1500)).toEqual({ durMs: 12.5, offsetMs: 250 });
+  });
+
+  it("agrees with worstRecalc and is null where it is", () => {
+    const events = [mark, layout(1_100_000, 4_000)];
+    expect(worstRecalcEvent(events, 1500)!.durMs).toBe(worstRecalc(events, 1500));
+    expect(worstRecalcEvent([layout(1_100_000, 4_000)], 1500)).toBeNull();
+  });
+});
+
 describe("tracedWorstMs", () => {
   const events = [
     { name: "row-write", ph: "R", ts: 1_000_000 },
@@ -321,6 +338,17 @@ describe("rowChangeVerdict", () => {
     expect(rowChangeVerdict([]).status).toBe("FAIL");
   });
 
+  it("flags a pass within 10% of the budget as marginal, and nothing else", () => {
+    const rep3 = (m: number) => rowChangeVerdict([rep(m), rep(m), rep(m)]);
+    expect(rep3(14.5).status).toBe("PASS");
+    expect(rep3(14.5).measured).toContain("marginal: within 10% of the budget");
+    expect(rep3(16).measured).toContain("marginal: within 10% of the budget");
+    expect(rep3(14.4).measured).not.toContain("marginal");
+    expect(rep3(5).measured).not.toContain("marginal");
+    expect(rep3(16.1).status).toBe("FAIL");
+    expect(rep3(16.1).measured).not.toContain("marginal");
+  });
+
   it("reports every repeat value and the appeared times", () => {
     const v = rowChangeVerdict([rep(11.2, 4100), rep(12.4, 4200), rep(13.6, 4300)]);
     for (const s of ["11.2", "12.4", "13.6", "12.4 ms", "4100", "4200", "4300"]) {
@@ -337,7 +365,7 @@ describe("perfVerdicts", () => {
   const good = { appearedMs: 4000, worstMs: 5 };
 
   it("fails the frame verdict when there is no steady sample or no frames", () => {
-    for (const steady of [null, { frames: [], recalcMs: 0 }]) {
+    for (const steady of [null, { frames: [] }]) {
       const v = perfVerdicts(12, steady, [good, good, good]);
       expect(v[0]).toEqual({ status: "FAIL", measured: "p95 frame: no frames measured" });
     }
@@ -345,8 +373,8 @@ describe("perfVerdicts", () => {
 
   it("checks the p95 frame against the budget for the agent count, row verdict second", () => {
     const budget = FRAME_BUDGET_MS[12]!;
-    const under = perfVerdicts(12, { frames: [budget - 1, budget - 1], recalcMs: 0 }, [good]);
-    const over = perfVerdicts(12, { frames: [budget + 1, budget + 1], recalcMs: 0 }, [good]);
+    const under = perfVerdicts(12, { frames: [budget - 1, budget - 1] }, [good]);
+    const over = perfVerdicts(12, { frames: [budget + 1, budget + 1] }, [good]);
     expect(under).toHaveLength(2);
     expect(under[0]!.status).toBe("PASS");
     expect(over[0]!.status).toBe("FAIL");
@@ -355,7 +383,7 @@ describe("perfVerdicts", () => {
 
   it("fails the row verdict when a repeat threw and was recorded as all null", () => {
     const thrown = { appearedMs: null, worstMs: null };
-    const v = perfVerdicts(12, { frames: [10], recalcMs: 0 }, [good, thrown, good]);
+    const v = perfVerdicts(12, { frames: [10] }, [good, thrown, good]);
     expect(v[0]!.status).toBe("PASS");
     expect(v[1]!.status).toBe("FAIL");
   });

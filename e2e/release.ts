@@ -367,6 +367,9 @@ export const RECALC_BUDGET_MS = 16;
 const STEADY_MS = 5_000;
 /** How long after the new agents rendered the traced row-change window stays open. */
 const ROW_TRACE_TAIL_MS = 1_500;
+/** How long to wait for Chromium to flush the trace after Tracing.end, and after an abort in cleanup. */
+const TRACE_FLUSH_MS = 10_000;
+const TRACE_ABORT_FLUSH_MS = 2_000;
 /** Plain idle before each row write: the gate measures a settled page (D8), not one fresh off load. */
 const ROW_SETTLE_MS = 5_000;
 const REPEATS = 3;
@@ -397,18 +400,26 @@ export type TraceEvent = { name?: string; ph?: string; ts?: number; dur?: number
  * windowMs after it. Null without the mark or without such an event, which must never read as a pass.
  */
 export function worstRecalc(events: TraceEvent[], windowMs: number): number | null {
+  return worstRecalcEvent(events, windowMs)?.durMs ?? null;
+}
+
+/** worstRecalc's event, with its start offset from the `row-write` mark, both in ms. */
+export function worstRecalcEvent(
+  events: TraceEvent[],
+  windowMs: number,
+): { durMs: number; offsetMs: number } | null {
   const mark = events.find((e) => e.name === "row-write" && typeof e.ts === "number");
   if (!mark) return null;
   const from = mark.ts!;
   const to = from + windowMs * 1000;
-  let worstUs: number | null = null;
+  let worst: { dur: number; ts: number } | null = null;
   for (const e of events) {
     if (e.name !== "UpdateLayoutTree" || e.ph !== "X") continue;
     if (typeof e.ts !== "number" || typeof e.dur !== "number") continue;
     if (e.ts < from || e.ts > to) continue;
-    if (worstUs === null || e.dur > worstUs) worstUs = e.dur;
+    if (worst === null || e.dur > worst.dur) worst = { dur: e.dur, ts: e.ts };
   }
-  return worstUs === null ? null : worstUs / 1000;
+  return worst === null ? null : { durMs: worst.dur / 1000, offsetMs: (worst.ts - from) / 1000 };
 }
 
 /** worstRecalc, but null when Chromium reported that the trace lost data: a partial trace must never read as a pass. */
@@ -452,26 +463,21 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
     };
   }
   const median = medianOf(worsts as number[])!;
+  const status = median <= RECALC_BUDGET_MS ? "PASS" : "FAIL";
+  const marginal =
+    status === "PASS" && median > 0.9 * RECALC_BUDGET_MS
+      ? "; marginal: within 10% of the budget"
+      : "";
   return {
-    status: median <= RECALC_BUDGET_MS ? "PASS" : "FAIL",
-    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info})`,
+    status,
+    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${marginal})`,
   };
 }
 
-type Sample = { frames: number[]; recalcMs: number };
+type Sample = { frames: number[] };
 
-async function readRecalcMs(cdp: import("@playwright/test").CDPSession): Promise<number> {
-  const { metrics } = await cdp.send("Performance.getMetrics");
-  return (metrics.find((m) => m.name === "RecalcStyleDuration")?.value ?? 0) * 1000;
-}
-
-/** Frame deltas (rAF) over a window, plus the style recalc time Chromium spent in it (CDP Performance). */
-async function sampleWindow(
-  page: import("@playwright/test").Page,
-  cdp: import("@playwright/test").CDPSession,
-  ms: number,
-): Promise<Sample> {
-  const before = await readRecalcMs(cdp);
+/** Frame deltas (rAF) over a window. */
+async function sampleWindow(page: import("@playwright/test").Page, ms: number): Promise<Sample> {
   await page.evaluate(() => {
     const w = window as unknown as { __frames: number[]; __run: boolean };
     w.__frames = [];
@@ -490,7 +496,7 @@ async function sampleWindow(
     w.__run = false;
     return w.__frames.slice(1);
   });
-  return { frames, recalcMs: (await readRecalcMs(cdp)) - before };
+  return { frames };
 }
 
 type OfficePage = {
@@ -524,7 +530,6 @@ async function withOfficePage<T>(
       info.chrome = browser.version();
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
       const cdp = await page.context().newCDPSession(page);
-      await cdp.send("Performance.enable");
       await page.goto(office.url);
       await page.waitForFunction(
         (n) => document.querySelectorAll(".agent[data-state]").length >= n,
@@ -544,9 +549,7 @@ async function withOfficePage<T>(
 
 /** One fresh office at `agents` in its own page, steady frame sample only. */
 function frameSample(agents: number, headed: boolean, info: { chrome: string }): Promise<Sample> {
-  return withOfficePage(agents, 0, headed, info, ({ page, cdp }) =>
-    sampleWindow(page, cdp, STEADY_MS),
-  );
+  return withOfficePage(agents, 0, headed, info, ({ page }) => sampleWindow(page, STEADY_MS));
 }
 
 /** One fresh office at `agents`, idle ROW_SETTLE_MS, then one traced row write. */
@@ -593,7 +596,7 @@ function rowRepeat(
       await cdp.send("Tracing.end");
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("tracingComplete timeout")), 10_000);
+        timer = setTimeout(() => reject(new Error("tracingComplete timeout")), TRACE_FLUSH_MS);
       });
       let dataLost: boolean;
       try {
@@ -606,21 +609,25 @@ function rowRepeat(
         appearedMs === null
           ? null
           : tracedWorstMs(events, appearedMs + ROW_TRACE_TAIL_MS, dataLost);
+      const worstEvent =
+        worstMs === null ? null : worstRecalcEvent(events, appearedMs! + ROW_TRACE_TAIL_MS);
+      const at =
+        worstEvent === null ? "" : ` at +${worstEvent.offsetMs.toFixed(0)} ms after the write`;
       console.log(
-        `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms, row appeared ${appearedMs ?? "never"} ms`,
+        `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms${at}, row appeared ${appearedMs ?? "never"} ms`,
       );
       return { appearedMs, worstMs };
     } finally {
       if (tracing) {
         await cdp.send("Tracing.end").catch(() => {});
-        await Promise.race([complete, new Promise((r) => setTimeout(r, 2_000))]);
+        await Promise.race([complete, new Promise((r) => setTimeout(r, TRACE_ABORT_FLUSH_MS))]);
       }
       cdp.off("Tracing.dataCollected", onData);
     }
   });
 }
 
-/** The two perf verdicts for one agent count: p95 frame of the settled sample, then the row-change recalc. */
+/** The two perf verdicts for one agent count: p95 frame of the steady sample, then the row-change recalc. */
 export function perfVerdicts(
   agents: number,
   steady: Sample | null,
