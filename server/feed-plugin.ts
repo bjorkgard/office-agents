@@ -18,7 +18,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
-import { ATTENTION_STALE_MS, DESKS_PER_ROW } from "../shared/tuning.ts";
+import { ATTENTION_STALE_MS, DESK_CAP, DESKS_PER_ROW } from "../shared/tuning.ts";
 import { parseAgentEvent } from "../shared/events.ts";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, normalizeBatch } from "./normalize.ts";
@@ -158,8 +158,9 @@ export function createSeatTable(): SeatTable {
 /**
  * Seats a session. A seated session keeps its desk; a new one takes a free desk beside
  * a desk of its own project (same row, left then right), else the first free desk.
+ * Returns null when every desk up to DESK_CAP is taken; the session seats on a later start.
  */
-export function assignSeat(table: SeatTable, sessionId: string, projectId: string): number {
+export function assignSeat(table: SeatTable, sessionId: string, projectId: string): number | null {
   const existing = table.bySession.get(sessionId);
   if (existing !== undefined) return existing;
   const isFree = (d: number) => d >= 0 && (table.desks[d] ?? null) === null;
@@ -175,6 +176,7 @@ export function assignSeat(table: SeatTable, sessionId: string, projectId: strin
     desk = table.desks.findIndex((o) => o === null);
     if (desk < 0) desk = table.desks.length;
   }
+  if (desk >= DESK_CAP) return null;
   table.desks[desk] = sessionId;
   table.bySession.set(sessionId, desk);
   table.projectOf.set(sessionId, projectId);
@@ -1015,7 +1017,9 @@ export function createFeed(options: FeedOptions = {}) {
         if (event.kind === "agent_started" && event.agentId === null) {
           const before = seats.bySession.get(event.sessionId);
           const desk = assignSeat(seats, event.sessionId, file.projectId);
-          if (before === undefined) send({ type: "seat", sessionId: event.sessionId, desk });
+          if (desk === null) {
+            if (before === undefined) log(`no free desk for ${loggable(event.sessionId)}`);
+          } else if (before === undefined) send({ type: "seat", sessionId: event.sessionId, desk });
         }
         ring.add(event);
         send({ type: "event", event });

@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite-plus";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ATTENTION_STALE_MS } from "../shared/tuning.ts";
+import { ATTENTION_STALE_MS, DESK_CAP } from "../shared/tuning.ts";
 import {
   assignSeat,
   createFeed,
@@ -855,6 +855,22 @@ describe("seat table", () => {
     expect(assignSeat(u, "m", "p1")).toBe(2);
   });
 
+  it("assignSeat refuses a seat past the cap", () => {
+    const t = createSeatTable();
+    for (let i = 0; i < DESK_CAP; i++) expect(assignSeat(t, `s${i}`, "p1")).toBe(i);
+    expect(assignSeat(t, "late", "p1")).toBeNull();
+    expect(t.bySession.has("late")).toBe(false);
+    expect(t.desks).toHaveLength(DESK_CAP);
+    expect(assignSeat(t, "s3", "p1")).toBe(3);
+  });
+
+  it("assignSeat reuses a freed desk when full", () => {
+    const t = createSeatTable();
+    for (let i = 0; i < DESK_CAP; i++) assignSeat(t, `s${i}`, "p1");
+    releaseSeat(t, "s7");
+    expect(assignSeat(t, "late", "p2")).toBe(7);
+  });
+
   it("does not seat across a row boundary", () => {
     const t = createSeatTable();
     t.desks = ["a", "x", "y", "z"];
@@ -1373,6 +1389,47 @@ describe("feed", () => {
     expect(gones(res)).toEqual([{ type: "gone", sessionId: sessionOf("top-live"), agentId: null }]);
     expect(snapshotOf(feed)).toMatchObject({ events: [], seats: {} });
     expect(feed.status().filesTracked).toBe(0);
+  });
+
+  describe("with every desk taken", () => {
+    const names = Array.from({ length: DESK_CAP + 1 }, (_, i) => `full-${i}`);
+    const seatedIn = (feed: ReturnType<typeof createFeed>) => Object.keys(snapshotOf(feed).seats);
+
+    it("refused session sends no seat frame", async () => {
+      const lines: string[] = [];
+      for (const n of names) putTop("p1", "top-live", undefined, n);
+      const feed = createFeed({ root, log: (l) => lines.push(l) });
+      await feed.scanOnce();
+      const seated = seatedIn(feed);
+      expect(seated).toHaveLength(DESK_CAP);
+      const refused = names.filter((n) => !seated.includes(n));
+      expect(refused).toHaveLength(1);
+      expect(lines.filter((l) => l.includes("no free desk"))).toHaveLength(1);
+      const { res } = call(feed, fakeReq("/__office/events"));
+      expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([]);
+    });
+
+    it("released seat lets a refused session seat on a later start", async () => {
+      for (const n of names) putTop("p1", "top-live", undefined, n);
+      const feed = createFeed({ root, log: () => {} });
+      await feed.scanOnce();
+      const seated = seatedIn(feed);
+      const refused = names.find((n) => !seated.includes(n)) as string;
+      const freed = snapshotOf(feed).seats[seated[0]];
+      const { res } = call(feed, fakeReq("/__office/events"));
+      const lines = fixtureLines("top-live");
+      const refusedFile = join(root, "p1", `${refused}.jsonl`);
+      await feed.scanOnce();
+      expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([]);
+      utimesSync(join(root, "p1", `${seated[0]}.jsonl`), aged(), aged());
+      await feed.scanOnce();
+      truncateSync(refusedFile, 0);
+      writeFileSync(refusedFile, lines[0].replaceAll(sessionOf("top-live"), refused) + "\n");
+      await feed.scanOnce();
+      expect(res.written.map(frame).filter((f) => f.type === "seat")).toEqual([
+        { type: "seat", sessionId: refused, desk: freed },
+      ]);
+    });
   });
 
   it("resends the seat after gone when a top-level file is truncated", async () => {
