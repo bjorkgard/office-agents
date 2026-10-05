@@ -8,6 +8,7 @@ import {
   decide,
   hero,
   makeRunRoot,
+  medianOf,
   officeEnv,
   p95,
   RECALC_BUDGET_MS,
@@ -17,6 +18,7 @@ import {
   rowVerdict,
   specResults,
   startOffice,
+  worstRecalc,
 } from "./release.ts";
 import { agentFixtureSet, removeRoot, twelveAgentFixtureSet } from "./support.ts";
 
@@ -229,23 +231,115 @@ describe("burstRecalc", () => {
   });
 });
 
+describe("worstRecalc", () => {
+  const mark = { name: "row-write", ph: "R", ts: 1_000_000 };
+  const layout = (ts: number, dur: number, ph = "X", name = "UpdateLayoutTree") => ({
+    name,
+    ph,
+    ts,
+    dur,
+  });
+
+  it("returns the longest UpdateLayoutTree in the window, in ms", () => {
+    const events = [
+      mark,
+      layout(1_000_100, 4_000),
+      layout(1_200_000, 12_500),
+      layout(1_300_000, 900),
+    ];
+    expect(worstRecalc(events, 1500)).toBe(12.5);
+  });
+
+  it("ignores events before the mark, after the window, other names and non-X phases", () => {
+    const events = [
+      mark,
+      layout(999_999, 90_000),
+      layout(1_000_000 + 1_500_001, 80_000),
+      layout(1_100_000, 70_000, "X", "Layout"),
+      layout(1_100_000, 60_000, "B"),
+      layout(1_100_000, 3_000),
+    ];
+    expect(worstRecalc(events, 1500)).toBe(3);
+  });
+
+  it("includes events exactly at the mark and at the window end", () => {
+    expect(worstRecalc([mark, layout(1_000_000, 2_000), layout(2_500_000, 5_000)], 1500)).toBe(5);
+  });
+
+  it("returns null with no mark, which must never read as a pass", () => {
+    expect(worstRecalc([layout(1_100_000, 5_000)], 1500)).toBeNull();
+  });
+
+  it("returns null with no qualifying event", () => {
+    expect(worstRecalc([mark, layout(1_100_000, 5_000, "X", "Layout")], 1500)).toBeNull();
+  });
+});
+
+describe("medianOf", () => {
+  it("takes the middle of an odd count", () => {
+    expect(medianOf([9, 1, 5])).toBe(5);
+  });
+
+  it("averages the middle two of an even count", () => {
+    expect(medianOf([4, 1, 3, 2])).toBe(2.5);
+  });
+
+  it("returns null for no values", () => {
+    expect(medianOf([])).toBeNull();
+  });
+});
+
 describe("rowChangeVerdict", () => {
-  it("fails with the reason when the new agents never rendered", () => {
-    const v = rowChangeVerdict({ appearedMs: null, recalcMs: 0, chunkCount: 30 });
+  const rep = (worstMs: number | null, appearedMs: number | null = 4300) => ({
+    appearedMs,
+    worstMs,
+  });
+
+  it("passes at a median of exactly the budget", () => {
+    const v = rowChangeVerdict([rep(10), rep(16), rep(30)], [50, 60, 70]);
+    expect(v.status).toBe("PASS");
+  });
+
+  it("fails just over the budget", () => {
+    expect(rowChangeVerdict([rep(10), rep(16.1), rep(16.1)], [1, 2, 3]).status).toBe("FAIL");
+  });
+
+  it("is the median, so one outlier repeat does not decide", () => {
+    expect(rowChangeVerdict([rep(5), rep(6), rep(90)], [1, 2, 3]).status).toBe("PASS");
+  });
+
+  it("fails when any repeat never saw the new agents, naming the reason", () => {
+    const v = rowChangeVerdict([rep(5), rep(5, null), rep(5)], [1, 2, 3]);
     expect(v.status).toBe("FAIL");
     expect(v.measured).toContain("never appeared");
   });
 
-  it("judges the burst figure against the budget once the row appeared", () => {
-    const ok = rowChangeVerdict({ appearedMs: 4300, recalcMs: 16, chunkCount: 30 });
-    expect(ok.status).toBe("PASS");
-    expect(ok.measured).toContain("4300");
-    expect(rowChangeVerdict({ appearedMs: 4300, recalcMs: 17, chunkCount: 30 }).status).toBe(
-      "FAIL",
-    );
+  it("fails when any repeat has no worst event", () => {
+    expect(rowChangeVerdict([rep(5), rep(null), rep(5)], [1, 2, 3]).status).toBe("FAIL");
   });
 
-  it("fails when the window measured no frames", () => {
-    expect(rowChangeVerdict({ appearedMs: 100, recalcMs: 1, chunkCount: 0 }).status).toBe("FAIL");
+  it("fails with no repeats", () => {
+    expect(rowChangeVerdict([], []).status).toBe("FAIL");
+  });
+
+  it("reports every repeat value, the old burst figure and the appeared times", () => {
+    const v = rowChangeVerdict(
+      [rep(11.2, 4100), rep(12.4, 4200), rep(13.6, 4300)],
+      [55.5, 44.4, null],
+    );
+    for (const s of [
+      "11.2",
+      "12.4",
+      "13.6",
+      "12.4 ms",
+      "55.5",
+      "44.4",
+      "old burst method",
+      "4100",
+      "4200",
+      "4300",
+    ]) {
+      expect(v.measured).toContain(s);
+    }
   });
 });

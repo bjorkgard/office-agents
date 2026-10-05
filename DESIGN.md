@@ -275,14 +275,16 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 
 ## Performance
 
-Measured 2026-10-04 with `vp run perf` (4 runs), headless Chrome 153.0.8010.12 on an Apple M1 Max. Method: `e2e/release.ts` starts a temporary feed with 12 and with 24 agents; frame time is the 95th percentile (p95) of requestAnimationFrame deltas; row-change recalc is style recalculation time (`RecalcStyleDuration`), not main-thread time, measured as the largest 100 ms chunk minus the median chunk, while one row of 4 agents is added (budget 16 ms).
+Measured with `vp run perf` on headless Chrome 153.0.8010.12 and an Apple M1 Max. Method: `e2e/release.ts` starts a temporary feed with 12 and with 24 agents. Frame time is the 95th percentile (p95) of requestAnimationFrame deltas, sampled on its own fixture page. Row-change recalc is the worst single style-recalculation event (`UpdateLayoutTree`) while one row of 4 agents is added, taken as the median of 3 repeats and compared with 16 ms (one frame). Each repeat waits 5 s idle on a settled page before the write, because a row written right after page load costs about 4.5 ms at 24 agents and 17.5 to 29.8 ms after 5 s idle. The old figure (largest 100 ms chunk minus the median chunk, called "burst") is still printed for information only. It was replaced because it compares a sum over about 6 frames with a 1-frame budget and it was unreliable: the 2026-10-05 baseline run before the fix gave 57.3 ms and 20.1 ms in the same run.
 
-| Agents | p95 frame (budget)            | Row-change recalc (budget 16 ms)                  |
-| ------ | ----------------------------- | ------------------------------------------------- |
-| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                             |
-| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms (about 48 to 79 ms across runs), FAIL |
+Cause and fix: the unregistered custom property `--scale` was set inline on `.scene-scaled` and inherited, so each fit change restyled about 41,000 elements at 12 agents. The ring stroke is now computed in JS (`ringStroke(scale)` in `src/office/iso.ts`) and `--scale` is gone. The registered `--fit-*` transition and the desk-pop animation were tested and did not matter. Earlier design docs (`docs/designs/character-art-ceo-review.md` D7 and D8) mention `--scale` strokes, which no longer exist.
 
-Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass). The recalc miss is tracked in TODOS.md "Row-change style recalc over budget".
+| Agents | p95 frame (budget)            | Old: burst, 2026-10-04 (before the fix) | New: worst event, median of 3, 2026-10-05 (after the fix)                   |
+| ------ | ----------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
+| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                   | 14.9 and 14.7 ms in two runs (about 48 ms before the fix, fresh page), PASS |
+| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms, FAIL                       | 19.1 and 19.5 ms in two runs (single repeats 18.6 to 24.5 ms), FAIL         |
+
+The 12-agent median is only about 1 ms under the budget. The 24-agent miss has no known cause and is tracked in TODOS.md "Row-change style recalc at 24 agents over budget (2026-10-05)". Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass).
 
 ## Open items
 

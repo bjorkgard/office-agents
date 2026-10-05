@@ -367,6 +367,13 @@ export const RECALC_BUDGET_MS = 16;
 const STEADY_MS = 5_000;
 const CHUNK_MS = 100;
 const TAIL_MS = 1_000;
+/** How long after the new agents rendered the traced row-change window stays open. */
+const ROW_TRACE_TAIL_MS = 1_500;
+/** Plain idle before each row write: the gate measures a settled page (D8), not one fresh off load. */
+const ROW_SETTLE_MS = 5_000;
+const REPEATS = 3;
+const TRACE_CATEGORIES =
+  "devtools.timeline,disabled-by-default-devtools.timeline,blink.user_timing";
 const ROW_APPEAR_MS = 15_000;
 const PERF_AGENTS = [12, 24] as const;
 
@@ -405,26 +412,63 @@ export function burstRecalc(chunks: number[]): {
   };
 }
 
-/** Row-change verdict on the burst figure; it only counts once the new agents rendered. */
-export function rowChangeVerdict(m: {
-  appearedMs: number | null;
-  recalcMs: number;
-  chunkCount: number;
-}): Verdict {
-  if (m.appearedMs === null) {
+export type TraceEvent = { name?: string; ph?: string; ts?: number; dur?: number };
+
+/**
+ * Largest single UpdateLayoutTree (style recalc) complete event, in ms, from the `row-write` mark until
+ * windowMs after it. Null without the mark or without such an event, which must never read as a pass.
+ */
+export function worstRecalc(events: TraceEvent[], windowMs: number): number | null {
+  const mark = events.find((e) => e.name === "row-write" && typeof e.ts === "number");
+  if (!mark) return null;
+  const from = mark.ts!;
+  const to = from + windowMs * 1000;
+  let worstUs: number | null = null;
+  for (const e of events) {
+    if (e.name !== "UpdateLayoutTree" || e.ph !== "X") continue;
+    if (typeof e.ts !== "number" || typeof e.dur !== "number") continue;
+    if (e.ts < from || e.ts > to) continue;
+    if (worstUs === null || e.dur > worstUs) worstUs = e.dur;
+  }
+  return worstUs === null ? null : worstUs / 1000;
+}
+
+export function medianOf(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((x, y) => x - y);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+export type RowRepeat = { appearedMs: number | null; worstMs: number | null };
+
+/** Row-change verdict: the median across repeats of the worst single style recalc event; burst figures are display only. */
+export function rowChangeVerdict(repeats: RowRepeat[], burstMs: (number | null)[]): Verdict {
+  const fmt = (v: number | null) => (v === null ? "n/a" : v.toFixed(1));
+  const worst = repeats.map((r) => fmt(r.worstMs)).join("/");
+  const burst = burstMs.map(fmt).join("/");
+  const appeared = repeats.map((r) => r.appearedMs ?? "never").join("/");
+  const info = `old burst method ${burst} ms, row appeared ${appeared} ms after write`;
+  if (repeats.length === 0) {
+    return { status: "FAIL", measured: "row-change style recalc: no repeats measured" };
+  }
+  if (repeats.some((r) => r.appearedMs === null)) {
     return {
       status: "FAIL",
-      measured: `row-change style recalc: new agents never appeared within ${ROW_APPEAR_MS} ms`,
+      measured: `row-change style recalc: new agents never appeared within ${ROW_APPEAR_MS} ms in a repeat (worst events ${worst} ms; ${info})`,
     };
   }
-  const v = budgetVerdict(
-    "row-change style recalc",
-    m.chunkCount === 0 ? null : m.recalcMs,
-    RECALC_BUDGET_MS,
-  );
+  const worsts = repeats.map((r) => r.worstMs);
+  if (worsts.some((w) => w === null)) {
+    return {
+      status: "FAIL",
+      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info})`,
+    };
+  }
+  const median = medianOf(worsts as number[])!;
   return {
-    status: v.status,
-    measured: `${v.measured}, row appeared ${m.appearedMs} ms after write`,
+    status: median <= RECALC_BUDGET_MS ? "PASS" : "FAIL",
+    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info})`,
   };
 }
 
@@ -463,11 +507,51 @@ async function sampleWindow(
   return { frames, recalcMs: (await readRecalcMs(cdp)) - before };
 }
 
-async function perfAt(
+type RepeatResult = RowRepeat & { burstMs: number | null };
+
+/** One fresh office at `agents` in its own page, steady frame sample only. */
+async function frameSample(
   agents: number,
   headed: boolean,
   info: { chrome: string },
-): Promise<Verdict[]> {
+): Promise<Sample> {
+  const root = makeRunRoot();
+  tempDirs.add(root);
+  let office: Office | null = null;
+  try {
+    writeFixtureSet(root, agentFixtureSet(agents), { anchorNow: Date.now() });
+    office = await startOffice({ root });
+    const { chromium } = await import("@playwright/test");
+    const browser = await chromium.launch({ headless: !headed });
+    try {
+      info.chrome = browser.version();
+      const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Performance.enable");
+      await page.goto(office.url);
+      await page.waitForFunction(
+        (n) => document.querySelectorAll(".agent[data-state]").length >= n,
+        agents,
+        { timeout: SMOKE_MS },
+      );
+      return await sampleWindow(page, cdp, STEADY_MS);
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    office?.stop();
+    removeRoot(root);
+    tempDirs.delete(root);
+  }
+}
+
+/** One fresh office at `agents`, idle ROW_SETTLE_MS, then one traced row write. */
+async function rowRepeat(
+  agents: number,
+  headed: boolean,
+  info: { chrome: string },
+  label: string,
+): Promise<RepeatResult> {
   const root = makeRunRoot();
   tempDirs.add(root);
   let office: Office | null = null;
@@ -488,54 +572,69 @@ async function perfAt(
         agents,
         { timeout: SMOKE_MS },
       );
-      const steady = await sampleWindow(page, cdp, STEADY_MS);
-      // Row growth: the feed finds new files on a tree walk. Sample recalc in CHUNK_MS chunks from before the
-      // write until TAIL_MS after the new row rendered; the burst is the largest chunk over the median chunk.
+      await new Promise((r) => setTimeout(r, ROW_SETTLE_MS));
+      // Row growth: the feed finds new files on a tree walk. Trace only this phase. The gate is the worst single
+      // UpdateLayoutTree after the row-write mark; the 100 ms chunk sampler runs alongside for the old burst figure.
       const target = agents + DESKS_PER_ROW;
-      const chunks: { at: number; ms: number }[] = [];
+      const events: TraceEvent[] = [];
+      const onData = (e: { value: TraceEvent[] }) => void events.push(...e.value);
+      cdp.on("Tracing.dataCollected", onData);
+      const complete = new Promise<void>((r) => cdp.once("Tracing.tracingComplete", () => r()));
+      let tracing = false;
       let sampling = true;
-      const wroteAt = Date.now();
-      const sampler = (async () => {
-        let prev = await readRecalcMs(cdp);
-        while (sampling) {
-          await new Promise((r) => setTimeout(r, CHUNK_MS));
-          const cur = await readRecalcMs(cdp);
-          chunks.push({ at: Date.now() - wroteAt, ms: cur - prev });
-          prev = cur;
+      let sampler: Promise<void> = Promise.resolve();
+      const chunks: number[] = [];
+      try {
+        await cdp.send("Tracing.start", {
+          categories: TRACE_CATEGORIES,
+          transferMode: "ReportEvents",
+        });
+        tracing = true;
+        sampler = (async () => {
+          let prev = await readRecalcMs(cdp);
+          while (sampling) {
+            await new Promise((r) => setTimeout(r, CHUNK_MS));
+            const cur = await readRecalcMs(cdp);
+            chunks.push(cur - prev);
+            prev = cur;
+          }
+        })();
+        await page.evaluate(() => performance.mark("row-write"));
+        const wroteAt = Date.now();
+        writeFixtureSet(root, files.slice(agents), { anchorNow: wroteAt });
+        const appeared = await page
+          .waitForFunction(
+            (n) => document.querySelectorAll(".agent[data-state]").length >= n,
+            target,
+            { timeout: ROW_APPEAR_MS, polling: 20 },
+          )
+          .then(() => true)
+          .catch(() => false);
+        const appearedMs = appeared ? Date.now() - wroteAt : null;
+        // The old chunk figure keeps its TAIL_MS window; tracing stays on for the rest of ROW_TRACE_TAIL_MS.
+        if (appeared) await new Promise((r) => setTimeout(r, TAIL_MS));
+        sampling = false;
+        await sampler;
+        if (appeared) await new Promise((r) => setTimeout(r, ROW_TRACE_TAIL_MS - TAIL_MS));
+        tracing = false;
+        await cdp.send("Tracing.end");
+        await complete;
+        const worstMs =
+          appearedMs === null ? null : worstRecalc(events, appearedMs + ROW_TRACE_TAIL_MS);
+        const burstMs = burstRecalc(chunks)?.burstMs ?? null;
+        console.log(
+          `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms, row appeared ${appearedMs ?? "never"} ms, old burst ${burstMs === null ? "n/a" : burstMs.toFixed(1)} ms`,
+        );
+        return { appearedMs, worstMs, burstMs };
+      } finally {
+        sampling = false;
+        await sampler.catch(() => {});
+        if (tracing) {
+          await cdp.send("Tracing.end").catch(() => {});
+          await Promise.race([complete, new Promise((r) => setTimeout(r, 2_000))]);
         }
-      })();
-      writeFixtureSet(root, files.slice(agents), { anchorNow: wroteAt });
-      const appeared = await page
-        .waitForFunction(
-          (n) => document.querySelectorAll(".agent[data-state]").length >= n,
-          target,
-          { timeout: ROW_APPEAR_MS, polling: 20 },
-        )
-        .then(() => true)
-        .catch(() => false);
-      const appearedMs = appeared ? Date.now() - wroteAt : null;
-      if (appeared) await new Promise((r) => setTimeout(r, TAIL_MS));
-      sampling = false;
-      await sampler;
-      const burst = burstRecalc(chunks.map((c) => c.ms));
-      console.log(
-        `  ${agents} agents row appeared ${appearedMs ?? "never"} ms after write; ${chunks.length} chunks of ${CHUNK_MS} ms: ` +
-          (burst === null
-            ? "n/a"
-            : `max ${burst.maxMs.toFixed(1)} ms (chunk ending ${chunks[burst.maxIndex]!.at} ms after write), median ${burst.medianMs.toFixed(1)} ms, burst ${burst.burstMs.toFixed(1)} ms`),
-      );
-      return [
-        budgetVerdict(
-          `p95 frame, ${steady.frames.length} frames`,
-          p95(steady.frames),
-          FRAME_BUDGET_MS[agents]!,
-        ),
-        rowChangeVerdict({
-          appearedMs,
-          recalcMs: burst?.burstMs ?? 0,
-          chunkCount: chunks.length,
-        }),
-      ];
+        cdp.off("Tracing.dataCollected", onData);
+      }
     } finally {
       await browser.close();
     }
@@ -544,6 +643,48 @@ async function perfAt(
     removeRoot(root);
     tempDirs.delete(root);
   }
+}
+
+async function perfAt(
+  agents: number,
+  headed: boolean,
+  info: { chrome: string },
+): Promise<Verdict[]> {
+  let steady: Sample | null = null;
+  if (!shuttingDown) {
+    try {
+      steady = await frameSample(agents, headed, info);
+    } catch (e) {
+      console.log(
+        `  ${agents} agents frame sample: failed, ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+  const repeats: RepeatResult[] = [];
+  for (let i = 1; i <= REPEATS; i++) {
+    if (shuttingDown) break;
+    try {
+      repeats.push(await rowRepeat(agents, headed, info, `repeat ${i}`));
+    } catch (e) {
+      console.log(
+        `  ${agents} agents repeat ${i}: failed, ${e instanceof Error ? e.message : String(e)}`,
+      );
+      repeats.push({ appearedMs: null, worstMs: null, burstMs: null });
+    }
+  }
+  return [
+    steady === null || steady.frames.length === 0
+      ? { status: "FAIL", measured: "p95 frame: no frames measured" }
+      : budgetVerdict(
+          `p95 frame, ${steady.frames.length} frames`,
+          p95(steady.frames),
+          FRAME_BUDGET_MS[agents]!,
+        ),
+    rowChangeVerdict(
+      repeats,
+      repeats.map((r) => r.burstMs),
+    ),
+  ];
 }
 
 async function perf(): Promise<number> {

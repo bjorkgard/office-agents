@@ -12,6 +12,7 @@ import {
   layoutOffice,
   placeBubbles,
   project,
+  ringStroke,
   type BubbleBox,
   type PlacedBubble,
 } from "./iso";
@@ -369,5 +370,18 @@ describe("placeBubbles", () => {
     const out = placeBubbles([box("short", 0, 10, 1), box("long", 0, 10, 9)], [head]);
     expect(out.find((b) => b.id === "long")).toMatchObject({ y: 10, shift: 0, hidden: false });
     expect(out.find((b) => b.id === "short")!.hidden).toBe(true);
+  });
+});
+
+describe("ringStroke", () => {
+  it("keeps the ring 2 screen px wide at every scale", () => {
+    expect(ringStroke(1)).toBe(2);
+    expect(ringStroke(0.5)).toBe(4);
+    expect(ringStroke(2)).toBe(1);
+  });
+
+  it("floors the scale at MIN_SCALE for zero and NaN", () => {
+    expect(ringStroke(0)).toBe(2 / MIN_SCALE);
+    expect(ringStroke(Number.NaN)).toBe(2 / MIN_SCALE);
   });
 });

@@ -20,6 +20,7 @@ import {
   HIT_MIN,
   layoutOffice,
   placeBubbles,
+  ringStroke,
   type BubbleBox,
   type BubbleObstacle,
   type Viewport,
@@ -463,7 +464,6 @@ export function Scene({
             width: layout.box.width,
             height: layout.box.height,
             transform: `translate(${fit.x}px, ${fit.y}px) scale(${scale})`,
-            "--scale": scale,
           } as CSSProperties
         }
       >
@@ -508,7 +508,7 @@ export function Scene({
                 ry={26}
                 fill="none"
                 stroke="var(--accent)"
-                style={{ strokeWidth: "calc(2px / var(--scale))" }}
+                style={{ strokeWidth: ringStroke(scale) }}
               />
             </svg>
           ))}

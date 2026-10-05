@@ -789,6 +789,20 @@ describe("Scene fit (eng D2/E5, design D7)", () => {
     }
   });
 
+  it("draws the ring at 2 screen px via a JS stroke width, with no inherited --scale", () => {
+    // A viewport whose layout scale is strictly between 0.5 and 1, so a hard-coded 2 or `2 * scale` fails.
+    const shrunk = { width: 900, height: 800 };
+    const { scale } = layoutOffice(4, shrunk);
+    expect(scale).toBeGreaterThan(0.5);
+    expect(scale).toBeLessThan(1);
+    const small = render([agent("s1", null), waving("s2", 0)], { s1: 0, s2: 1 }, null, shrunk);
+    const ring = /data-ring="[^"]*"[\s\S]*?<ellipse[^>]*style="([^"]*)"/.exec(small)![1];
+    expect(ring).toBe(`stroke-width:${2 / scale}`);
+    const layer = /class="scene-scaled" style="([^"]*)"/.exec(html)![1];
+    expect(layer).not.toContain("--scale");
+    expect(html).not.toContain("var(--scale)");
+  });
+
   it("starts with no fit transition state: the layer and overlay carry no transition inline", () => {
     expect(html).not.toMatch(/transition/);
   });
