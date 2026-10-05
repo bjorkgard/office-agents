@@ -68,11 +68,23 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 to 16.8 ms against 20 and 33 ms).
 
-**Context:** Numbers and method are in DESIGN.md "Performance". Next step: a trace breakdown of what the settled 24-agent insertion restyles. A fresh page restyles about 3,200 elements with no fit change and costs about 4.5 ms, so this looks like a page-age effect; the mechanism is untested. Safari is not measured.
+**Exit rule (2026-10-05 perf review, D8-A):** if the 24-agent median is still above 16 ms after the trace attribution and a `contain: layout style` probe, record the measured median and cause in DESIGN.md as a dated exception (24-agent budget = measured median + 10%), keep 12 agents at 16 ms. Numbers and method are in DESIGN.md "Performance". Next step: a trace breakdown of what the settled 24-agent insertion restyles. A fresh page restyles about 3,200 elements with no fit change and costs about 4.5 ms, so this looks like a page-age effect; the mechanism is untested. Safari is not measured.
 
 **Effort:** M
 **Priority:** P1
 **Depends on:** None
+
+#### Dev perf HUD in ?art (2026-10-05)
+
+**What:** DEV-only overlay in `?art` showing the last row-change recalc ms and the live DOM element count.
+
+**Why:** Live feedback while tuning containment, and for the M10 Safari pass.
+
+**Context:** Deferred from the 2026-10-05 perf review (X5); the trace attribution in `e2e/release.ts perf` gives the numbers first.
+
+**Effort:** S
+**Priority:** P4
+**Depends on:** Row-change style recalc at 24 agents over budget (2026-10-05)
 
 #### Frame cost and caches in the break and paper code
 
@@ -271,6 +283,8 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Why:** None bites at a handful of sessions; each grows with transcript count.
 
 **Context:** Measure with a few hundred files before changing anything. Files: `server/feed-plugin.ts`, `src/office/machine.ts`.
+
+**First step (deferred from the 2026-10-05 perf review, X4):** write a fixture generator (300+ transcript files) and a timing script for cold start, the 5 s stale-file lstat walk and the per-second idle poll. Do it after the two P1 perf items land.
 
 **Effort:** M (human ~1 day / CC ~30min)
 **Priority:** P2
