@@ -442,19 +442,13 @@ export function createTailer(opts: TailerOptions) {
   function flush(): void {
     // One stable sort by ts across files. A file's own order is kept by sorting on its running
     // max ts, so a line stamped earlier than its predecessor never jumps ahead of it.
-    const tagged: Array<{
-      key: number;
-      file: number;
-      at: number;
-      projectId: string;
-      event: AgentEvent;
-    }> = [];
+    const tagged: Array<{ key: number; file: number; at: number; event: AgentEvent }> = [];
     let n = 0;
-    for (const [file, events] of buckets) {
+    for (const events of buckets.values()) {
       let key = Number.NEGATIVE_INFINITY;
       events.forEach((event, at) => {
         key = Math.max(key, event.ts);
-        tagged.push({ key, file: n, at, projectId: file.projectId, event });
+        tagged.push({ key, file: n, at, event });
       });
       n++;
     }
@@ -471,8 +465,8 @@ export function createTailer(opts: TailerOptions) {
       run = null;
     };
     for (const t of tagged) {
-      if (run !== null && run.projectId !== t.projectId) deliver();
-      run ??= { projectId: t.projectId, events: [] };
+      if (run !== null && run.projectId !== t.event.projectId) deliver();
+      run ??= { projectId: t.event.projectId, events: [] };
       run.events.push(t.event);
     }
     deliver();
