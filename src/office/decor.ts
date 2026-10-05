@@ -182,6 +182,49 @@ export function setHourOverride(hour: number | null): void {
 }
 export function setSeedOverride(text: string): void {
   seedOverride = text;
+  decorDay = null;
+}
+
+/** How many color variants the bookshelf and pictures have (props.ts decorVariantGrid). */
+export const DECOR_VARIANTS = 3;
+
+/**
+ * The bookshelf and picture color variant, 0 to 2, for a local date key. Pure; its own namespaced
+ * hash, so it is not tied to the window's weather.
+ */
+export function decorVariantFor(date: string, salt = ""): number {
+  return hash(`decor:${date}:${salt}`) % DECOR_VARIANTS;
+}
+
+/** A variant from a `?decor=` value: exactly 0, 1 or 2, else null (ignored). */
+export function parseDecorParam(text: string | null): number | null {
+  return text !== null && /^[0-2]$/.test(text) ? Number(text) : null;
+}
+
+// Dev-only (main.tsx): ?decor=<0-2> pins the decor variant; anything else is ignored.
+let decorOverride: number | null = null;
+export function setDecorOverride(n: number | null): void {
+  decorOverride = n !== null && Number.isInteger(n) && n >= 0 && n < DECOR_VARIANTS ? n : null;
+}
+
+// The last local day the variant was computed for: [from, to) in epoch ms, so a render inside the
+// same day is two comparisons, not a Date and a hash.
+let decorDay: { from: number; to: number; variant: number } | null = null;
+
+/** The decor variant at `now`: the dev override if valid, else the local date's (cached per local day). */
+export function decorVariantAt(now: number): number {
+  if (decorOverride !== null) return decorOverride;
+  if (decorDay && now >= decorDay.from && now < decorDay.to) return decorDay.variant;
+  const variant = decorVariantFor(localDateKey(now), seedOverride);
+  const d = new Date(now);
+  if (!Number.isNaN(d.getTime())) {
+    decorDay = {
+      from: new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(),
+      to: new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime(),
+      variant,
+    };
+  }
+  return variant;
 }
 
 /** The dev overrides in force, for the style sheet; empty when none is set. */
@@ -189,6 +232,7 @@ export function activeOverrides(): string[] {
   return [
     ...(sceneOverride !== null ? [`scene=${sceneOverride}`] : []),
     ...(hourOverride !== null ? [`hour=${hourOverride}`] : []),
+    ...(decorOverride !== null ? [`decor=${decorOverride}`] : []),
     ...(seedOverride !== "" ? [`seed=${seedOverride}`] : []),
   ];
 }

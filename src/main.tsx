@@ -4,7 +4,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
-import { parseHourParam, setHourOverride, setSceneOverride, setSeedOverride } from "./office/decor";
+import {
+  parseDecorParam,
+  parseHourParam,
+  setDecorOverride,
+  setHourOverride,
+  setSceneOverride,
+  setSeedOverride,
+} from "./office/decor";
 
 const root = createRoot(document.getElementById("root")!);
 const params = new URLSearchParams(location.search);
@@ -18,6 +25,9 @@ if (import.meta.env.DEV) {
   if (hour !== null) setHourOverride(hour);
   const seed = params.get("seed");
   if (seed !== null) setSeedOverride(seed);
+  // ?decor=<0-2> pins the bookshelf and picture color variant (else it varies by local date; others ignored).
+  const decor = parseDecorParam(params.get("decor"));
+  if (decor !== null) setDecorOverride(decor);
 }
 
 // Dev-only style sheet at ?art (any path); the dynamic import keeps it out of production.

@@ -17,6 +17,7 @@ import {
   assignWorkDesks,
   idleTrip,
   subagentArrivalMs,
+  subagentDoorAt,
   subagentLeaveMs,
   subagentPath,
   idleTripNext,
@@ -235,6 +236,36 @@ describe("subagentPath", () => {
       if (Math.abs(dx) < 0.5) continue;
       expect(out[i].s.mirror).toBe(dx < 0);
     }
+  });
+
+  // Value: protects=the door opens exactly when a leaver reaches it (paper.ts reads this time);
+  // fails_when=subagentDoorAt drifts from the path subagentPath walks, or gains a leaver that never
+  // arrives; why_new=paper.test only checks the windows built from it, not it against the path;
+  // seam=none
+  it("subagentDoorAt is when a leaver first stands at the door, before its fade", () => {
+    const reach = subagentDoorAt(leaving, ctx)!;
+    expect(reach).toBeGreaterThan(leaving.leftAt);
+    expect(dist(at(leaving, reach + FADE_MS), geo.door)).toBeLessThan(1);
+    expect(dist(at(leaving, reach), geo.door)).toBeLessThan(1);
+    expect(at(leaving, reach).opacity).toBe(1);
+    expect(at(leaving, reach + FADE_MS / 2).opacity).toBeLessThan(1);
+    expect(dist(at(leaving, reach - 100), geo.door)).toBeGreaterThan(1);
+  });
+
+  it("subagentDoorAt is null for a non-leaver and for a leaver with no home", () => {
+    expect(subagentDoorAt(arrived, ctx)).toBeNull();
+    expect(subagentDoorAt(leaving, { geo, parentDesk: null, workDesk: null })).toBeNull();
+  });
+
+  it("a resumed leaver still reaches the door", () => {
+    const resumed: SubagentCtx = {
+      ...ctx,
+      resume: { at: 20_000, point: stand(geo.slot(0, 0)), mirror: false, carry: false },
+    };
+    const reach = subagentDoorAt(leaving, resumed)!;
+    expect(reach).toBeGreaterThan(leaving.leftAt);
+    expect(dist(subagentPath(leaving, resumed, reach + FADE_MS)!, geo.door)).toBeLessThan(1);
+    expect(subagentPath(leaving, resumed, reach)!.opacity).toBe(1);
   });
 
   it("stays inside the floor for every parent and work desk in every room", () => {

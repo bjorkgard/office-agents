@@ -13,7 +13,7 @@ import { SHIRTS } from "../src/office/palette.ts";
 import { titleFor } from "../src/office/useDocumentChrome.ts";
 import { hashId } from "../server/sanitize-fixtures.ts";
 import { attachFeedStatus } from "./feed-status.ts";
-import { appendLive, coreSessions, liveLine, type LiveLine } from "./support.ts";
+import { appendLive, coreSessions, liveLine, VISUAL_QUERY, type LiveLine } from "./support.ts";
 
 // A new file is found by the tree walk (5 s). R1 on the fixture fires once the clock reaches the
 // open tool call's age (its line is stamped past the 10 s timer), not from a wait in the spec.
@@ -521,7 +521,7 @@ test("a narrow window shows every chip, wrapped", { tag: "@twelve" }, async ({ p
 test("the office scene looks as designed", { tag: "@visual" }, async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/?hour=14&seed=e2e&scene=afternoon");
+  await page.goto(VISUAL_QUERY);
   // The scene sits in an overflow-y container: a classic scrollbar (macOS with a mouse attached)
   // would shrink the shot by 15px, an overlay scrollbar (trackpad only) would not. Hide it so the
   // baseline does not depend on the OS scrollbar setting.

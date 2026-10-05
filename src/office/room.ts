@@ -76,6 +76,15 @@ export const PATCH_OFF = [
   [0.41, 0.63],
 ] as const;
 export const PATCH_GAP = 0.04;
+/**
+ * The light fan on the floor in front of the open door, in grid steps: half-width along the wall at
+ * the gap, then the half-width and distance off the wall where the near tone ends and the far tone ends.
+ */
+export const DOOR_LIGHT = {
+  gap: 0.2,
+  near: { half: 0.28, off: 0.25 },
+  far: { half: 0.4, off: 0.55 },
+} as const;
 
 export type WindowSpot = { name: string; wall: "left" | "right"; at: number };
 /**
@@ -86,6 +95,26 @@ export type WindowSpot = { name: string; wall: "left" | "right"; at: number };
 export const WINDOW_SPOTS: readonly WindowSpot[] = [
   { name: "window left 1", wall: "left", at: 1.25 },
   { name: "window right 1", wall: "right", at: 0.35 },
+];
+
+/**
+ * Left-wall dressing past the window (design 7B): a bookshelf standing on the wall base and two
+ * pictures hung PICTURE_LIFT px above it. `at` is the middle column's wall point, in grid steps
+ * like WINDOW_SPOTS; each is drawn only if its whole stretch fits on the wall (at + half <= the
+ * wall's front end), so the shelf shows from two rows and the pictures from three, and none
+ * moves when rows are added.
+ */
+export const PICTURE_LIFT = 56;
+export type DecorSpot = {
+  name: string;
+  prop: "BOOKSHELF" | "PICTURE_A" | "PICTURE_B";
+  at: number;
+  lift: number;
+};
+export const DECOR_SPOTS: readonly DecorSpot[] = [
+  { name: "bookshelf", prop: "BOOKSHELF", at: 1.625, lift: 0 },
+  { name: "picture a", prop: "PICTURE_A", at: 1.915, lift: PICTURE_LIFT },
+  { name: "picture b", prop: "PICTURE_B", at: 2.141, lift: PICTURE_LIFT },
 ];
 
 /** Screen slope of both walls' base lines (rise over run). */
@@ -102,6 +131,10 @@ export const WALL_ANCHOR = {
   COFFEE_STATION: { x: 30 * CELL, y: 47 * CELL },
   // The jug column's bottom at the middle column (props.ts DISPENSER; the base falls to the right).
   DISPENSER: { x: 8 * CELL, y: 33 * CELL },
+  // Bottom edge at the middle column of the sheared frames (props.ts BOOKSHELF, PICTURE_A, PICTURE_B).
+  BOOKSHELF: { x: 10 * CELL, y: 34 * CELL },
+  PICTURE_A: { x: 7 * CELL, y: 19 * CELL },
+  PICTURE_B: { x: 6 * CELL, y: 16 * CELL },
 } as const;
 
 /** Box of a wall prop whose base anchor stands on the wall point `at`. */
@@ -146,6 +179,12 @@ const windowSpan = (at: number) => ({
 });
 
 export const WALL_LAYOUT: readonly WallItem[] = [
+  ...DECOR_SPOTS.map((d) => ({
+    name: d.name,
+    wall: "left" as const,
+    lane: "wall" as const,
+    ...span(d.at, d.prop),
+  })),
   { name: "door", wall: "left", lane: "wall", ...span(DOOR_AT, "DOOR") },
   { name: "tall plant", wall: "left", lane: "floor", ...span(PLANT_TALL_AT.along, "PLANT_TALL") },
   { name: "clock", wall: "right", lane: "wall", ...span(CLOCK_AT, "CLOCK") },
@@ -195,6 +234,9 @@ export type PlacedWindow = {
   patch: Point[][];
 };
 
+/** A shelf or picture on the back-left wall: `base` is where its WALL_ANCHOR lands. */
+export type PlacedDecor = { name: string; prop: DecorSpot["prop"]; base: Point };
+
 export type RoomShell = {
   floor: Point[];
   /** The shaded half of the floor's checker pattern, one polygon per tile. */
@@ -208,11 +250,15 @@ export type RoomShell = {
   door: Point;
   coffee: Point;
   dispenser: Point;
+  /** The floor parallelogram lit by the open door (4 points). */
+  doorLight: { near: Point[]; far: Point[] };
   /** Center of the clock on the back-right wall. */
   clock: Point;
   plantTall: Point;
   plantBush: Point;
   windows: PlacedWindow[];
+  /** Left-wall dressing that fits, each with the wall point its base anchor stands on. */
+  wallDecor: PlacedDecor[];
   /** Floor spot `i` in front of the door (queue), the coffee station and the dispenser (breaks). */
   queueSpot: (i: number) => Point;
   coffeeSpot: (i: number) => Point;
@@ -278,6 +324,13 @@ export function roomShell(layout: OfficeLayout): RoomShell {
     return { name: w.name, wall: w.wall, center: { x: base.x, y: base.y - WINDOW_LIFT }, patch };
   });
 
+  const wallDecor = DECOR_SPOTS.filter(
+    (d) => d.at + propSize(d.prop).width / 2 / STEP_PX <= frontY,
+  ).map((d): PlacedDecor => {
+    const base = at(wallX, d.at);
+    return { name: d.name, prop: d.prop, base: { x: base.x, y: base.y - d.lift } };
+  });
+
   const coffee = at(COFFEE_AT, wallY);
   const dispenser = at(DISPENSER_AT, wallY);
   const door = at(wallX, DOOR_AT);
@@ -293,10 +346,25 @@ export function roomShell(layout: OfficeLayout): RoomShell {
     door,
     coffee,
     dispenser,
+    doorLight: {
+      near: [
+        at(wallX, DOOR_AT - DOOR_LIGHT.gap),
+        at(wallX, DOOR_AT + DOOR_LIGHT.gap),
+        at(wallX + DOOR_LIGHT.near.off, DOOR_AT + DOOR_LIGHT.near.half),
+        at(wallX + DOOR_LIGHT.near.off, DOOR_AT - DOOR_LIGHT.near.half),
+      ],
+      far: [
+        at(wallX + DOOR_LIGHT.near.off, DOOR_AT - DOOR_LIGHT.near.half),
+        at(wallX + DOOR_LIGHT.near.off, DOOR_AT + DOOR_LIGHT.near.half),
+        at(wallX + DOOR_LIGHT.far.off, DOOR_AT + DOOR_LIGHT.far.half),
+        at(wallX + DOOR_LIGHT.far.off, DOOR_AT - DOOR_LIGHT.far.half),
+      ],
+    },
     clock: { x: clockBase.x, y: clockBase.y - CLOCK_LIFT },
     plantTall: at(wallX + PLANT_TALL_AT.off, PLANT_TALL_AT.along),
     plantBush: at(wallX + PLANT_BUSH_AT.off, PLANT_BUSH_AT.along),
     windows,
+    wallDecor,
     queueSpot: (i) => at(wallX + QUEUE_OFF, DOOR_AT - i * QUEUE_GAP),
     coffeeSpot: (i) =>
       at(COFFEE_AT + COFFEE_ALONG[Math.min(i, COFFEE_SPOTS - 1)], wallY + COFFEE_OFF),

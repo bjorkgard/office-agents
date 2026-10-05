@@ -19,11 +19,11 @@ import { DEVICES, deviceProp, deviceRect, type Device, type DeviceLook } from ".
 import { WINDOW_SCENE_IDS, activeOverrides, windowScene, type WindowSceneId } from "./decor";
 import { layoutOffice } from "./iso";
 import { DESK_CAP } from "../../shared/tuning";
-import { Clock, WindowArt } from "./RoomDecor";
+import { Clock, DoorLight, PixelDecor, PixelDoorAjar, PixelShadow, WindowArt } from "./RoomDecor";
 import { ART, FLOOR_LIGHT_OPACITY, GLASS, SHIRTS } from "./palette";
 import { roomShell, WINDOW_COLS, WINDOW_ROWS } from "./room";
 import { CELL } from "./pixel";
-import { PROPS, propSize, type PropName } from "./props";
+import { DOOR_AJAR, PROP_SHADOW_AT, PROPS, propSize, SHADOWS, type PropName } from "./props";
 import { HAIRSTYLES, MUG_COL, SEAT_OFFSET, SOLE_ROW } from "./sprites";
 
 const FRAMES: { label: string; props: CharacterRigProps }[] = [
@@ -240,6 +240,83 @@ function WindowTile({
   );
 }
 
+// The floor fan the open door throws, from a real room: the window horizon token, near tone at the
+// floor light's opacity and far tone at half of it.
+const WEDGE = SHEET_SHELL.doorLight;
+const WEDGE_ALL = [...WEDGE.near, ...WEDGE.far];
+const WEDGE_X = Math.min(...WEDGE_ALL.map((p) => p.x));
+const WEDGE_Y = Math.min(...WEDGE_ALL.map((p) => p.y));
+const WEDGE_W = Math.max(...WEDGE_ALL.map((p) => p.x)) - WEDGE_X;
+const WEDGE_H = Math.max(...WEDGE_ALL.map((p) => p.y)) - WEDGE_Y;
+function DoorWedge() {
+  return (
+    <svg
+      width={WEDGE_W}
+      height={WEDGE_H}
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block", overflow: "visible" }}
+    >
+      <DoorLight
+        doorLight={WEDGE}
+        fill={GLASS[windowScene("afternoon").light]}
+        origin={{ x: WEDGE_X, y: WEDGE_Y }}
+      />
+    </svg>
+  );
+}
+
+// Design gate 6A: the decor must not compete with the raised hand, so judge it among 12 agents at 50%.
+function Legibility() {
+  const extra = { scale: 0.5 };
+  return (
+    <section data-legibility>
+      <h2 style={{ fontSize: 14 }}>
+        12 agents (one raised hand), the bookshelf, two pictures, a door ajar and the door light
+        wedge, 50%
+      </h2>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          alignItems: "flex-end",
+          background: "var(--bar)",
+          padding: 8,
+        }}
+      >
+        {TWELVE.map((a) => (
+          <Tile
+            key={a.seed}
+            label={a.seed}
+            {...extra}
+            width={STATION_WIDTH}
+            height={STATION_HEIGHT}
+          >
+            <Workstation {...a} />
+          </Tile>
+        ))}
+        {(["BOOKSHELF", "PICTURE_A", "PICTURE_B"] as const).map((name) => (
+          <Tile key={name} label={name.toLowerCase()} {...extra} {...propSize(name)}>
+            <PixelDecor name={name} variant={0} />
+          </Tile>
+        ))}
+        <Tile
+          label="door ajar"
+          {...extra}
+          width={DOOR_AJAR[0].length * CELL}
+          height={DOOR_AJAR.length * CELL}
+        >
+          <PixelDoorAjar />
+        </Tile>
+        <Tile label="door light wedge" {...extra} width={WEDGE_W} height={WEDGE_H}>
+          <DoorWedge />
+        </Tile>
+      </div>
+    </section>
+  );
+}
+
 function Row({ scale }: { scale: number }) {
   return (
     <section style={{ marginBottom: 24 }}>
@@ -320,6 +397,14 @@ function Row({ scale }: { scale: number }) {
             <PixelProp name={name} />
           </Tile>
         ))}
+        <Tile
+          label="door ajar"
+          scale={scale}
+          width={DOOR_AJAR[0].length * CELL}
+          height={DOOR_AJAR.length * CELL}
+        >
+          <PixelDoorAjar />
+        </Tile>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
         {WINDOW_SCENE_IDS.flatMap((id) =>
@@ -519,12 +604,78 @@ function Cases() {
         <h2 style={{ fontSize: 14 }}>12 agents at 50%, one raised hand (must read first)</h2>
         <AgentRow agents={TWELVE} scale={0.5} label="12 agents" />
       </section>
+      <Legibility />
       <section>
         <h2 style={{ fontSize: 14 }}>Two adjacent raised hands (100%)</h2>
         <AgentRow agents={NEIGHBORS} scale={1} label="neighbors" />
       </section>
       <SilhouetteRow />
     </>
+  );
+}
+
+// The shelf and both pictures in the three date variants (decor.ts decorVariantFor), 100%.
+function DecorVariants() {
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 14 }}>Date variants of the shelf and pictures (100%)</h2>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
+        {[0, 1, 2].map((variant) =>
+          (["BOOKSHELF", "PICTURE_A", "PICTURE_B"] as const).map((name) => {
+            const { width, height } = propSize(name);
+            return (
+              <Tile
+                key={`${name}${variant}`}
+                label={`${name.toLowerCase()} variant ${variant}`}
+                scale={1}
+                width={width}
+                height={height}
+              >
+                <PixelDecor name={name} variant={variant} />
+              </Tile>
+            );
+          }),
+        )}
+      </div>
+    </section>
+  );
+}
+
+// The room's dispenser and counter each over their contact shadow, as RoomDecor stacks them (shadow
+// first, prop on top, shadow offset by PROP_SHADOW_AT); the dispenser's bubbles sit where the room puts them.
+function ContactShadows({ scale }: { scale: number }) {
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <h2 style={{ fontSize: 14 }}>Contact shadows, {Math.round(scale * 100)}%</h2>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-end" }}>
+        {(["DISPENSER", "COFFEE_STATION", "BOOKSHELF"] as const).map((name) => {
+          const { width, height } = propSize(name);
+          const [dx, dy] = PROP_SHADOW_AT[name];
+          const shadow = SHADOWS[name];
+          return (
+            <Tile
+              key={name}
+              label={`${name.toLowerCase()} on its shadow`}
+              scale={scale}
+              width={Math.max(width, (dx + shadow[0].length) * CELL)}
+              height={Math.max(height, (dy + shadow.length) * CELL)}
+            >
+              <div style={{ position: "absolute", left: dx * CELL, top: dy * CELL }}>
+                <PixelShadow name={name} />
+              </div>
+              <div style={{ position: "absolute", left: 0, top: 0 }}>
+                <PixelProp name={name} />
+                {name === "DISPENSER" && (
+                  <div className="gurgle" style={{ left: 6 * CELL, top: 4 * CELL }}>
+                    <PixelProp name="GURGLE" />
+                  </div>
+                )}
+              </div>
+            </Tile>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -565,6 +716,9 @@ export default function ArtSheet() {
         <h2 style={{ fontSize: 14 }}>Same wall in grayscale</h2>
         <DeskWall gray />
       </section>
+      <ContactShadows scale={1} />
+      <ContactShadows scale={0.5} />
+      <DecorVariants />
       <Row scale={1} />
       <Row scale={0.5} />
       <Row scale={3} />

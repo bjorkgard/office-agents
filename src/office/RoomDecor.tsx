@@ -1,37 +1,159 @@
-// RoomDecor: <RoomDecor shell door coffee now scene [clock]/> the door, clock, windows, plants, steam,
-// coffee station and water dispenser.
+// RoomDecor: <RoomDecor shell door coffee now scene [clock] [doorOpen]/> the door (ajar while `doorOpen`),
+// clock, windows, bookshelf and pictures, plants, steam, coffee station and water dispenser, and the
+// contact shadows under the shelf, counter and dispenser.
 // Everything on the walls and floor that is not the room shell, the desks or the people.
-import { memo, useState, type CSSProperties } from "react";
+import { Fragment, memo, useState, type CSSProperties, type ReactNode } from "react";
 import { PixelProp } from "./CharacterRig";
 import {
   CLOCK_ROWS,
   CLOCK_FACE,
   clockHandCells,
   clockHands,
+  decorVariantAt,
   windowArt,
   type GlassToken,
   type WindowScene,
 } from "./decor";
-import { ART, GLASS } from "./palette";
-import { CELL, CELLS, type Run } from "./pixel";
-import { propSize, type PropName } from "./props";
+import { ART, FLOOR_LIGHT_OPACITY, GLASS } from "./palette";
+import { CELL, CELLS, parseGrid, SHADOW_OPACITY, type Grid, type Run } from "./pixel";
+import {
+  DOOR_AJAR,
+  decorVariantGrid,
+  PROP_SHADOW_AT,
+  propSize,
+  SHADOWS,
+  type PropName,
+} from "./props";
 import {
   WINDOW_COLS,
   WINDOW_ROWS,
   wallPropRect,
+  type WALL_ANCHOR,
   type PlacedWindow,
   type RoomShell as RoomShellGeometry,
 } from "./room";
 import type { Point } from "./scene-model";
 
 /** The door and the counter are drawn for their wall: upright, base anchor on the wall (room.ts). */
-function wallProp(
-  at: Point,
-  name: "DOOR" | "COFFEE_STATION" | "DISPENSER",
-  zIndex: number,
-): CSSProperties {
+function wallProp(at: Point, name: keyof typeof WALL_ANCHOR, zIndex: number): CSSProperties {
   const r = wallPropRect(name, at);
   return { left: r.left, top: r.top, zIndex };
+}
+
+/** One grid's svg box: `data` are its data-* attributes; the children draw the cells. */
+function GridSvg({
+  grid,
+  data,
+  children,
+}: {
+  grid: Grid;
+  data: Record<string, string | number>;
+  children: ReactNode;
+}) {
+  return (
+    <svg
+      {...data}
+      width={grid[0].length * CELL}
+      height={grid.length * CELL}
+      viewBox={`0 0 ${grid[0].length} ${grid.length}`}
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+      style={{ display: "block", overflow: "visible" }}
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** A grid's runs, parsed once per key (the decor grids never change after the first render). */
+const runsCache = new Map<string, Run[]>();
+function runsOfGrid(key: string, grid: Grid): Run[] {
+  let runs = runsCache.get(key);
+  if (!runs) {
+    runs = parseGrid(grid);
+    runsCache.set(key, runs);
+  }
+  return runs;
+}
+
+/** The door ajar (props.ts DOOR_AJAR): the same box and anchor as the PixelProp DOOR, so it swaps in place. */
+export const PixelDoorAjar = memo(function PixelDoorAjar() {
+  return (
+    <GridSvg grid={DOOR_AJAR} data={{ "data-prop": "DOOR_AJAR" }}>
+      <Layer runs={runsOfGrid("DOOR_AJAR", DOOR_AJAR)} legend={{}} />
+    </GridSvg>
+  );
+});
+
+/** The bookshelf or a picture in a date variant's colors (props.ts decorVariantGrid); the same box as the PixelProp. */
+export const PixelDecor = memo(function PixelDecor({
+  name,
+  variant,
+}: {
+  name: "BOOKSHELF" | "PICTURE_A" | "PICTURE_B";
+  variant: number;
+}) {
+  const grid = decorVariantGrid(name, variant);
+  return (
+    <GridSvg grid={grid} data={{ "data-prop": name, "data-decor-variant": variant }}>
+      <Layer runs={runsOfGrid(`${name}:${variant}`, grid)} legend={{}} />
+    </GridSvg>
+  );
+});
+
+const shadowPaths = new Map<string, string>();
+
+/** The contact shadow cells under a wall prop (props.ts SHADOWS): one path at the ground shadow's opacity. */
+export const PixelShadow = memo(function PixelShadow({ name }: { name: keyof typeof SHADOWS }) {
+  const grid = SHADOWS[name];
+  let d = shadowPaths.get(name);
+  if (d === undefined) {
+    d = parseGrid(grid).map(runPath).join("");
+    shadowPaths.set(name, d);
+  }
+  return (
+    <GridSvg grid={grid} data={{ "data-shadow": name }}>
+      <path d={d} fill="var(--art-shade)" opacity={SHADOW_OPACITY} />
+    </GridSvg>
+  );
+});
+
+/** The two flat tones of the floor fan the open door throws (props.ts doorLight): near at the floor light's opacity, far at half. */
+export function DoorLight({
+  doorLight,
+  fill,
+  origin = { x: 0, y: 0 },
+  sceneId,
+}: {
+  doorLight: { near: Point[]; far: Point[] };
+  fill: string;
+  /** Subtracted from every point (the art sheet draws the fan in its own box). */
+  origin?: Point;
+  sceneId?: string;
+}) {
+  return (
+    <>
+      {(["near", "far"] as const).map((tone) => (
+        <polygon
+          key={tone}
+          data-part="door-light"
+          data-tone={tone}
+          data-window-scene={sceneId}
+          points={doorLight[tone].map((p) => `${p.x - origin.x},${p.y - origin.y}`).join(" ")}
+          fill={fill}
+          opacity={tone === "near" ? FLOOR_LIGHT_OPACITY : FLOOR_LIGHT_OPACITY / 2}
+        />
+      ))}
+    </>
+  );
+}
+
+/** A wall prop's shadow: under the prop (same wall point, lower z-index), on the floor in front of its base. */
+function wallShadow(at: Point, name: keyof typeof SHADOWS): CSSProperties {
+  const r = wallPropRect(name, at);
+  const [dx, dy] = PROP_SHADOW_AT[name];
+  return { left: r.left + dx * CELL, top: r.top + dy * CELL, zIndex: 1 };
 }
 
 /** A prop centered on `at`, hung on a wall (the clock). */
@@ -192,6 +314,7 @@ export function RoomDecor({
   now,
   scene,
   clock,
+  doorOpen = false,
 }: {
   shell: RoomShellGeometry;
   door: Point;
@@ -199,14 +322,29 @@ export function RoomDecor({
   now: number;
   scene: WindowScene;
   clock?: () => number;
+  /** A subagent is coming or going: the door stands ajar (paper.ts doorOpen). */
+  doorOpen?: boolean;
 }) {
+  const variant = decorVariantAt(now);
   return (
     <>
       {shell.windows.map((w: PlacedWindow) => (
         <WindowArt key={w.name} scene={scene} wall={w.wall} name={w.name} center={w.center} />
       ))}
-      <div style={wallProp(door, "DOOR", 1)}>
-        <PixelProp name="DOOR" />
+      {shell.wallDecor.map((d) => (
+        <Fragment key={d.name}>
+          {d.prop === "BOOKSHELF" && (
+            <div style={wallShadow(d.base, d.prop)}>
+              <PixelShadow name={d.prop} />
+            </div>
+          )}
+          <div style={wallProp(d.base, d.prop, 2)}>
+            <PixelDecor name={d.prop} variant={variant} />
+          </div>
+        </Fragment>
+      ))}
+      <div data-door={doorOpen ? "open" : "closed"} style={wallProp(door, "DOOR", 1)}>
+        {doorOpen ? <PixelDoorAjar /> : <PixelProp name="DOOR" />}
       </div>
       <div style={hungProp(shell.clock, "CLOCK", 1)}>
         <Clock now={now} clock={clock} />
@@ -226,6 +364,12 @@ export function RoomDecor({
         }}
       >
         <PixelProp name="STEAM" />
+      </div>
+      <div style={wallShadow(coffee, "COFFEE_STATION")}>
+        <PixelShadow name="COFFEE_STATION" />
+      </div>
+      <div style={wallShadow(shell.dispenser, "DISPENSER")}>
+        <PixelShadow name="DISPENSER" />
       </div>
       <div style={wallProp(coffee, "COFFEE_STATION", 2)}>
         <PixelProp name="COFFEE_STATION" />

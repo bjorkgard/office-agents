@@ -261,6 +261,21 @@ export function subagentLeaveMs(ctx: SubagentCtx): number | null {
 }
 
 /**
+ * When (epoch ms) a leaver reaches the door, before its fade; null when it does not leave or has
+ * nowhere to go. The same path `subagentPath` walks.
+ */
+export function subagentDoorAt(
+  agent: Pick<Agent, "phase" | "arrivedAt" | "leftAt">,
+  ctx: SubagentCtx,
+): number | null {
+  const home = homeOf(ctx);
+  if (!home || agent.phase !== "leaving") return null;
+  const leftAt = agent.leftAt ?? agent.arrivedAt;
+  const from = sampleSegs(arrivalSegs(ctx, home), leftAt - (ctx.resume?.at ?? agent.arrivedAt));
+  return leftAt + total(leavingSegs(ctx, from)) - FADE_MS;
+}
+
+/**
  * The subagent's frame at `now`. ARRIVING (from `arrivedAt`, or from `ctx.resume` when it was re-planned): door, the parent's desk (the paper
  * is received in the middle of a pause, `carryPaper` turns on), then its work desk. WORKING:
  * sits there; `pose` is then only the default seated-typing, the caller shows the state's own

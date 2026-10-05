@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { layoutOffice } from "./iso";
-import { agentKey, type Agent, type OfficeState } from "./machine";
+import { agentKey, TUNING, type Agent, type OfficeState } from "./machine";
 import { Scene } from "./Scene";
 import { pulser } from "./app-logic";
 import { roomShell, wallPropRect } from "./room";
@@ -23,6 +23,9 @@ import {
   windowScene,
 } from "./decor";
 import { ART, GLASS } from "./palette";
+import { DOOR_TUNING } from "./paper";
+import { decorVariantFor } from "./decor";
+import sceneSrc from "./Scene.tsx?raw";
 
 // Vitest blanks css imports (even ?raw) and the app tsconfig has no node types, so read the file
 // through the runtime's own fs.
@@ -67,6 +70,7 @@ function render(
   failure: Error | null = null,
   viewport = { width: 1200, height: 800 },
   clock?: () => number,
+  now = 10 * 60_000,
 ) {
   const office: OfficeState = {
     agents: Object.fromEntries(agents.map((a) => [a.key, a])),
@@ -79,7 +83,7 @@ function render(
       seats={seats}
       projects={{ p: "/work/atlas" }}
       viewport={viewport}
-      now={10 * 60_000}
+      now={now}
       failure={failure}
       clock={clock}
     />,
@@ -544,6 +548,89 @@ describe("Scene screens", () => {
   });
 });
 
+describe("Scene door ajar", () => {
+  const arriving = agent("s1", "a1", { state: "arriving", phase: "arriving", arrivedAt: 1000 });
+  const doorAt = (ms: number) =>
+    render([agent("s1", null), arriving], { s1: 0 }, null, undefined, () => ms).match(
+      /data-door="(open|closed)"/,
+    )?.[1];
+
+  it("flips data-door as the subagent arrives, and draws the floor wedge only while open", () => {
+    expect(doorAt(900)).toBe("closed");
+    expect(doorAt(1010)).toBe("open");
+    expect(doorAt(1000 + DOOR_TUNING.ARRIVE_OPEN_MS + 1)).toBe("closed");
+    const open = render([agent("s1", null), arriving], { s1: 0 }, null, undefined, () => 1010);
+    expect(open).toContain('data-part="door-light"');
+    expect(open.match(/data-part="door-light"/g)).toHaveLength(2);
+    expect(open).toContain('data-part="door-light" data-tone="near"');
+    expect(open).toContain('data-part="door-light" data-tone="far"');
+    expect(open).toContain('data-prop="DOOR_AJAR"');
+    const shut = render([agent("s1", null), arriving], { s1: 0 }, null, undefined, () => 900);
+    expect(shut).not.toContain('data-part="door-light"');
+    expect(shut).not.toContain('data-prop="DOOR_AJAR"');
+  });
+});
+
+describe("Scene door ajar for a leaver", () => {
+  // Value: protects=a subagent walking out to the door opens it in the mounted scene and it shuts once removed; fails_when=the leaving window is dropped from the door or never ends; why_new=the arrival test above never renders a leaving subagent; seam=none
+  it("opens at some point while a leaver walks out, and is closed once it is removed", () => {
+    const leftAt = 5000;
+    const leaver = agent("s1", "a1", {
+      state: "leaving",
+      phase: "leaving",
+      arrivedAt: 1000,
+      leftAt,
+    });
+    const doorAt = (ms: number) =>
+      render([agent("s1", null), leaver], { s1: 0 }, null, undefined, () => ms).match(
+        /data-door="(open|closed)"/,
+      )?.[1];
+    const seen = new Set<string | undefined>();
+    for (let ms = leftAt; ms < leftAt + TUNING.subagentLeavingMs; ms += 50) seen.add(doorAt(ms));
+    expect(seen.has("open")).toBe(true);
+    expect(doorAt(leftAt + TUNING.subagentLeavingMs + 1)).toBe("closed");
+    expect(doorAt(leftAt - 1)).toBe("closed");
+  });
+});
+
+describe("Scene decor variant on a date change", () => {
+  // Value: protects=the shelf and pictures recolor when the local date rolls over while the page stays mounted; fails_when=the variant is fixed at mount or ignores the now prop; why_new=decor.test covers decorVariantFor only, not the rendered Scene; seam=none
+  it("renders a different decor area on a date with another variant, the same on the same date", () => {
+    const day = (d: number, h = 12) => new Date(2026, 5, d, h, 0, 0).getTime();
+    const dates = Array.from({ length: 30 }, (_, i) => i + 1);
+    const a = dates[0];
+    const b = dates.find(
+      (d) =>
+        decorVariantFor(`2026-06-${String(d).padStart(2, "0")}`) !==
+        decorVariantFor(`2026-06-${String(a).padStart(2, "0")}`),
+    );
+    expect(b).toBeDefined();
+    const rows = Array.from({ length: 12 }, (_, i) => agent(`s${i}`, null));
+    const seats = Object.fromEntries(rows.map((_, i) => [`s${i}`, i]));
+    const decor = (ms: number) =>
+      (
+        render(rows, seats, null, undefined, undefined, ms).match(
+          /<svg data-prop="(?:BOOKSHELF|PICTURE_[AB])" data-decor-variant="\d"[^>]*>.*?<\/svg>/g,
+        ) ?? []
+      ).join("");
+    expect(decor(day(a))).toContain("BOOKSHELF");
+    expect(decor(day(a, 9))).toBe(decor(day(a, 18)));
+    expect(decor(day(a))).not.toBe(decor(day(b as number)));
+  });
+});
+
+describe("Scene timer folding", () => {
+  // Value: one timer wakes for whichever of the paper and the door changes first; a door-only timer would leave it open.
+  it("arms the single paper timer at the earlier of the paper's and the door's next change", () => {
+    expect(sceneSrc).toMatch(
+      /const nextWake = Math\.min\(nextPaper, door\.nextChange \?\? Infinity\)/,
+    );
+    expect(sceneSrc).toMatch(/armPaperTimer\(\s*nextWake,/);
+    expect(sceneSrc).toMatch(/\[nextWake, clock, paperTick\]/);
+    expect(sceneSrc.match(/armPaperTimer\(/g)).toHaveLength(1);
+  });
+});
+
 describe("Scene paper on the desk", () => {
   const arriving = agent("s1", "a1", {
     state: "arriving",
@@ -809,11 +896,13 @@ describe("Scene fit (eng D2/E5, design D7)", () => {
 });
 
 describe("Scene element budget (eng D14)", () => {
-  const CEIL_12 = { svg: 39, elements: 20_900 };
-  const CEIL_24 = { svg: 65, elements: 31_100 };
+  const CEIL_12 = { svg: 45, elements: 20_900 };
+  const CEIL_24 = { svg: 69, elements: 31_100 };
   // Measured with renderToStaticMarkup, working parents at desks 0..n-1 and no subagents:
-  // 12 agents: 37 svg, 19055 elements. 24 agents: 61 svg, 28287 elements (the largest window scene of the six; the scene is pinned
-  // with the dev override, so the numbers do not depend on the time zone). Ceilings are +10 percent.
+  // 12 agents 43 svg / 19070 elements; 24 agents 67 svg / 28302 elements (the largest window scene of
+  // the six; the scene is pinned with the dev override, so the numbers do not depend on the time zone).
+  // The svg ceilings are measured + 2; the elements ceilings keep their earlier headroom. The svgs
+  // added since 37 / 61 are the 2 contact shadows, the bookshelf, its shadow and the two pictures.
   const count = (html: string) => ({
     svg: (html.match(/<svg\b/g) ?? []).length,
     elements: (html.match(/<[a-zA-Z][^>]*>/g) ?? []).length,
