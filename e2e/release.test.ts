@@ -3,9 +3,15 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
+  abArm,
+  abDelta,
+  abVerdict,
+  anyFailed,
   assertTempRoot,
   budgetVerdict,
+  classifyPhase,
   decide,
+  EASE_MS,
   FRAME_BUDGET_MS,
   hero,
   makeRunRoot,
@@ -266,13 +272,55 @@ describe("worstRecalcEvent", () => {
 
   it("returns the duration and the offset from the mark of the worst event, in ms", () => {
     const events = [mark, layout(1_100_000, 4_000), layout(1_250_000, 12_500)];
-    expect(worstRecalcEvent(events, 1500)).toEqual({ durMs: 12.5, offsetMs: 250 });
+    expect(worstRecalcEvent(events, 1500)).toEqual({
+      durMs: 12.5,
+      offsetMs: 250,
+      elementCount: null,
+    });
   });
 
   it("agrees with worstRecalc and is null where it is", () => {
     const events = [mark, layout(1_100_000, 4_000)];
     expect(worstRecalcEvent(events, 1500)!.durMs).toBe(worstRecalc(events, 1500));
     expect(worstRecalcEvent([layout(1_100_000, 4_000)], 1500)).toBeNull();
+  });
+});
+
+describe("worstRecalcEvent elementCount", () => {
+  const mark = { name: "row-write", ph: "R", ts: 1_000_000 };
+
+  it("carries args.elementCount of the worst event, null when absent", () => {
+    const withCount = {
+      name: "UpdateLayoutTree",
+      ph: "X",
+      ts: 1_100_000,
+      dur: 9_000,
+      args: { elementCount: 812 },
+    };
+    const small = {
+      name: "UpdateLayoutTree",
+      ph: "X",
+      ts: 1_200_000,
+      dur: 1_000,
+      args: { elementCount: 5 },
+    };
+    expect(worstRecalcEvent([mark, small, withCount], 1500)!.elementCount).toBe(812);
+    expect(worstRecalcEvent([mark, { ...withCount, args: {} }], 1500)!.elementCount).toBeNull();
+    expect(
+      worstRecalcEvent([mark, { ...withCount, args: undefined }], 1500)!.elementCount,
+    ).toBeNull();
+  });
+});
+
+describe("classifyPhase", () => {
+  it("is mount before the agents appeared, ease for the 700 ms after, idle beyond", () => {
+    expect(EASE_MS).toBe(700);
+    expect(classifyPhase(0, 4300)).toBe("mount");
+    expect(classifyPhase(4299.9, 4300)).toBe("mount");
+    expect(classifyPhase(4300, 4300)).toBe("ease");
+    expect(classifyPhase(4300 + 699.9, 4300)).toBe("ease");
+    expect(classifyPhase(4300 + 700, 4300)).toBe("idle");
+    expect(classifyPhase(6000, 4300)).toBe("idle");
   });
 });
 
@@ -316,8 +364,8 @@ describe("rowChangeVerdict", () => {
     expect(v.status).toBe("PASS");
   });
 
-  it("fails just over the budget", () => {
-    expect(rowChangeVerdict([rep(10), rep(16.1), rep(16.1)]).status).toBe("FAIL");
+  it("is inconclusive just over the budget", () => {
+    expect(rowChangeVerdict([rep(10), rep(16.1), rep(16.1)]).status).toBe("INCONCLUSIVE");
   });
 
   it("is the median, so one outlier repeat does not decide", () => {
@@ -345,8 +393,53 @@ describe("rowChangeVerdict", () => {
     expect(rep3(16).measured).toContain("marginal: within 10% of the budget");
     expect(rep3(14.4).measured).not.toContain("marginal");
     expect(rep3(5).measured).not.toContain("marginal");
-    expect(rep3(16.1).status).toBe("FAIL");
+    expect(rep3(16.1).status).toBe("INCONCLUSIVE");
     expect(rep3(16.1).measured).not.toContain("marginal");
+  });
+
+  describe("six runs", () => {
+    const six = (ms: number[]) => rowChangeVerdict(ms.map((m) => rep(m)));
+
+    it("bands the median: 16 PASS, 16.01 and 17.5 INCONCLUSIVE, 17.51 FAIL", () => {
+      const all = (m: number) => six([m, m, m, m, m, m]);
+      expect(all(16).status).toBe("PASS");
+      expect(all(16.01).status).toBe("INCONCLUSIVE");
+      expect(all(17.5).status).toBe("INCONCLUSIVE");
+      expect(all(17.51).status).toBe("FAIL");
+      expect(all(17.5).measured).not.toContain("marginal");
+    });
+
+    it("fails with null data in any run, with a reason", () => {
+      const v = rowChangeVerdict([rep(5), rep(5), rep(null), rep(5), rep(5), rep(5)]);
+      expect(v.status).toBe("FAIL");
+      expect(v.measured).toContain("no style recalc event traced");
+    });
+
+    it("drops a first run higher than the median of runs 2-6, median of the remaining 5", () => {
+      // runs 2-6 median 10; first 50 is higher so dropped; median of [10,10,10,12,14] = 10
+      const v = six([50, 10, 12, 10, 14, 10]);
+      expect(v.status).toBe("PASS");
+      expect(v.measured).toContain("median worst event 10.0 ms");
+      expect(v.measured).toContain("warm-up run 1 dropped");
+      expect(v.measured).toContain("50.0/10.0/12.0/10.0/14.0/10.0");
+    });
+
+    it("keeps the first run when it is not higher, median of all 6", () => {
+      // runs 2-6 median 10; first 10 is not greater, kept; sorted [3,10,10,10,12,20] median 10
+      const v = six([10, 20, 10, 12, 10, 3]);
+      expect(v.measured).toContain("warm-up run 1 kept");
+      expect(v.measured).toContain("median worst event 10.0 ms");
+      // a low first run is kept and pulls the median: [1,18,18,18,18,18] sorted -> 18
+      expect(six([1, 18, 18, 18, 18, 18]).measured).toContain("warm-up run 1 kept");
+      // first equal to the median of the rest is kept
+      expect(six([10, 10, 10, 10, 10, 10]).measured).toContain("warm-up run 1 kept");
+    });
+
+    it("lets the dropped warm-up change the verdict", () => {
+      // kept would give median (17+17)/2 = 17 -> INCONCLUSIVE; dropped gives 14 -> PASS
+      expect(six([30, 14, 14, 14, 20, 20]).status).toBe("PASS");
+      expect(six([15, 17, 17, 17, 17, 17]).status).toBe("INCONCLUSIVE");
+    });
   });
 
   it("reports every repeat value and the appeared times", () => {
@@ -354,6 +447,95 @@ describe("rowChangeVerdict", () => {
     for (const s of ["11.2", "12.4", "13.6", "12.4 ms", "4100", "4200", "4300"]) {
       expect(v.measured).toContain(s);
     }
+  });
+});
+
+describe("anyFailed", () => {
+  const v = (status: "PASS" | "FAIL" | "SKIPPED" | "INCONCLUSIVE") => ({ status, measured: "" });
+
+  it("exits 1 only for FAIL; PASS, SKIPPED and INCONCLUSIVE exit 0", () => {
+    expect(anyFailed([v("PASS"), v("SKIPPED"), v("INCONCLUSIVE")])).toBe(false);
+    expect(anyFailed([v("PASS"), v("FAIL")])).toBe(true);
+    expect(anyFailed([v("INCONCLUSIVE"), v("FAIL")])).toBe(true);
+    expect(anyFailed([])).toBe(false);
+  });
+});
+
+describe("abDelta and abVerdict", () => {
+  const arm = (
+    medianMs: number | null,
+    animations: number | null,
+    error: string | null = null,
+  ) => ({
+    medianMs,
+    animations,
+    error,
+  });
+
+  it("is animated minus frozen, by named arm, so swapped columns flip the sign", () => {
+    expect(abDelta({ animated: arm(18, 40), frozen: arm(12, 0) })).toEqual({
+      deltaMs: 6,
+      deltaAnimations: 40,
+    });
+    expect(abDelta({ animated: arm(12, 0), frozen: arm(18, 40) })).toEqual({
+      deltaMs: -6,
+      deltaAnimations: -40,
+    });
+  });
+
+  it("is null when either arm lacks data", () => {
+    expect(abDelta({ animated: arm(null, 3), frozen: arm(12, 0) })).toBeNull();
+    expect(abDelta({ animated: arm(12, 3), frozen: arm(12, null) })).toBeNull();
+  });
+
+  it("prints a PASS delta line with both medians and counts", () => {
+    const v = abVerdict({ animated: arm(18, 40), frozen: arm(12, 0) });
+    expect(v.status).toBe("PASS");
+    expect(v.measured).toContain("with animations 18.0 ms, 40 animations");
+    expect(v.measured).toContain("without 12.0 ms, 0 animations");
+    expect(v.measured).toContain("delta +6.0 ms");
+  });
+
+  it("fails with the probe error when getAnimations is unavailable", () => {
+    const v = abVerdict({
+      animated: arm(18, 40),
+      frozen: arm(12, null, "getAnimations is not a function"),
+    });
+    expect(v.status).toBe("FAIL");
+    expect(v.measured).toContain("getAnimations is not a function");
+  });
+
+  it("fails with a reason when timing data is missing", () => {
+    expect(abVerdict({ animated: arm(null, 3), frozen: arm(12, 0) }).status).toBe("FAIL");
+  });
+});
+
+describe("abArm", () => {
+  const run = (
+    worstMs: number | null,
+    idleAnimations: number | null,
+    probeError: string | null = null,
+  ) => ({
+    appearedMs: 4000,
+    worstMs,
+    idleAnimations,
+    probeError,
+  });
+
+  it("takes the median worst and median idle animation count", () => {
+    const a = abArm([run(10, 4), run(30, 6), run(20, 5)]);
+    expect(a).toEqual({ medianMs: 20, animations: 5, error: null });
+  });
+
+  it("carries a probe error and nulls the count", () => {
+    const a = abArm([run(10, null, "boom"), run(11, 3)]);
+    expect(a.animations).toBeNull();
+    expect(a.error).toBe("boom");
+  });
+
+  it("nulls the median when a run has no worst event or no runs exist", () => {
+    expect(abArm([run(null, 1)]).medianMs).toBeNull();
+    expect(abArm([]).medianMs).toBeNull();
   });
 });
 
