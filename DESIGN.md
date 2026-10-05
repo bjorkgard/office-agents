@@ -279,12 +279,12 @@ Measured with `vp run perf` on headless Chrome 153.0.8010.12 and an Apple M1 Max
 
 Cause and fix: the unregistered custom property `--scale` was set inline on `.scene-scaled` and inherited, so each fit change restyled about 41,000 elements at 12 agents. The ring stroke is now computed in JS (`ringStroke(scale)` in `src/office/iso.ts`) and `--scale` is gone. The registered `--fit-*` transition and the desk-pop animation were tested and did not matter. Earlier design docs (`docs/designs/character-art-ceo-review.md` D7 and D8) mention `--scale` strokes, which no longer exist.
 
-| Agents | p95 frame (budget)            | Old: burst, 2026-10-04 (before the fix) | New: worst event, median of 3, 2026-10-05 (after the fix)                   |
-| ------ | ----------------------------- | --------------------------------------- | --------------------------------------------------------------------------- |
-| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                   | 14.9 and 14.7 ms in two runs (about 48 ms before the fix, fresh page), PASS |
-| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms, FAIL                       | 19.1 and 19.5 ms in two runs (single repeats 18.6 to 24.5 ms), FAIL         |
+| Agents | p95 frame (budget)            | Old: burst, 2026-10-04 (before the fix) | New: worst event, median of 3, 2026-10-05 (after the fix)                           |
+| ------ | ----------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------- |
+| 12     | 16.7 to 16.8 ms (20 ms), PASS | 48.1 to 49.4 ms, FAIL                   | 14.9, 14.7 and 15.6 ms in three runs (about 48 ms before the fix, fresh page), PASS |
+| 24     | 16.7 to 16.8 ms (33 ms), PASS | 63 to 79 ms, FAIL                       | 19.1, 19.5 and 19.3 ms in three runs (single repeats 18.6 to 24.5 ms), FAIL         |
 
-The 12-agent median is only about 1 ms under the budget. The 24-agent miss has no known cause and is tracked in TODOS.md "Row-change style recalc at 24 agents over budget (2026-10-05)". Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass).
+The 12-agent median is only 0.4 to 1.3 ms under the budget, and single repeats reach 20 to 22.5 ms, so a run can flip. The 24-agent miss has no known cause and is tracked in TODOS.md "Row-change style recalc at 24 agents over budget (2026-10-05)". Safari: not measured (pending; M10 in TODOS.md still needs the Safari pass).
 
 ## Open items
 
