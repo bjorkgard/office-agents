@@ -232,18 +232,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** Verify the normalizer against real transcripts
 
-### Simplify the flush() projectId handling
-
-**What:** `server/feed-plugin.ts` flush(): simplify the projectId handling.
-
-**Why:** Behavior is correct; the code is harder to read than it needs to be.
-
-**Context:** Found in the Phase 2-3 /ship review; deliberately left alone there.
-
-**Effort:** S (human ~30min / CC ~10min)
-**Priority:** P3
-**Depends on:** None
-
 ### Validate id format in parseAgentEvent
 
 **What:** Reject ids that do not match a conservative pattern (length and character set).
@@ -291,18 +279,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Effort:** S (human ~2h / CC ~15min)
 **Priority:** P1
 **Depends on:** Verify the normalizer against real transcripts
-
-### Anchor the task-notification match in the normalizer
-
-**What:** `onQueueOperation` in `server/normalize.ts` tests whether the content includes the task-notification tag anywhere.
-
-**Why:** Any queued text that merely contains the tag is treated as a completion notice.
-
-**Context:** Require the tag at the start of the content.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P3
-**Depends on:** None
 
 ### identityFor covers only 24 identities
 
