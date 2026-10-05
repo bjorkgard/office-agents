@@ -534,11 +534,19 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   };
 }
 
-/** A row repeat plus the animation probe of an `--ab` run: idle `document.getAnimations().length`, or why not. */
-export type AbRepeat = RowRepeat & { idleAnimations: number | null; probeError: string | null };
+/** A row repeat plus the animation probe of an `--ab` run: idle `document.getAnimations().length`, or why not; `runError` is a thrown repeat. */
+export type AbRepeat = RowRepeat & {
+  idleAnimations: number | null;
+  probeError: string | null;
+  runError: string | null;
+};
 /** One arm of the animations A/B: median worst recalc and median idle animation count, null where unmeasured. */
 export type AbArm = { medianMs: number | null; animations: number | null; error: string | null };
 
+/**
+ * One arm's medians include the warm-up run (the gate verdict drops it via settleRuns). Arms run animated first,
+ * then frozen, and that order bias is not corrected.
+ */
 export function abArm(runs: AbRepeat[]): AbArm {
   const worsts = runs.map((r) => r.worstMs);
   const counts = runs.map((r) => r.idleAnimations);
@@ -547,8 +555,15 @@ export function abArm(runs: AbRepeat[]): AbArm {
       worsts.length === 0 || worsts.some((w) => w === null) ? null : medianOf(worsts as number[]),
     animations:
       counts.length === 0 || counts.some((c) => c === null) ? null : medianOf(counts as number[]),
-    error: runs.find((r) => r.probeError !== null)?.probeError ?? null,
+    error: errorOf(runs),
   };
+}
+
+function errorOf(runs: AbRepeat[]): string | null {
+  const probe = runs.find((r) => r.probeError !== null)?.probeError;
+  if (probe != null) return `probe failed: ${probe}`;
+  const run = runs.find((r) => r.runError !== null)?.runError;
+  return run != null ? `repeat failed: ${run}` : null;
 }
 
 /** Animated minus frozen, in ms and in animation count; null when either arm lacks a measurement. */
@@ -571,19 +586,19 @@ export function abDelta(arms: {
   };
 }
 
-/** The `--ab` delta line: informational PASS, or FAIL naming the probe error or the missing data. */
+/** The `--ab` delta line: informational PASS, or SKIPPED naming the probe or repeat error or the missing data. */
 export function abVerdict(arms: { animated: AbArm; frozen: AbArm }): Verdict {
   const delta = abDelta(arms);
   const { animated, frozen } = arms;
   if (delta === null) {
     const why =
       animated.error ?? frozen.error ?? "no median worst event or animation count in an arm";
-    return { status: "FAIL", measured: `animations A/B: no delta measured (${why})` };
+    return { status: "SKIPPED", measured: `animations A/B: not measured (${why})` };
   }
   const sign = delta.deltaMs >= 0 ? "+" : "";
   return {
     status: "PASS",
-    measured: `animations A/B: with animations ${animated.medianMs!.toFixed(1)} ms, ${animated.animations} animations; without ${frozen.medianMs!.toFixed(1)} ms, ${frozen.animations} animations; delta ${sign}${delta.deltaMs.toFixed(1)} ms, ${delta.deltaAnimations} animations`,
+    measured: `animations A/B: with animations ${animated.medianMs!.toFixed(1)} ms, ${animated.animations!.toFixed(0)} animations; without ${frozen.medianMs!.toFixed(1)} ms, ${frozen.animations!.toFixed(0)} animations; delta ${sign}${delta.deltaMs.toFixed(1)} ms, ${delta.deltaAnimations.toFixed(0)} animations`,
   };
 }
 
@@ -665,6 +680,11 @@ function frameSample(agents: number, headed: boolean, info: { chrome: string }):
   return withOfficePage(agents, 0, headed, info, ({ page }) => sampleWindow(page, STEADY_MS));
 }
 
+/** CSS injected for the frozen arm of the animations A/B. */
+const FROZEN_CSS = "*{animation:none!important;transition:none!important}";
+/** Label prefix of the frozen arm's repeats. */
+const FROZEN_LABEL = "animations off ";
+
 /** One fresh office at `agents`, idle ROW_SETTLE_MS, then one traced row write. */
 function rowRepeat(
   agents: number,
@@ -675,9 +695,7 @@ function rowRepeat(
 ): Promise<AbRepeat> {
   return withOfficePage(agents, DESKS_PER_ROW, headed, info, async ({ page, cdp, root, files }) => {
     if (ab?.frozen) {
-      await page.addStyleTag({
-        content: "*{animation:none!important;transition:none!important}",
-      });
+      await page.addStyleTag({ content: FROZEN_CSS });
     }
     await new Promise((r) => setTimeout(r, ROW_SETTLE_MS));
     let idleAnimations: number | null = null;
@@ -747,7 +765,7 @@ function rowRepeat(
       console.log(
         `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms${at}, row appeared ${appearedMs ?? "never"} ms${probe}`,
       );
-      return { appearedMs, worstMs, idleAnimations, probeError };
+      return { appearedMs, worstMs, idleAnimations, probeError, runError: null };
     } finally {
       if (tracing) {
         await cdp.send("Tracing.end").catch(() => {});
@@ -776,6 +794,7 @@ export function perfVerdicts(
   ];
 }
 
+// Arms run animated first then frozen (order bias not corrected); abArm medians keep the warm-up run, the gate drops it via settleRuns.
 async function perfAt(
   agents: number,
   headed: boolean,
@@ -794,7 +813,7 @@ async function perfAt(
   }
   const runRepeats = async (frozen: boolean): Promise<AbRepeat[]> => {
     const out: AbRepeat[] = [];
-    const tag = frozen ? "animations off " : "";
+    const tag = frozen ? FROZEN_LABEL : "";
     for (let i = 1; i <= REPEATS; i++) {
       if (shuttingDown) break;
       try {
@@ -804,7 +823,13 @@ async function perfAt(
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         console.log(`  ${agents} agents ${tag}repeat ${i}: failed, ${message}`);
-        out.push({ appearedMs: null, worstMs: null, idleAnimations: null, probeError: message });
+        out.push({
+          appearedMs: null,
+          worstMs: null,
+          idleAnimations: null,
+          probeError: null,
+          runError: message,
+        });
       }
     }
     return out;
@@ -893,13 +918,24 @@ export async function hero(root: string = makeRunRoot(), out: string = HERO_PATH
   }
 }
 
+/** `<sub> [--ab]`: only `perf` takes `--ab`; anything else (extra, misspelled, unknown) is null. */
+export function parseArgs(
+  argv: string[],
+): { sub: "criteria" | "perf" | "hero"; ab: boolean } | null {
+  const [sub, ...rest] = argv;
+  if (sub !== "criteria" && sub !== "perf" && sub !== "hero") return null;
+  if (rest.length === 0) return { sub, ab: false };
+  if (sub === "perf" && rest.length === 1 && rest[0] === "--ab") return { sub, ab: true };
+  return null;
+}
+
 if (import.meta.filename === process.argv[1]) {
-  const sub = process.argv[2];
-  if (sub === "criteria" || sub === "perf" || sub === "hero") {
+  const args = parseArgs(process.argv.slice(2));
+  if (args) {
     installSignalHandlers();
-    (sub === "perf"
-      ? perf(process.argv.includes("--ab"))
-      : sub === "hero"
+    (args.sub === "perf"
+      ? perf(args.ab)
+      : args.sub === "hero"
         ? hero().then(() => 0)
         : criteria()
     ).then(

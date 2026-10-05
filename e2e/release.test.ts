@@ -18,11 +18,13 @@ import {
   medianOf,
   officeEnv,
   p95,
+  parseArgs,
   perfVerdicts,
   RECALC_BUDGET_MS,
   ROWS,
   rowChangeVerdict,
   rowVerdict,
+  settleRuns,
   specResults,
   startOffice,
   tracedWorstMs,
@@ -313,14 +315,13 @@ describe("worstRecalcEvent elementCount", () => {
 });
 
 describe("classifyPhase", () => {
-  it("is mount before the agents appeared, ease for the 700 ms after, idle beyond", () => {
-    expect(EASE_MS).toBe(700);
+  it("is mount before the agents appeared, ease for EASE_MS after, idle beyond", () => {
     expect(classifyPhase(0, 4300)).toBe("mount");
     expect(classifyPhase(4299.9, 4300)).toBe("mount");
     expect(classifyPhase(4300, 4300)).toBe("ease");
-    expect(classifyPhase(4300 + 699.9, 4300)).toBe("ease");
-    expect(classifyPhase(4300 + 700, 4300)).toBe("idle");
-    expect(classifyPhase(6000, 4300)).toBe("idle");
+    expect(classifyPhase(4300 + EASE_MS - 0.1, 4300)).toBe("ease");
+    expect(classifyPhase(4300 + EASE_MS, 4300)).toBe("idle");
+    expect(classifyPhase(4300 + 2 * EASE_MS, 4300)).toBe("idle");
   });
 });
 
@@ -350,6 +351,38 @@ describe("medianOf", () => {
 
   it("returns null for no values", () => {
     expect(medianOf([])).toBeNull();
+  });
+});
+
+describe("settleRuns", () => {
+  it("keeps nothing and drops nothing for no runs or one run", () => {
+    expect(settleRuns([])).toEqual({ kept: [], dropped: false });
+    expect(settleRuns([9])).toEqual({ kept: [9], dropped: false });
+  });
+
+  it("drops a first run higher than the median of the rest", () => {
+    expect(settleRuns([9, 5])).toEqual({ kept: [5], dropped: true });
+  });
+
+  it("keeps a first run equal to the median of the rest", () => {
+    expect(settleRuns([5, 5, 7])).toEqual({ kept: [5, 5, 7], dropped: false });
+  });
+});
+
+describe("parseArgs", () => {
+  it("accepts a bare subcommand, and --ab only for perf", () => {
+    expect(parseArgs(["perf"])).toEqual({ sub: "perf", ab: false });
+    expect(parseArgs(["perf", "--ab"])).toEqual({ sub: "perf", ab: true });
+    expect(parseArgs(["criteria"])).toEqual({ sub: "criteria", ab: false });
+    expect(parseArgs(["hero"])).toEqual({ sub: "hero", ab: false });
+  });
+
+  it("rejects --ab on another subcommand, extra or misspelled arguments, and unknown subcommands", () => {
+    expect(parseArgs(["criteria", "--ab"])).toBeNull();
+    expect(parseArgs(["perf", "--abb"])).toBeNull();
+    expect(parseArgs(["perf", "--ab", "--ab"])).toBeNull();
+    expect(parseArgs([])).toBeNull();
+    expect(parseArgs(["bogus"])).toBeNull();
   });
 });
 
@@ -496,17 +529,26 @@ describe("abDelta and abVerdict", () => {
     expect(v.measured).toContain("delta +6.0 ms");
   });
 
-  it("fails with the probe error when getAnimations is unavailable", () => {
+  it("is SKIPPED with the probe error when getAnimations is unavailable", () => {
     const v = abVerdict({
       animated: arm(18, 40),
       frozen: arm(12, null, "getAnimations is not a function"),
     });
-    expect(v.status).toBe("FAIL");
+    expect(v.status).toBe("SKIPPED");
+    expect(v.measured).toContain("animations A/B: not measured (");
     expect(v.measured).toContain("getAnimations is not a function");
   });
 
-  it("fails with a reason when timing data is missing", () => {
-    expect(abVerdict({ animated: arm(null, 3), frozen: arm(12, 0) }).status).toBe("FAIL");
+  it("is SKIPPED with a reason when timing data is missing", () => {
+    const v = abVerdict({ animated: arm(null, 3), frozen: arm(12, 0) });
+    expect(v.status).toBe("SKIPPED");
+    expect(v.measured).toContain("not measured");
+  });
+
+  it("prints idle animation counts rounded", () => {
+    const v = abVerdict({ animated: arm(18, 40.5), frozen: arm(12, 0) });
+    expect(v.measured).toContain("41 animations");
+    expect(v.measured).not.toContain("40.5");
   });
 });
 
@@ -515,11 +557,13 @@ describe("abArm", () => {
     worstMs: number | null,
     idleAnimations: number | null,
     probeError: string | null = null,
+    runError: string | null = null,
   ) => ({
     appearedMs: 4000,
     worstMs,
     idleAnimations,
     probeError,
+    runError,
   });
 
   it("takes the median worst and median idle animation count", () => {
@@ -530,7 +574,17 @@ describe("abArm", () => {
   it("carries a probe error and nulls the count", () => {
     const a = abArm([run(10, null, "boom"), run(11, 3)]);
     expect(a.animations).toBeNull();
-    expect(a.error).toBe("boom");
+    expect(a.error).toBe("probe failed: boom");
+  });
+
+  it("says repeat failed, not probe, for a thrown repeat, and the verdict is SKIPPED", () => {
+    const thrown = run(null, null, null, "page crashed");
+    const a = abArm([thrown]);
+    expect(a.error).toBe("repeat failed: page crashed");
+    const v = abVerdict({ animated: abArm([run(10, 3)]), frozen: a });
+    expect(v.status).toBe("SKIPPED");
+    expect(v.measured).toContain("repeat failed: page crashed");
+    expect(v.measured).not.toContain("probe");
   });
 
   it("nulls the median when a run has no worst event or no runs exist", () => {
