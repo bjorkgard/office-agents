@@ -451,6 +451,20 @@ describe("rowChangeVerdict", () => {
       expect(all(17.5).measured).not.toContain("marginal");
     });
 
+    it("prints the median with 2 decimals so text near the band edge matches the status", () => {
+      const v = six([16.04, 16.04, 16.04, 16.04, 16.04, 16.04]);
+      expect(v.status).toBe("INCONCLUSIVE");
+      expect(v.measured).toContain("16.04");
+    });
+
+    it("shows a thrown repeat's runError in the FAIL text", () => {
+      const reps = [5, 5, 5, 5, 5, 5].map((m) => ({ ...rep(m), runError: null as string | null }));
+      reps[2] = { appearedMs: 4300, worstMs: null, runError: "page crashed" };
+      const v = rowChangeVerdict(reps);
+      expect(v.status).toBe("FAIL");
+      expect(v.measured).toContain("page crashed");
+    });
+
     it("fails with null data in any run, with a reason", () => {
       const v = rowChangeVerdict([rep(5), rep(5), rep(null), rep(5), rep(5), rep(5)]);
       expect(v.status).toBe("FAIL");
@@ -467,7 +481,7 @@ describe("rowChangeVerdict", () => {
       // runs 2-6 median 10; first 50 is higher so dropped; median of [10,10,10,12,14] = 10
       const v = six([50, 10, 12, 10, 14, 10]);
       expect(v.status).toBe("PASS");
-      expect(v.measured).toContain("median worst event 10.0 ms");
+      expect(v.measured).toContain("median worst event 10.00 ms");
       expect(v.measured).toContain(
         "warm-up run 1 dropped (50.0 ms, higher than the median of runs 2-6)",
       );
@@ -478,11 +492,11 @@ describe("rowChangeVerdict", () => {
       // runs 2-6 median 10; first 10 is not greater than that, so it is kept; all 6 sorted [3,10,10,10,12,20] median 10
       const v = six([10, 20, 10, 12, 10, 3]);
       expect(v.measured).toContain("warm-up run 1 kept");
-      expect(v.measured).toContain("median worst event 10.0 ms");
+      expect(v.measured).toContain("median worst event 10.00 ms");
       // a low first run is kept (median here stays 18; the next test pins a case where it moves)
       const low = six([1, 18, 18, 18, 18, 18]).measured;
       expect(low).toContain("warm-up run 1 kept");
-      expect(low).toContain("median worst event 18.0 ms");
+      expect(low).toContain("median worst event 18.00 ms");
       // first equal to the median of the rest is kept
       expect(six([10, 10, 10, 10, 10, 10]).measured).toContain("warm-up run 1 kept");
     });
@@ -490,7 +504,7 @@ describe("rowChangeVerdict", () => {
     it("pins the median of a kept low first run: all six runs count", () => {
       // sorted [2,18,18,20,20,20] median 19; dropping the 2 would give 20
       const v = six([2, 18, 18, 20, 20, 20]);
-      expect(v.measured).toContain("median worst event 19.0 ms");
+      expect(v.measured).toContain("median worst event 19.00 ms");
       expect(v.measured).toContain("warm-up run 1 kept");
     });
 
@@ -503,7 +517,7 @@ describe("rowChangeVerdict", () => {
 
   it("reports every repeat value and the appeared times", () => {
     const v = rowChangeVerdict([rep(11.2, 4100), rep(12.4, 4200), rep(13.6, 4300)]);
-    for (const s of ["11.2", "12.4", "13.6", "12.4 ms", "4100", "4200", "4300"]) {
+    for (const s of ["11.2", "12.4", "13.6", "12.40 ms", "4100", "4200", "4300"]) {
       expect(v.measured).toContain(s);
     }
   });
@@ -696,6 +710,13 @@ describe("abArm", () => {
   it("nulls the median when a run has no worst event or no runs exist", () => {
     expect(abArm([run(null, 1)]).medianMs).toBeNull();
     expect(abArm([]).medianMs).toBeNull();
+  });
+
+  it("nulls both medians for a mixed set, with no error", () => {
+    const a = abArm([run(null, null), run(5, 2), run(7, null)]);
+    expect(a.medianMs).toBeNull();
+    expect(a.animations).toBeNull();
+    expect(a.error).toBeNull();
   });
 
   it("counts the repeats that had no worst event", () => {

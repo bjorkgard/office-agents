@@ -475,7 +475,12 @@ export function medianOf(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-export type RowRepeat = { appearedMs: number | null; worstMs: number | null };
+/** `runError` is the message of a thrown repeat, when there was one. */
+export type RowRepeat = {
+  appearedMs: number | null;
+  worstMs: number | null;
+  runError?: string | null;
+};
 
 /**
  * The runs the gate takes its median over: the first (warm-up) run is dropped only when it is higher than
@@ -507,9 +512,10 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   }
   const worsts = repeats.map((r) => r.worstMs);
   if (worsts.some((w) => w === null)) {
+    const thrown = repeats.find((r) => r.runError != null)?.runError;
     return {
       status: "FAIL",
-      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info})`,
+      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info}${thrown != null ? `; repeat failed: ${thrown}` : ""})`,
     };
   }
   const { kept, dropped } = settleRuns(worsts as number[]);
@@ -532,7 +538,7 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
       : "";
   return {
     status,
-    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${warmup}${marginal})`,
+    measured: `row-change style recalc median worst event ${median.toFixed(2)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${warmup}${marginal})`,
   };
 }
 
