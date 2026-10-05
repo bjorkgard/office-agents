@@ -43,3 +43,53 @@ export function findAgentWrapper<T extends { getAttribute(name: string): string 
   for (const el of elements) if (el.getAttribute("data-agent") === key) return el;
   return undefined;
 }
+
+/** The part of a hit button the pulse touches. */
+export type PulseEl = {
+  isConnected: boolean;
+  offsetWidth: number;
+  focus(): void;
+  scrollIntoView?(options: ScrollIntoViewOptions): void;
+  setAttribute(name: string, value: string): void;
+  removeAttribute(name: string): void;
+};
+
+/**
+ * Chip-click pulse: focus an agent's hit button and flag it with data-pulse for `ms`. Only one
+ * button holds the flag, and a button that left the page is never touched again.
+ */
+export function pulser(
+  hitOf: (key: string) => PulseEl | null | undefined,
+  ms: number,
+  timers: {
+    set: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    clear: (id: ReturnType<typeof setTimeout> | undefined) => void;
+  } = {
+    // Arrows, not bare references: a browser's setTimeout/clearTimeout throw "Illegal invocation"
+    // when called as methods of this object.
+    set: (fn, delay) => setTimeout(fn, delay),
+    clear: (id) => clearTimeout(id),
+  },
+) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pulsed: PulseEl | null = null;
+  return {
+    pulse: (key: string) => {
+      const el = hitOf(key);
+      if (!el) return;
+      el.focus();
+      el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      // One highlight at a time: the previous element would otherwise keep it when the timer resets.
+      timers.clear(timer);
+      if (pulsed?.isConnected) pulsed.removeAttribute("data-pulse");
+      pulsed = el;
+      // Force a reflow so re-clicking the same chip restarts the animation.
+      void el.offsetWidth;
+      el.setAttribute("data-pulse", "");
+      timer = timers.set(() => {
+        if (el.isConnected) el.removeAttribute("data-pulse");
+      }, ms);
+    },
+    dispose: () => timers.clear(timer),
+  };
+}

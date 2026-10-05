@@ -12,11 +12,14 @@ import { join } from "node:path";
 import { SHIRTS } from "../src/office/palette.ts";
 import { titleFor } from "../src/office/useDocumentChrome.ts";
 import { hashId } from "../server/sanitize-fixtures.ts";
+import { attachFeedStatus } from "./feed-status.ts";
 import { appendLive, coreSessions, liveLine, type LiveLine } from "./support.ts";
 
 // A new file is found by the tree walk (5 s). R1 on the fixture fires once the clock reaches the
 // open tool call's age (its line is stamped past the 10 s timer), not from a wait in the spec.
 const expect = baseExpect.configure({ timeout: 20_000 });
+
+test.afterEach(({ request }, info) => attachFeedStatus(request, info));
 
 const sessions = coreSessions();
 const liveRoot = () => join(process.env.OFFICE_E2E_BASE!, "live", "root");

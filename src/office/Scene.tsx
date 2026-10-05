@@ -428,6 +428,13 @@ export function Scene({
   };
   const hidden = queue.length - QUEUE_VISIBLE;
   const more = g.queueSpot(QUEUE_VISIBLE);
+  // Queued agents past the drawn ones have no figure, but stay reachable: one hit button each,
+  // stacked at the "+N" spot in focus order (the later one paints on top).
+  const parkedKeys = new Set(queue.slice(QUEUE_VISIBLE));
+  const parked = focusOrder(office, seats).filter(
+    (a) => parkedKeys.has(a.key) && !placed.has(a.key),
+  );
+  const parkedAt = overlayCalc(more, hit).hit;
 
   return (
     <div
@@ -592,6 +599,17 @@ export function Scene({
             </div>
           );
         })}
+        {parked.map((a) => (
+          <div key={a.key} data-agent={a.key}>
+            <button
+              type="button"
+              className="hit"
+              aria-label={`${seenName(a)}, ${projectOf(a)}, ${STATE_LABEL[a.state]}, in the queue by the door`}
+              style={{ left: parkedAt.left, top: parkedAt.top, width: hit, height: hit }}
+              onClick={() => onSelect?.(a.key)}
+            />
+          </div>
+        ))}
         {hidden > 0 && (
           <span
             className="queue-more"

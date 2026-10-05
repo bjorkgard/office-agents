@@ -1,8 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { layoutOffice } from "./iso";
 import { agentKey, type Agent, type OfficeState } from "./machine";
 import { Scene } from "./Scene";
+import { pulser } from "./app-logic";
 import { roomShell, wallPropRect } from "./room";
 import { DESK_CAP } from "../../shared/tuning";
 import { DeskLayer, SCREEN_BAND_CELLS } from "./DeskLayer";
@@ -393,9 +394,82 @@ describe("Scene door queue overflow (DR1)", () => {
     expect(marker[1]).toBe("and 3 more waiting");
     expect(marker[2]).toBe("+3");
     expect(html.lastIndexOf("data-queue-more")).toBeGreaterThan(html.lastIndexOf('class="hit"'));
-    expect(html.match(/class="hit"/g)).toHaveLength(1 + QUEUE_VISIBLE);
+    // One hit per drawn agent, plus one per overflow agent parked at the +N spot (3 here).
+    expect(html.match(/class="hit"/g)).toHaveLength(1 + QUEUE_VISIBLE + 3);
+  });
+
+  const hitOf = (html: string, key: string) =>
+    new RegExp(`<div data-agent="${key}"><button[^>]*class="hit"[^>]*aria-label="([^"]+)"`).exec(
+      html,
+    );
+
+  it("overflow waiting agent has a focusable hit button", () => {
+    const html = queued(QUEUE_VISIBLE + 2);
+    const last = hitOf(html, agentKey(`q${QUEUE_VISIBLE + 1}`, null))!;
+    expect(last).not.toBeNull();
+    expect(last[1]).toContain("in the queue by the door");
+    expect(hitOf(html, agentKey(`q${QUEUE_VISIBLE}`, null))![1]).not.toBe(last[1]);
+    expect(html).not.toMatch(/class="hit"[^>]*tabindex="-1"/);
+  });
+
+  it("chip click on an overflow agent moves focus and sets data-pulse", () => {
+    const key = agentKey(`q${QUEUE_VISIBLE}`, null);
+    expect(hitOf(queued(QUEUE_VISIBLE + 1), key)).not.toBeNull();
+    const el = fakeHit();
+    const p = pulser((k) => (k === key ? el : undefined), 1200, fakeTimers());
+    p.pulse(key);
+    expect(el.focused).toBe(true);
+    expect(el.attrs.has("data-pulse")).toBe(true);
+  });
+
+  it("agent leaving the queue mid-pulse leaves no stale data-pulse", () => {
+    const key = agentKey(`q${QUEUE_VISIBLE}`, null);
+    const timers = fakeTimers();
+    const old = fakeHit();
+    const fresh = fakeHit();
+    let current = old;
+    const p = pulser((k) => (k === key ? current : undefined), 1200, timers);
+    p.pulse(key);
+    old.isConnected = false;
+    current = fresh;
+    expect(fresh.attrs.has("data-pulse")).toBe(false);
+    timers.fire();
+    expect(fresh.attrs.has("data-pulse")).toBe(false);
+    p.pulse(key);
+    expect(fresh.attrs.has("data-pulse")).toBe(true);
+    p.pulse("gone");
+    expect(fresh.attrs.has("data-pulse")).toBe(true);
   });
 });
+
+function fakeHit() {
+  const attrs = new Set<string>();
+  return {
+    attrs,
+    focused: false,
+    isConnected: true,
+    offsetWidth: 0,
+    focus() {
+      this.focused = true;
+    },
+    setAttribute: (n: string) => void attrs.add(n),
+    removeAttribute: (n: string) => void attrs.delete(n),
+  };
+}
+
+function fakeTimers() {
+  let fn: (() => void) | null = null;
+  return {
+    set: (f: () => void) => {
+      fn = f;
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    },
+    clear: () => {
+      fn = null;
+    },
+    fire: () => fn?.(),
+  };
+}
 
 describe("Scene focus container", () => {
   it("is a programmatic focus target with a label", () => {
@@ -1034,5 +1108,27 @@ describe("window css", () => {
         ),
         sel,
       ).toBe(true);
+  });
+
+  it("default timers are called unbound: a browser's clearTimeout throws as an object method", () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal("setTimeout", function (this: unknown) {
+      seen.push(this);
+      return 1;
+    });
+    vi.stubGlobal("clearTimeout", function (this: unknown) {
+      seen.push(this);
+    });
+    try {
+      const el = fakeHit();
+      const p = pulser(() => el, 1200);
+      p.pulse("k");
+      p.pulse("k");
+      p.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const t of seen) expect(t).toBeUndefined();
   });
 });

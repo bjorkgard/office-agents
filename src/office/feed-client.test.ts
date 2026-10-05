@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { AgentEvent } from "../../shared/events";
+import { DESK_CAP } from "../../shared/tuning";
 import {
   createFeedClient,
   REOPEN_DELAYS_MS,
@@ -564,12 +565,12 @@ describe("seats (S1-1)", () => {
     expect(h.state().projects.constructor).toBeUndefined();
   });
 
-  it("accepts desk 255 and rejects desk 256", () => {
+  it("accepts the last desk under the cap and rejects the first past it", () => {
     const h = harness();
     live(h);
-    h.last().send({ type: "seat", sessionId: "s3", desk: 255 });
-    expect(h.state().seats.s3).toBe(255);
-    h.last().send({ type: "seat", sessionId: "s4", desk: 256 });
+    h.last().send({ type: "seat", sessionId: "s3", desk: DESK_CAP - 1 });
+    expect(h.state().seats.s3).toBe(DESK_CAP - 1);
+    h.last().send({ type: "seat", sessionId: "s4", desk: DESK_CAP });
     expect(h.state().seats.s4).toBeUndefined();
     expect(h.state().skipped.frame).toBe(1);
   });

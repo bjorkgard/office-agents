@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { ErrorBoundary } from "./office/ErrorBoundary";
 import type { FeedDeps } from "./office/feed-client";
 import type { Viewport } from "./office/iso";
@@ -9,6 +9,7 @@ import {
   TOO_SMALL_NOTICE,
   viewportOf,
   findAgentWrapper,
+  pulser,
 } from "./office/app-logic";
 import { Scene } from "./office/Scene";
 import { waitingCount } from "./office/selectors";
@@ -65,26 +66,16 @@ function App({ deps }: { deps?: FeedDeps }) {
   const onBoundaryError = () => setCaughtKey(sceneKey.key);
   const displayError = displayErrorShown(caughtKey, sceneKey.key);
 
-  const pulseTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const pulsed = useRef<HTMLElement | null>(null);
-  useEffect(() => () => clearTimeout(pulseTimer.current), []);
   // Chip click: focus the character and flag it briefly (index.css draws the pulse).
-  const pulse = useCallback((key: string) => {
-    const wrapper = findAgentWrapper(document.querySelectorAll<HTMLElement>("[data-agent]"), key);
-    // The hit button is the character's real box; the wrapper has none.
-    const el = wrapper?.querySelector<HTMLElement>("button.hit");
-    if (!el) return;
-    el.focus();
-    el.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-    // One highlight at a time: the previous element would otherwise keep it when the timer resets.
-    clearTimeout(pulseTimer.current);
-    pulsed.current?.removeAttribute("data-pulse");
-    pulsed.current = el;
-    // Force a reflow so re-clicking the same chip restarts the animation.
-    void el.offsetWidth;
-    el.setAttribute("data-pulse", "");
-    pulseTimer.current = setTimeout(() => el.removeAttribute("data-pulse"), PULSE_MS);
-  }, []);
+  const [pulses] = useState(() =>
+    pulser((key) => {
+      const wrapper = findAgentWrapper(document.querySelectorAll<HTMLElement>("[data-agent]"), key);
+      // The hit button is the character's real box; the wrapper has none.
+      return wrapper?.querySelector<HTMLElement>("button.hit");
+    }, PULSE_MS),
+  );
+  useEffect(() => pulses.dispose, [pulses]);
+  const pulse = pulses.pulse;
 
   return (
     <>

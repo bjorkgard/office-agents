@@ -1,4 +1,5 @@
 import { parseAgentEvent, type AgentEvent } from "../../shared/events";
+import { DESK_CAP } from "../../shared/tuning";
 import { applyEvents, createOffice, removeAgent, tick, type OfficeState } from "./machine";
 
 /**
@@ -296,10 +297,8 @@ export function createFeedClient(deps: FeedDeps, onChange: (s: FeedState) => voi
 }
 
 /** Seats a client accepts: a huge desk index would size the room and freeze the tab. */
-const MAX_DESKS = 256;
-
 function isDesk(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < MAX_DESKS;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value < DESK_CAP;
 }
 
 /** Null-prototype copy, so a project id like "constructor" cannot collide with Object.prototype. */

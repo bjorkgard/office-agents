@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { attachFeedStatus } from "./feed-status.ts";
+
+test.afterEach(({ request }, info) => attachFeedStatus(request, info));
 
 test(
   "boots and shows the scene",

@@ -232,18 +232,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** Verify the normalizer against real transcripts
 
-### Simplify the flush() projectId handling
-
-**What:** `server/feed-plugin.ts` flush(): simplify the projectId handling.
-
-**Why:** Behavior is correct; the code is harder to read than it needs to be.
-
-**Context:** Found in the Phase 2-3 /ship review; deliberately left alone there.
-
-**Effort:** S (human ~30min / CC ~10min)
-**Priority:** P3
-**Depends on:** None
-
 ### Validate id format in parseAgentEvent
 
 **What:** Reject ids that do not match a conservative pattern (length and character set).
@@ -292,18 +280,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P1
 **Depends on:** Verify the normalizer against real transcripts
 
-### Anchor the task-notification match in the normalizer
-
-**What:** `onQueueOperation` in `server/normalize.ts` tests whether the content includes the task-notification tag anywhere.
-
-**Why:** Any queued text that merely contains the tag is treated as a completion notice.
-
-**Context:** Require the tag at the start of the content.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P3
-**Depends on:** None
-
 ### identityFor covers only 24 identities
 
 **What:** `src/office/identity.ts` `identityFor` has 24 identities.
@@ -342,18 +318,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** None
 
-### Waiting agent past QUEUE_VISIBLE is unreachable
-
-**What:** A waiting agent past `QUEUE_VISIBLE` in `src/office/Scene.tsx` has no `.hit` button, so its top-bar chip does nothing when clicked. Make `pulse()` in `src/App.tsx` fall back to a visible target when the wrapper is missing, and consider a stable render order so focus survives an attention reorder.
-
-**Why:** Keyboard and screen reader users cannot reach the agent that needs them.
-
-**Context:** Split from "Queue overflow button does nothing" (the `+N` button half is DONE, see ARCHIVE.md).
-
-**Effort:** S (human ~1h / CC ~15min)
-**Priority:** P3
-**Depends on:** None
-
 ### Render cost: per-frame setState, idle tick clone, overlay ref churn
 
 **What:** Every SSE frame and every skipped frame sets state and renders the scene. `tick` in `src/office/machine.ts` clones the whole state on idle ticks. `bindOverlay` in `Scene.tsx` returns a new ref callback each render.
@@ -363,18 +327,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Context:** Coalesce frames per animation frame, run a cheap "anything due" check before cloning, cache ref callbacks. Deferred by the user in the Phase 4 /ship review.
 
 **Effort:** M (human ~4h / CC ~30min)
-**Priority:** P3
-**Depends on:** None
-
-### Share MAX_DESKS between server and client and cap the layout
-
-**What:** `MAX_DESKS = 256` lives only in `src/office/feed-client.ts`. The server seat table has no cap, and layouts above about 48 desks overflow the viewport at the minimum scale.
-
-**Why:** The 257th concurrent session is seated on the server but dropped on the client. A realistic cap is far below 256.
-
-**Context:** Move the constant to `shared/tuning.ts`, cap `assignSeat`, derive the value from what fits at `MIN_SCALE`.
-
-**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P3
 **Depends on:** None
 
@@ -389,20 +341,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Effort:** S (human ~2h / CC ~20min)
 **Priority:** P3
 **Depends on:** None
-
-## Phase 5 review follow-ups
-
-### E2E failure context: attach feed status and server log
-
-**What:** On a failed E2E spec, attach the `/__office/status` JSON and the dev server's plugin log lines to the test result.
-
-**Why:** An empty room has several causes (root wrong, tailer saw nothing, refused host). The trace and screenshot do not show which one; status and log do.
-
-**Context:** Phase 5 review (docs/designs/phase-5-ceo-review.md, D12). Each Playwright project runs its own webServer with `stdout: "pipe"`; add an `afterEach` that fetches the project's status URL and calls `testInfo.attach` when the test failed. Source of the log lines: `[office] ...` from `server/feed-plugin.ts`.
-
-**Effort:** S (human ~1h / CC ~10min)
-**Priority:** P3
-**Depends on:** Phase 5 E2E harness (5.1, 5.2)
 
 ## Demo mode
 

@@ -12,5 +12,8 @@ export const ATTENTION_STALE_MS = 4 * 60 * 60 * 1000;
 /** Desks per row: the server's seat rule and the client's layout must agree (eng decision D14). */
 export const DESKS_PER_ROW = 4;
 
-/** Most desks the room grows to for subagents (rows of DESKS_PER_ROW); beyond it they stand or queue. */
+/**
+ * Most desks anywhere: the server seats no session past it and the client rejects a seat past it.
+ * The room also grows to it for subagents (rows of DESKS_PER_ROW); beyond it they stand or queue.
+ */
 export const DESK_CAP = 24;
