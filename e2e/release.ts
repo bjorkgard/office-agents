@@ -364,6 +364,8 @@ async function criteria(): Promise<number> {
 /** Budgets from the phase 6 decisions: p95 frame ms by agent count, and row-change style recalc ms. */
 export const FRAME_BUDGET_MS: Record<number, number> = { 12: 20, 24: 33 };
 export const RECALC_BUDGET_MS = 16;
+/** A passing median above this share of the budget is flagged as marginal. */
+const MARGINAL_RATIO = 0.9;
 const STEADY_MS = 5_000;
 /** How long after the new agents rendered the traced row-change window stays open. */
 const ROW_TRACE_TAIL_MS = 1_500;
@@ -465,7 +467,7 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   const median = medianOf(worsts as number[])!;
   const status = median <= RECALC_BUDGET_MS ? "PASS" : "FAIL";
   const marginal =
-    status === "PASS" && median > 0.9 * RECALC_BUDGET_MS
+    status === "PASS" && median > MARGINAL_RATIO * RECALC_BUDGET_MS
       ? "; marginal: within 10% of the budget"
       : "";
   return {

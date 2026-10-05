@@ -135,7 +135,7 @@ Plan and decisions: `docs/designs/office-life-ceo-review.md` (settled; do not re
 
 - [ ] **6.1 Success criteria pass.** Tooling shipped in 0.5.0.0: `vp run criteria` (PASS, FAIL or SKIPPED per criterion), `vp run perf` and `vp run hero`, all in `e2e/release.ts`. Perf numbers are in DESIGN.md "Performance". Left: record a real-session `vp run criteria` run in docs/success-criteria.md ("Evidence" section) and the Safari perf pass.
 - [x] **6.2 Housekeeping.** README roadmap ticked, `CHANGELOG.md` and `VERSION` at 0.5.0.0, `package.json` at 0.5.0.
-- [x] **6.3 Next.** Phase 7 below; the row-change recalc miss is in [TODOS.md](TODOS.md) ("Row-change style recalc over budget").
+- [x] **6.3 Next.** Phase 7 below; the row-change recalc miss is in [TODOS.md](TODOS.md) ("Row-change style recalc at 24 agents over budget (2026-10-05)"). Only 24 agents remain over budget; the 12-agent miss is fixed, though its median sits close to the 16 ms line.
 
 ## Phase 7: Hooks adapter
 
