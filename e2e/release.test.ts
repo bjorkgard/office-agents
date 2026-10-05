@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   abArm,
   abDelta,
+  abSkippedLine,
   abVerdict,
   anyFailed,
   assertTempRoot,
@@ -453,7 +454,9 @@ describe("rowChangeVerdict", () => {
       const v = six([50, 10, 12, 10, 14, 10]);
       expect(v.status).toBe("PASS");
       expect(v.measured).toContain("median worst event 10.0 ms");
-      expect(v.measured).toContain("warm-up run 1 dropped");
+      expect(v.measured).toContain(
+        "warm-up run 1 dropped (50.0 ms, higher than the median of runs 2-6)",
+      );
       expect(v.measured).toContain("50.0/10.0/12.0/10.0/14.0/10.0");
     });
 
@@ -462,10 +465,17 @@ describe("rowChangeVerdict", () => {
       const v = six([10, 20, 10, 12, 10, 3]);
       expect(v.measured).toContain("warm-up run 1 kept");
       expect(v.measured).toContain("median worst event 10.0 ms");
-      // a low first run is kept and pulls the median: [1,18,18,18,18,18] sorted -> 18
+      // a low first run is kept (median here stays 18; the next test pins a case where it moves)
       expect(six([1, 18, 18, 18, 18, 18]).measured).toContain("warm-up run 1 kept");
       // first equal to the median of the rest is kept
       expect(six([10, 10, 10, 10, 10, 10]).measured).toContain("warm-up run 1 kept");
+    });
+
+    it("pins the median of a kept low first run: all six runs count", () => {
+      // sorted [2,18,18,20,20,20] median 19; dropping the 2 would give 20
+      const v = six([2, 18, 18, 20, 20, 20]);
+      expect(v.measured).toContain("median worst event 19.0 ms");
+      expect(v.measured).toContain("warm-up run 1 kept");
     });
 
     it("lets the dropped warm-up change the verdict", () => {
@@ -529,6 +539,12 @@ describe("abDelta and abVerdict", () => {
     expect(v.measured).toContain("delta +6.0 ms");
   });
 
+  it("prints a negative delta without a doubled sign", () => {
+    const v = abVerdict({ animated: arm(12, 40), frozen: arm(18, 0) });
+    expect(v.measured).toContain("delta -6.0 ms");
+    expect(v.measured).not.toContain("+-");
+  });
+
   it("is SKIPPED with the probe error when getAnimations is unavailable", () => {
     const v = abVerdict({
       animated: arm(18, 40),
@@ -549,6 +565,17 @@ describe("abDelta and abVerdict", () => {
     const v = abVerdict({ animated: arm(18, 40.5), frozen: arm(12, 0) });
     expect(v.measured).toContain("41 animations");
     expect(v.measured).not.toContain("40.5");
+  });
+});
+
+describe("abSkippedLine", () => {
+  const v = (status: "PASS" | "FAIL" | "SKIPPED" | "INCONCLUSIVE") => ({ status, measured: "" });
+
+  it("counts SKIPPED verdicts only when --ab is set", () => {
+    const all = [v("PASS"), v("SKIPPED"), v("SKIPPED")];
+    expect(abSkippedLine(all, true)).toBe("2 SKIPPED (A/B not measured, exit 0)");
+    expect(abSkippedLine(all, false)).toBeNull();
+    expect(abSkippedLine([v("PASS"), v("INCONCLUSIVE")], true)).toBeNull();
   });
 });
 

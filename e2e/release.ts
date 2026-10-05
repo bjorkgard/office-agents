@@ -522,7 +522,7 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
     repeats.length < 2
       ? ""
       : dropped
-        ? `; warm-up run 1 dropped (higher than the median of runs 2-${repeats.length})`
+        ? `; warm-up run 1 dropped (${fmt(repeats[0]!.worstMs)} ms, higher than the median of runs 2-${repeats.length})`
         : "; warm-up run 1 kept";
   const marginal =
     status === "PASS" && median > MARGINAL_RATIO * RECALC_BUDGET_MS
@@ -584,6 +584,12 @@ export function abDelta(arms: {
     deltaMs: animated.medianMs - frozen.medianMs,
     deltaAnimations: animated.animations - frozen.animations,
   };
+}
+
+/** The "A/B not measured" count line for `perf --ab`, or null when not in `--ab` or nothing was skipped. */
+export function abSkippedLine(all: Verdict[], ab: boolean): string | null {
+  const skipped = all.filter((v) => v.status === "SKIPPED").length;
+  return ab && skipped > 0 ? `${skipped} SKIPPED (A/B not measured, exit 0)` : null;
 }
 
 /** The `--ab` delta line: informational PASS, or SKIPPED naming the probe or repeat error or the missing data. */
@@ -794,7 +800,7 @@ export function perfVerdicts(
   ];
 }
 
-// Arms run animated first then frozen (order bias not corrected); abArm medians keep the warm-up run, the gate drops it via settleRuns.
+// A/B arm order and warm-up handling: see abArm.
 async function perfAt(
   agents: number,
   headed: boolean,
@@ -860,6 +866,8 @@ async function perf(ab: boolean): Promise<number> {
   }
   const inconclusive = all.filter((v) => v.status === "INCONCLUSIVE").length;
   if (inconclusive > 0) console.log(`${inconclusive} INCONCLUSIVE (exit 0)`);
+  const skippedLine = abSkippedLine(all, ab);
+  if (skippedLine !== null) console.log(skippedLine);
   console.log(`chrome ${info.chrome}`);
   return anyFailed(all) ? 1 : 0;
 }
