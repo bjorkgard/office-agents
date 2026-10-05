@@ -49,7 +49,7 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 - [x] Release checks: success criteria, frame budget and README picture (`vp run criteria`, `vp run perf`, `vp run hero`)
 - [x] Hooks adapter for exact attention signals, optional and installed only on request (BUILD_TODO Phase 7); which Notification types fire is still unverified
 
-The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
+The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome (median of six repeats; a median above 16 ms and up to 17.5 ms is reported as INCONCLUSIVE and does not fail the run). `node e2e/release.ts perf --ab` repeats the row-change check with animations switched off and prints the difference; `perf` rejects unknown arguments. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
 
 ### Roadmap rules
 
