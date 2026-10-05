@@ -18,11 +18,13 @@ import {
   hero,
   makeRunRoot,
   medianOf,
+  oneLine,
   officeEnv,
   p95,
   parseArgs,
   perfVerdicts,
   RECALC_BUDGET_MS,
+  type RowRepeat,
   ROWS,
   rowChangeVerdict,
   rowVerdict,
@@ -413,6 +415,12 @@ describe("rowChangeVerdict", () => {
     expect(v.measured).toContain("never appeared");
   });
 
+  it("still says never appeared for a null repeat without runError", () => {
+    const v = rowChangeVerdict([rep(5), { appearedMs: null, worstMs: null, runError: null }]);
+    expect(v.measured).toContain("never appeared");
+    expect(v.measured).not.toContain("repeat failed");
+  });
+
   it("fails when any repeat has no worst event", () => {
     expect(rowChangeVerdict([rep(5), rep(null), rep(5)]).status).toBe("FAIL");
   });
@@ -457,12 +465,13 @@ describe("rowChangeVerdict", () => {
       expect(v.measured).toContain("16.04");
     });
 
-    it("shows a thrown repeat's runError in the FAIL text", () => {
-      const reps = [5, 5, 5, 5, 5, 5].map((m) => ({ ...rep(m), runError: null as string | null }));
-      reps[2] = { appearedMs: 4300, worstMs: null, runError: "page crashed" };
+    it("reports a thrown repeat as repeat failed, not as never appeared", () => {
+      const reps: RowRepeat[] = [5, 5, 5, 5, 5, 5].map((m) => rep(m));
+      reps[2] = { appearedMs: null, worstMs: null, runError: "page crashed" };
       const v = rowChangeVerdict(reps);
       expect(v.status).toBe("FAIL");
-      expect(v.measured).toContain("page crashed");
+      expect(v.measured).toContain("repeat failed: page crashed");
+      expect(v.measured).not.toContain("never appeared");
     });
 
     it("fails with null data in any run, with a reason", () => {
@@ -523,10 +532,21 @@ describe("rowChangeVerdict", () => {
   });
 });
 
+describe("oneLine", () => {
+  it("collapses whitespace and newlines to single spaces", () => {
+    expect(oneLine("a\n  b\t\tc\r\nd")).toBe("a b c d");
+  });
+
+  it("caps at 200 characters", () => {
+    expect(oneLine("x".repeat(500))).toHaveLength(200);
+    expect(oneLine("short")).toBe("short");
+  });
+});
+
 describe("anyFailed", () => {
   const v = (status: "PASS" | "FAIL" | "SKIPPED" | "INCONCLUSIVE") => ({ status, measured: "" });
 
-  it("exits 1 only for FAIL; PASS, SKIPPED and INCONCLUSIVE exit 0", () => {
+  it("is true only for FAIL; PASS, SKIPPED and INCONCLUSIVE are not failures", () => {
     expect(anyFailed([v("PASS"), v("SKIPPED"), v("INCONCLUSIVE")])).toBe(false);
     expect(anyFailed([v("PASS"), v("FAIL")])).toBe(true);
     expect(anyFailed([v("INCONCLUSIVE"), v("FAIL")])).toBe(true);

@@ -454,7 +454,7 @@ export function classifyPhase(offsetMs: number, appearedMs: number): RecalcPhase
   return offsetMs < appearedMs + EASE_MS ? "ease" : "idle";
 }
 
-/** True when any verdict is FAIL: the one status that makes the runner exit 1. */
+/** True when any verdict is FAIL. */
 export function anyFailed(verdicts: Verdict[]): boolean {
   return verdicts.some((v) => v.status === "FAIL");
 }
@@ -473,6 +473,11 @@ export function medianOf(values: number[]): number | null {
   const sorted = [...values].sort((x, y) => x - y);
   const mid = sorted.length >> 1;
   return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}
+
+/** An error message on one line, whitespace collapsed, capped at 200 characters. */
+export function oneLine(message: string): string {
+  return message.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 /** `runError` is the message of a thrown repeat, when there was one. */
@@ -504,6 +509,13 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   if (repeats.length === 0) {
     return { status: "FAIL", measured: "row-change style recalc: no repeats measured" };
   }
+  const thrown = repeats.find((r) => r.runError != null)?.runError;
+  if (thrown != null) {
+    return {
+      status: "FAIL",
+      measured: `row-change style recalc: repeat failed: ${thrown} (worst events ${worst} ms; ${info})`,
+    };
+  }
   if (repeats.some((r) => r.appearedMs === null)) {
     return {
       status: "FAIL",
@@ -512,10 +524,9 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   }
   const worsts = repeats.map((r) => r.worstMs);
   if (worsts.some((w) => w === null)) {
-    const thrown = repeats.find((r) => r.runError != null)?.runError;
     return {
       status: "FAIL",
-      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info}${thrown != null ? `; repeat failed: ${thrown}` : ""})`,
+      measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info})`,
     };
   }
   const { kept, dropped } = settleRuns(worsts as number[]);
@@ -867,7 +878,7 @@ async function perfAt(
           await rowRepeat(agents, headed, info, `${tag}repeat ${i}`, ab ? { frozen } : null),
         );
       } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
+        const message = oneLine(e instanceof Error ? e.message : String(e));
         console.log(`  ${agents} agents ${tag}repeat ${i}: failed, ${message}`);
         out.push({
           appearedMs: null,
