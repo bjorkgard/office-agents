@@ -43,8 +43,8 @@ import { DESKS_PER_ROW } from "../../shared/tuning";
 import { activeSceneId, windowScene, type WindowScene } from "./decor";
 import { ART, FLOOR_LIGHT_OPACITY, GLASS } from "./palette";
 import type { AgentState } from "./poses";
-import { armPaperTimer, paperOfParent } from "./paper";
-import { RoomDecor } from "./RoomDecor";
+import { armPaperTimer, doorOpen, paperOfParent } from "./paper";
+import { DoorLight, RoomDecor } from "./RoomDecor";
 import { roomShell, type RoomShell as RoomShellGeometry } from "./room";
 import {
   assignShirts,
@@ -135,11 +135,13 @@ function RoomShell({
   width,
   height,
   scene,
+  doorLit,
 }: {
   shell: RoomShellGeometry;
   width: number;
   height: number;
   scene: WindowScene;
+  doorLit: boolean;
 }) {
   const pts = (poly: Point[]) => poly.map((p) => `${p.x},${p.y}`).join(" ");
   return (
@@ -159,6 +161,9 @@ function RoomShell({
       <polygon points={pts(shell.rightWall)} fill="var(--plastic)" opacity={0.4} />
       <polygon points={pts(shell.leftBaseboard)} fill="var(--metal)" opacity={0.7} />
       <polygon points={pts(shell.rightBaseboard)} fill="var(--metal)" opacity={0.7} />
+      {doorLit && (
+        <DoorLight doorLight={shell.doorLight} fill={GLASS[scene.light]} sceneId={scene.id} />
+      )}
       {shell.windows.map((w) => (
         <g key={w.name} data-part="floor-light" data-window-scene={scene.id}>
           {w.patch.map((pane, i) => (
@@ -317,11 +322,14 @@ export function Scene({
     ),
   );
   const nextPaper = Math.min(...[...paper.values()].map((p) => p.nextChange ?? Infinity));
-  // One timer to the earliest change; a render replaces it. A timer that fires early still renders
-  // (paperTick), and that render arms the next one.
+  // The door stands ajar while a subagent walks in or out (same motion, so same times as the paper).
+  const door = doorOpen(agents, motion, reducedMotion, t);
+  // One timer to the earliest change (paper or door); a render replaces it. A timer that fires early
+  // still renders (paperTick), and that render arms the next one.
+  const nextWake = Math.min(nextPaper, door.nextChange ?? Infinity);
   useEffect(
-    () => armPaperTimer(nextPaper, clock ?? Date.now, () => setPaperTick((n) => n + 1)),
-    [nextPaper, clock, paperTick],
+    () => armPaperTimer(nextWake, clock ?? Date.now, () => setPaperTick((n) => n + 1)),
+    [nextWake, clock, paperTick],
   );
 
   // A focused hit button can leave the page (its agent left): keep focus in the scene.
@@ -472,6 +480,7 @@ export function Scene({
           width={layout.box.width}
           height={layout.box.height}
           scene={scene}
+          doorLit={door.open}
         />
         <RoomDecor
           shell={shell}
@@ -480,6 +489,7 @@ export function Scene({
           now={now}
           scene={scene}
           clock={clock}
+          doorOpen={door.open}
         />
         <DeskLayer
           layout={layout}

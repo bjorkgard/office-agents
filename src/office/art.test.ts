@@ -11,7 +11,21 @@ import { DESK_KINDS } from "./desk-kinds";
 import { CharacterRig, DeskDefs, PixelDesk, PixelProp, SharedDesk } from "./CharacterRig";
 import rigSrc from "./CharacterRig.tsx?raw";
 import mainSrc from "../main.tsx?raw";
-import { PROPS, type PropName } from "./props";
+import {
+  BOOKSHELF,
+  BOOKSHELF_BOOKS,
+  BOOKSHELF_SHADOW,
+  decorVariantGrid,
+  COFFEE_SHADOW,
+  DISPENSER,
+  DISPENSER_SHADOW,
+  DOOR,
+  DOOR_AJAR,
+  PICTURE_A,
+  PICTURE_B,
+  PROPS,
+  type PropName,
+} from "./props";
 import {
   CELL,
   CELLS,
@@ -26,7 +40,10 @@ import pixel from "./pixel.ts?raw";
 import { ART, GLASS, SHIRTS } from "./palette";
 import decorSrc from "./decor.ts?raw";
 import roomDecorSrc from "./RoomDecor.tsx?raw";
-import { WINDOW_SCENE_IDS } from "./decor";
+import { WINDOW_SCENE_IDS, decorVariantFor, windowScene } from "./decor";
+import { RoomDecor } from "./RoomDecor";
+import { layoutOffice } from "./iso";
+import { roomShell } from "./room";
 import {
   DESK,
   FRAME_VIEW,
@@ -552,6 +569,378 @@ describe("self-contained roots", () => {
       expect(html).toMatch(/^<svg[^>]*aria-hidden="true"/);
       expect(html).toMatch(/^<svg[^>]*focusable="false"/);
     }
+  });
+});
+
+describe("dispenser and contact shadows", () => {
+  const known = new Set([".", ...Object.keys(CELLS)]);
+  const grids = { DISPENSER, DISPENSER_SHADOW, COFFEE_SHADOW };
+
+  // Value: WALL_ANCHOR.DISPENSER and the room's rect checks depend on the 16x36 frame and the jug column.
+  it("keeps the DISPENSER frame, known cells and the jug column bottom at the middle column", () => {
+    expect(DISPENSER).toHaveLength(36);
+    for (const row of DISPENSER) {
+      expect(row).toHaveLength(16);
+      for (const c of row) expect(known.has(c), `cell '${c}'`).toBe(true);
+      expect(row).not.toMatch(/[sz]/);
+    }
+    let bottom = -1;
+    DISPENSER.forEach((row, y) => {
+      if (row[8] !== ".") bottom = y;
+    });
+    expect(bottom + 1).toBe(33);
+  });
+
+  // Value: the style rule is 2 cells minimum, and a 1-cell run in either direction breaks it.
+  it("has no horizontal or vertical run of one cell", () => {
+    for (const [name, grid] of Object.entries(grids)) {
+      for (const [y, row] of grid.entries())
+        for (const m of row.matchAll(/([^.])\1*/g))
+          expect(m[0].length, `${name} row ${y} col ${m.index}`).toBeGreaterThanOrEqual(2);
+      for (let x = 0; x < grid[0].length; x++) {
+        const col = grid.map((row) => row[x]).join("");
+        for (const m of col.matchAll(/([^.])\1*/g))
+          expect(m[0].length, `${name} col ${x} row ${m.index}`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  // Value: a contact shadow is plain ground-shadow cells (the shared '_' token, no new color), sheared at the wall slope.
+  it("draws the shadows in '_' only, rectangular, one row down per two columns across", () => {
+    for (const [name, grid] of Object.entries({ DISPENSER_SHADOW, COFFEE_SHADOW })) {
+      for (const row of grid) {
+        expect(row, name).toHaveLength(grid[0].length);
+        expect(row, name).toMatch(/^\.*_+\.*$/);
+      }
+      const first = (y: number) => grid[y].indexOf("_");
+      expect(first(grid.length - 1), name).toBeGreaterThan(first(0));
+      const last = grid[0].length - 1;
+      const topAt = (x: number) => grid.findIndex((r) => r[x] === "_");
+      expect(topAt(last) - topAt(0), name).toBe(Math.floor(last / 2));
+    }
+    expect(DISPENSER_SHADOW[0]).toHaveLength(DISPENSER[0].length);
+  });
+
+  it("keeps the shadows out of PROPS' room list but on the dev sheet at 100% and 50%", () => {
+    const html = renderToStaticMarkup(createElement(ArtSheet));
+    for (const name of ["DISPENSER", "COFFEE_STATION"])
+      expect(html.match(new RegExp(`data-shadow="${name}"`, "g")), name).toHaveLength(2);
+  });
+
+  it("renders the dispenser and shadows in the room under the props", () => {
+    const shell = roomShell(layoutOffice(6, { width: 1200, height: 800 }));
+    const html = renderToStaticMarkup(
+      createElement(RoomDecor, {
+        shell,
+        door: { x: 0, y: 0 },
+        coffee: shell.coffee,
+        now: 0,
+        scene: windowScene("dusk"),
+      }),
+    );
+    expect(html.indexOf('data-shadow="COFFEE_STATION"')).toBeLessThan(
+      html.indexOf('data-prop="COFFEE_STATION"'),
+    );
+    expect(html.indexOf('data-shadow="DISPENSER"')).toBeLessThan(
+      html.indexOf('data-prop="DISPENSER"'),
+    );
+  });
+});
+
+describe("door ajar", () => {
+  const known = new Set([".", ...Object.keys(CELLS)]);
+
+  // Value: it swaps in for DOOR at the same anchor, so the frame must match.
+  it("is DOOR's 20x60 frame of known cells, art tokens only", () => {
+    expect(DOOR_AJAR).toHaveLength(DOOR.length);
+    for (const row of DOOR_AJAR) {
+      expect(row).toHaveLength(DOOR[0].length);
+      for (const c of row) expect(known.has(c), `cell '${c}'`).toBe(true);
+    }
+    expect(DOOR_AJAR).not.toEqual(DOOR);
+  });
+
+  // Value: the style rule is 2 cells minimum in either direction.
+  it("has no horizontal or vertical run of one cell", () => {
+    for (const [y, row] of DOOR_AJAR.entries())
+      for (const m of row.matchAll(/([^.])\1*/g))
+        expect(m[0].length, `row ${y} col ${m.index}`).toBeGreaterThanOrEqual(2);
+    for (let x = 0; x < DOOR_AJAR[0].length; x++) {
+      const col = DOOR_AJAR.map((row) => row[x]).join("");
+      for (const m of col.matchAll(/([^.])\1*/g))
+        expect(m[0].length, `col ${x} row ${m.index}`).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("renders in the room only while open, in the door's place", () => {
+    const shell = roomShell(layoutOffice(6, { width: 1200, height: 800 }));
+    const html = (open: boolean) =>
+      renderToStaticMarkup(
+        createElement(RoomDecor, {
+          shell,
+          door: shell.door,
+          coffee: shell.coffee,
+          now: 0,
+          scene: windowScene("dusk"),
+          doorOpen: open,
+        }),
+      );
+    expect(html(false)).toContain('data-prop="DOOR"');
+    expect(html(false)).not.toContain('data-prop="DOOR_AJAR"');
+    expect(html(true)).toContain('data-prop="DOOR_AJAR"');
+    expect(html(true)).not.toContain('data-prop="DOOR"');
+    expect(html(true)).toContain('data-door="open"');
+    expect(html(false)).toContain('data-door="closed"');
+  });
+});
+
+describe("wall dressing", () => {
+  const known = new Set([".", ...Object.keys(CELLS)]);
+  const grids = { BOOKSHELF, PICTURE_A, PICTURE_B, BOOKSHELF_SHADOW };
+  // Cells that belong to figures, not furniture: shirt, stripe, skin, hair.
+  const rig = /[szkh12340]/;
+
+  // Value: the width budget and the wall anchors (room.ts WALL_ANCHOR) depend on these frames.
+  it("sizes the shelf 20x39 and the pictures 14x22 and 12x19, known cells, no figure colors", () => {
+    expect([BOOKSHELF[0].length, BOOKSHELF.length]).toEqual([20, 39]);
+    expect([PICTURE_A[0].length, PICTURE_A.length]).toEqual([14, 22]);
+    expect([PICTURE_B[0].length, PICTURE_B.length]).toEqual([12, 19]);
+    for (const [name, grid] of Object.entries(grids))
+      for (const row of grid) {
+        expect(row, name).toHaveLength(grid[0].length);
+        for (const c of row) expect(known.has(c), `${name} cell '${c}'`).toBe(true);
+        if (name !== "BOOKSHELF_SHADOW") expect(row, name).not.toMatch(rig);
+      }
+    expect(PROPS.BOOKSHELF).toBe(BOOKSHELF);
+  });
+
+  // Value: the style rule is 2 cells minimum in either direction.
+  it("has no horizontal or vertical run of one cell", () => {
+    for (const [name, grid] of Object.entries(grids)) {
+      for (const [y, row] of grid.entries())
+        for (const m of row.matchAll(/([^.])\1*/g))
+          expect(m[0].length, `${name} row ${y} col ${m.index}`).toBeGreaterThanOrEqual(2);
+      for (let x = 0; x < grid[0].length; x++) {
+        const col = grid.map((row) => row[x]).join("");
+        for (const m of col.matchAll(/([^.])\1*/g))
+          expect(m[0].length, `${name} col ${x} row ${m.index}`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  // Value: DESIGN 7B: books are an irregular row, never a repeating pattern that reads as a texture.
+  it("keeps every shelf's books free of a repeat with period 3 or less over 4+ books", () => {
+    const repeats = (seq: string[]) => {
+      for (let p = 1; p <= 3; p++) {
+        const len = Math.max(4, 2 * p);
+        for (let i = 0; i + len <= seq.length; i++)
+          if (seq.slice(i, i + len - p).every((b, k) => b === seq[i + k + p])) return true;
+      }
+      return false;
+    };
+    const key = (b: readonly [string, number] | null) => (b ? `${b[0]}${b[1]}` : "-");
+    expect(BOOKSHELF_BOOKS.length).toBeGreaterThanOrEqual(3);
+    for (const row of BOOKSHELF_BOOKS)
+      expect(repeats(row.map(key)), row.map(key).join(" ")).toBe(false);
+    expect(repeats(BOOKSHELF_BOOKS.flatMap((r) => r.map(key)))).toBe(false);
+    // The checker itself catches a period-2 and a period-3 run.
+    expect(repeats(["a8", "b6", "a8", "b6"])).toBe(true);
+    expect(repeats(["a8", "b6", "c4", "a8", "b6", "c4"])).toBe(true);
+    // Every book is a 2-cell-wide bar from a known token.
+    for (const [c, h] of BOOKSHELF_BOOKS.flat().filter((b) => b !== null)) {
+      expect(known.has(c), c).toBe(true);
+      expect(h % 2).toBe(0);
+    }
+  });
+
+  // Value: DESIGN Principle 4: no text-like shapes; three or more equal 2-cell dashes in a row read as lines of text.
+  it("has no run of three alternating 2-cell segments in the pictures or the shelf's books", () => {
+    const dashes = (line: string) => {
+      const segs = [...line.matchAll(/(.)\1*/g)].map((m) => [m[1], m[0].length] as const);
+      for (let i = 0; i + 2 < segs.length; i++) {
+        const [a, b, c] = segs.slice(i, i + 3);
+        if (a[1] === 2 && b[1] === 2 && c[1] === 2 && a[0] === c[0] && a[0] !== b[0]) return true;
+      }
+      return false;
+    };
+    expect(dashes("..cc..cc..")).toBe(true);
+    for (const [name, grid] of Object.entries({ PICTURE_A, PICTURE_B })) {
+      for (const [y, row] of grid.entries()) expect(dashes(row), `${name} row ${y}`).toBe(false);
+      for (let x = 0; x < grid[0].length; x++)
+        expect(dashes(grid.map((r) => r[x]).join("")), `${name} col ${x}`).toBe(false);
+    }
+  });
+
+  // Value: a picture is a frame around 2 or 3 flat blocks, not a scene.
+  it("frames each picture in wood around 2 or 3 flat color blocks", () => {
+    for (const [name, grid] of Object.entries({ PICTURE_A, PICTURE_B })) {
+      const flat = grid.join("");
+      const blocks = new Set(flat.replace(/[.w:6]/g, "").match(/./g));
+      expect(blocks.size, name).toBeGreaterThanOrEqual(2);
+      expect(blocks.size, name).toBeLessThanOrEqual(3);
+      expect(flat, name).toMatch(/[w:6]/);
+    }
+  });
+
+  // Value: the shadow is the shared '_' token, rising to the right with the left wall's base.
+  it("draws the shelf shadow in '_' only, rising one row per two columns", () => {
+    for (const row of BOOKSHELF_SHADOW) expect(row).toMatch(/^\.*_+\.*$/);
+    expect(BOOKSHELF_SHADOW[0]).toHaveLength(BOOKSHELF[0].length);
+    const topAt = (x: number) => BOOKSHELF_SHADOW.findIndex((r) => r[x] === "_");
+    const last = BOOKSHELF_SHADOW[0].length - 1;
+    expect(topAt(0) - topAt(last)).toBe(Math.floor(last / 2));
+  });
+
+  // Value: D2.3r: the decor's colors vary by date, but only colors: every variant keeps the base
+  // grid's size and shapes and passes the same style rules.
+  describe("date variants", () => {
+    const names = ["BOOKSHELF", "PICTURE_A", "PICTURE_B"] as const;
+    const base = { BOOKSHELF, PICTURE_A, PICTURE_B };
+    const shape = (g: readonly string[]) => g.map((r) => r.replace(/[^.]/g, "#"));
+
+    it("has variant 0 equal to the base grid and the other two different", () => {
+      for (const n of names) {
+        expect(decorVariantGrid(n, 0), n).toEqual(base[n]);
+        expect(decorVariantGrid(n, 1), n).not.toEqual(base[n]);
+        expect(decorVariantGrid(n, 2), n).not.toEqual(decorVariantGrid(n, 1));
+      }
+    });
+
+    // Value: protects=a bad variant (NaN, negative, fractional, huge) draws a valid grid and is never cached under its own key; fails_when=decorVariantGrid indexes or caches by the raw value; why_new=only 0..2 were exercised; seam=none
+    it("normalizes an invalid variant instead of drawing undefined cells", () => {
+      for (const n of names) {
+        for (const [bad, as] of [
+          [Number.NaN, 0],
+          [-1, 2],
+          [3, 0],
+          [4, 1],
+          [1.5, 0],
+          [Number.POSITIVE_INFINITY, 0],
+        ] as const) {
+          const grid = decorVariantGrid(n, bad);
+          expect(grid, `${n} ${bad}`).toEqual(decorVariantGrid(n, as));
+          for (const row of grid)
+            for (const c of row) expect(known.has(c), `${n} ${bad} '${c}'`).toBe(true);
+        }
+      }
+    });
+
+    it("keeps size, shape, known cells and the 2-cell rule in every variant", () => {
+      for (const n of names)
+        for (const v of [0, 1, 2]) {
+          const grid = decorVariantGrid(n, v);
+          expect(shape(grid), `${n} ${v}`).toEqual(shape(base[n]));
+          for (const [y, row] of grid.entries()) {
+            expect(row, `${n} ${v}`).not.toMatch(rig);
+            for (const c of row) expect(known.has(c), `${n} ${v} '${c}'`).toBe(true);
+            for (const m of row.matchAll(/([^.])\1*/g))
+              expect(m[0].length, `${n} ${v} row ${y}`).toBeGreaterThanOrEqual(2);
+          }
+          for (let x = 0; x < grid[0].length; x++)
+            for (const m of grid
+              .map((r) => r[x])
+              .join("")
+              .matchAll(/([^.])\1*/g))
+              expect(m[0].length, `${n} ${v} col ${x}`).toBeGreaterThanOrEqual(2);
+        }
+    });
+
+    it("keeps the shelf's books free of a short repeat and the pictures at 2 or 3 blocks", () => {
+      for (const v of [1, 2]) {
+        const shelf = decorVariantGrid("BOOKSHELF", v);
+        // Same-letter structure is what the rhythm rule reads: a recolor must not merge two books.
+        const sameStructure = (a: readonly string[], b: readonly string[]) =>
+          a.every((row, y) =>
+            row
+              .split("")
+              .every((c, x) =>
+                row.split("").every((d, x2) => (c === d) === (b[y][x] === b[y][x2])),
+              ),
+          );
+        expect(sameStructure(BOOKSHELF, shelf), `shelf ${v}`).toBe(true);
+        for (const n of ["PICTURE_A", "PICTURE_B"] as const) {
+          const blocks = new Set(
+            decorVariantGrid(n, v)
+              .join("")
+              .replace(/[.w:6]/g, "")
+              .match(/./g),
+          );
+          expect([2, 3], `${n} ${v}`).toContain(blocks.size);
+        }
+      }
+    });
+
+    it("draws the variant for a given day in the room", () => {
+      const shell = roomShell(layoutOffice(12, { width: 1200, height: 800 }));
+      const day = (n: number) => new Date(2026, 2, n, 12).getTime();
+      // The wall dressing only: the clock hands move with the hour.
+      const html = (now: number) =>
+        (
+          renderToStaticMarkup(
+            createElement(RoomDecor, {
+              shell,
+              door: shell.door,
+              coffee: shell.coffee,
+              now,
+              scene: windowScene("dusk"),
+            }),
+          ).match(/<svg data-prop="(?:BOOKSHELF|PICTURE_[AB])".*?<\/svg>/g) ?? []
+        ).join("");
+      const days = Array.from({ length: 30 }, (_, i) => i + 1);
+      const a = days[0];
+      const b = days.find(
+        (d) =>
+          decorVariantFor(`2026-03-${String(d).padStart(2, "0")}`) !==
+          decorVariantFor("2026-03-01"),
+      )!;
+      expect(html(day(a))).toContain("data-decor-variant");
+      expect(html(day(a))).toBe(html(day(a) + 3600_000));
+      expect(html(day(a))).not.toBe(html(day(b)));
+    });
+
+    it("shows the three variants of the shelf and pictures on the dev sheet", () => {
+      const sheet = renderToStaticMarkup(createElement(ArtSheet));
+      for (const v of [0, 1, 2]) expect(sheet).toContain(`data-decor-variant="${v}"`);
+    });
+  });
+
+  it("renders in the room from three rows, shadow first, and on the dev sheet", () => {
+    const shell = roomShell(layoutOffice(12, { width: 1200, height: 800 }));
+    const html = renderToStaticMarkup(
+      createElement(RoomDecor, {
+        shell,
+        door: shell.door,
+        coffee: shell.coffee,
+        now: 0,
+        scene: windowScene("dusk"),
+      }),
+    );
+    for (const name of ["BOOKSHELF", "PICTURE_A", "PICTURE_B"])
+      expect(html.match(new RegExp(`data-prop="${name}"`, "g")), name).toHaveLength(1);
+    expect(html.indexOf('data-shadow="BOOKSHELF"')).toBeLessThan(
+      html.indexOf('data-prop="BOOKSHELF"'),
+    );
+    const sheet = renderToStaticMarkup(createElement(ArtSheet));
+    for (const name of ["BOOKSHELF", "PICTURE_A", "PICTURE_B"])
+      expect(
+        sheet.match(new RegExp(`data-prop="${name}"`, "g"))!.length,
+        name,
+      ).toBeGreaterThanOrEqual(2);
+    expect(sheet.match(/data-shadow="BOOKSHELF"/g)).toHaveLength(2);
+  });
+});
+
+describe("legibility row", () => {
+  // Value: DESIGN 1A: the 12-agent 50% sheet is the decor gate; it must stay on the dev sheet.
+  it("shows the 12-agent legibility row on the dev sheet", () => {
+    expect(renderToStaticMarkup(createElement(ArtSheet))).toContain("data-legibility");
+  });
+
+  // Value: the door light wedge tile must show both flat tones of the fan.
+  it("draws the door light wedge as a near and a far tone", () => {
+    const html = renderToStaticMarkup(createElement(ArtSheet));
+    expect(html).toContain('data-part="door-light" data-tone="near"');
+    expect(html).toContain('data-part="door-light" data-tone="far"');
   });
 });
 

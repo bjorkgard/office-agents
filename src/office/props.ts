@@ -69,6 +69,70 @@ export const DOOR: Grid = [
   "77..................",
 ];
 
+// The door ajar, same frame and anchor as DOOR: dark gap (deep plastic), the leaf swung in on the right with its handle. Shown while a subagent comes or goes (paper.ts doorOpen); not in PROPS (RoomDecor draws it). 20x60 cells.
+export const DOOR_AJAR: Grid = [
+  "....................",
+  "..................66",
+  "................WW66",
+  "..............WWWW66",
+  "............WWWWWW66",
+  "..........WWWWWWww66",
+  "........WWWWWWWWww66",
+  "......WWWWWWxxWWww66",
+  "....WWWWWWxxxxWWww66",
+  "..wwWWWWxxxxxxWWww66",
+  "::wwWWxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxmmww66",
+  "::wwxxxxxxxxxxmmww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww66",
+  "::wwxxxxxxxxxxWWww77",
+  "::wwxxxxxxxxxxWW7777",
+  "::wwxxxxxxxxxx7777..",
+  "::wwxxxxxxxx7777....",
+  "::wwxxxxxx7777......",
+  "::wwxxxx7777........",
+  "::wwxx7777..........",
+  "::ww7777............",
+  "::7777..............",
+  "7777................",
+  "77..................",
+];
+
 // Counter along the back-right wall: wood top, plastic cabinet doors, metal handles. 47x45 cells.
 export const COUNTER: Grid = [
   "...............................................",
@@ -260,50 +324,205 @@ export const PLANT_BUSH: Grid = [
   ".....8888888......",
 ];
 
-// Water dispenser against the back-right wall: a lit jug of water on a plastic cabinet with two
-// taps and a drip tray, sheared down to the right by whole cells at the wall slope like the counter
-// (a column pair drops a row for every two across). 16x36 cells.
+// Water dispenser against the back-right wall: a tall jug with a water-surface line, a meniscus and
+// one refraction band, over a lit cabinet top face and a drip tray, sheared down to the right by
+// whole cells at the wall slope like the counter (a column pair drops a row for every two across).
+// The jug column's bottom is at the middle column. 16x36 cells.
 export const DISPENSER: Grid = [
   "................",
   "................",
-  "...!.=..........",
-  "...!!c==........",
-  "...!!ccc==......",
-  "...!!ccccc=.....",
-  "...!!ccccccC....",
-  "...!!ccccccCC...",
-  "...!!ccccccCC...",
-  "...!!ccccccCC...",
-  ".=.C!ccccccCC...",
-  ".===CCcccccCC...",
-  ".=gg==CCcccCC...",
-  ".=gggg==CCcCC...",
-  ".=gggggg==CCC...",
-  ".=gg!!gggg==C...",
-  ".=gg!!gggggg==..",
-  ".=gxggggmmggg8=.",
-  ".=gxxxggmmggg88.",
-  ".=g~xxxxggggg88.",
-  ".=gg~~xxxxggg88.",
-  ".=gggg~~xxxgg88.",
-  ".=gggggg~~xgg88.",
-  ".=gggggggg~gg88.",
-  ".=ggggggggggg88.",
-  ".=ggggggggggg88.",
-  ".=ggggggggggg88.",
-  ".=ggggggggggg88.",
-  ".8ggggggggggg88.",
-  "..88ggggggggg88.",
-  "....88ggggggg88.",
-  "......88ggggg88.",
-  "........88ggg88.",
-  "..........88g88.",
-  "............888.",
-  "..............8.",
+  "................",
+  "......==........",
+  "....!!==gg......",
+  "..!!!!GGgg......",
+  "..!!!!GGGG......",
+  "..!!!!!!GGCC....",
+  "..!!cc!!!!CC....",
+  "..!!cccc!!!!....",
+  "..!!cccccc!!!!..",
+  "..!!ccccccCC!!..",
+  "..!!!!ccccCC88..",
+  "..!!!!!!ccCC88..",
+  "..!!cc!!!!CC88..",
+  "..==cccc!!!!88..",
+  "====ggcccc!!88..",
+  "====ggggccCC88..",
+  "======ggggCC88..",
+  "==gg====gggg88..",
+  "==gg~~====gg88..",
+  "==gg~~gg====88..",
+  "~~ggmmgggg====..",
+  "~~~~mmgggg~~==GG",
+  "~~~~~~gggg~~ggGG",
+  "~~mm~~~~ggmmggGG",
+  "88mmmm~~~~mmggGG",
+  "8888mmmm~~~~ggGG",
+  "888888mmmm~~~~GG",
+  "..888888mmmm~~~~",
+  "....888888mmmm~~",
+  "......888888mm77",
+  "........88888877",
+  "..........888888",
+  "............8888",
+  "..............88",
 ];
 
 // Two bubbles in the jug; CSS steps them up and fades them (.gurgle). 4x4 cells.
 export const GURGLE: Grid = ["!!..", "!!..", "..!!", "..!!"];
+
+// Contact shadows on the floor under the dispenser and the counter: the figure ground shadow's
+// '_' cells (drawn at SHADOW_OPACITY under the prop), a flat band sheared at the wall slope, 2 cells
+// across to a row down, 2 cells thick at the ends and 3 between. Not in PROPS: the room and the
+// dev sheet draw them with PixelShadow, at PROP_SHADOW_AT cells from the prop's top-left.
+/**
+ * A shadow band of `rows` x `cols` '_' cells: column x holds `thick(x)` cells from row `top(x)` down
+ * (a flat band at the wall slope, one row per two columns, 2 cells thick).
+ */
+const shadowBand = (
+  rows: number,
+  cols: number,
+  top: (x: number) => number,
+  thick: (x: number) => number = () => 2,
+): Grid =>
+  Array.from({ length: rows }, (_, y) =>
+    Array.from({ length: cols }, (_, x) => (y >= top(x) && y < top(x) + thick(x) ? "_" : ".")).join(
+      "",
+    ),
+  );
+// Descending bands (the right wall's slope), 3 thick between the 2-thick ends.
+const descending = (rows: number, cols: number): Grid =>
+  shadowBand(
+    rows,
+    cols,
+    (x) => Math.floor(x / 2),
+    (x) => (x >= 4 && x < cols - 4 ? 3 : 2),
+  );
+export const DISPENSER_SHADOW: Grid = descending(9, 16);
+export const COFFEE_SHADOW: Grid = descending(18, 34);
+
+// Left-wall dressing, drawn flat then sheared onto the wall like the window (decor.ts windowShear):
+// column x rises by cols/2 - 1 - floor(x / 2) rows less than column 0, so the base climbs one row
+// per two columns to the right. Every flat feature is pair-aligned (even start, even width and
+// height) so the shear leaves no run under 2 cells. Light top left: the top and left of a frame are
+// the lit wood, the right and bottom the deep wood.
+function shearedLeft(flat: string[][]): Grid {
+  const cols = flat[0].length;
+  const rise = cols / 2 - 1;
+  const out = Array.from({ length: flat.length + rise }, () => Array<string>(cols).fill("."));
+  flat.forEach((row, y) =>
+    row.forEach((c, x) => {
+      if (c !== ".") out[y + rise - Math.floor(x / 2)][x] = c;
+    }),
+  );
+  return out.map((row) => row.join(""));
+}
+
+function framed(cols: number, rows: number, fill: string): string[][] {
+  const g = Array.from({ length: rows }, () => Array<string>(cols).fill(fill));
+  const paint = (x0: number, y0: number, x1: number, y1: number, c: string) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) g[y][x] = c;
+  };
+  paint(0, 2, 2, rows - 2, ":");
+  paint(cols - 2, 2, cols, rows - 2, "6");
+  paint(0, 0, cols, 2, ":");
+  paint(0, rows - 2, cols, rows, "6");
+  return g;
+}
+
+// Bookshelf, 20x39 cells (a flat 20x30 frame sheared 9 rows): wood frame, three shelves of books
+// against a shaded back panel. Books are 2-cell-wide bars of a given token and height (even cells),
+// standing on their board; null is a gap. The runs are irregular on purpose: no repeat of the same
+// width and color with a period of 3 or less across 4 books (art.test.ts), nothing that reads as
+// lettering.
+export const BOOKSHELF_BOOKS: readonly (readonly ([string, number] | null)[])[] = [
+  [["e", 8], ["m", 6], ["p", 8], null, ["c", 4], ["o", 6], ["g", 8], ["E", 4]],
+  [["P", 6], ["o", 8], null, ["e", 6], ["g", 4], ["c", 8], ["m", 4], ["p", 6]],
+  [["M", 6], ["c", 4], ["e", 6], ["o", 4], null, ["p", 6], ["g", 4], ["m", 6]],
+];
+// Interior row spans (top, bottom exclusive) of the three shelves, between the boards.
+const SHELF_SPANS = [
+  [2, 10],
+  [12, 20],
+  [22, 28],
+] as const;
+export const BOOKSHELF: Grid = (() => {
+  const g = framed(20, 30, "W");
+  for (const y of [10, 20]) for (let x = 2; x < 18; x++) g[y][x] = g[y + 1][x] = "w";
+  BOOKSHELF_BOOKS.forEach((books, i) => {
+    const bottom = SHELF_SPANS[i][1];
+    books.forEach((book, k) => {
+      if (!book) return;
+      const [c, h] = book;
+      for (let y = bottom - h; y < bottom; y++) g[y][2 + k * 2] = g[y][3 + k * 2] = c;
+    });
+  });
+  return shearedLeft(g);
+})();
+
+// Two small abstract pictures, a wood frame round 2 or 3 flat blocks of art tokens. 14x22 and 12x19.
+const picture = (
+  cols: number,
+  rows: number,
+  blocks: [number, number, number, number, string][],
+) => {
+  const g = framed(cols, rows, "w");
+  for (const [x0, y0, x1, y1, c] of blocks)
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) g[y][x] = c;
+  return shearedLeft(g);
+};
+export const PICTURE_A: Grid = picture(14, 16, [
+  [2, 2, 8, 14, "c"],
+  [8, 2, 12, 8, "o"],
+  [8, 8, 12, 14, "g"],
+]);
+export const PICTURE_B: Grid = picture(12, 14, [
+  [2, 2, 10, 8, "e"],
+  [2, 8, 6, 12, "p"],
+  [6, 8, 10, 12, "m"],
+]);
+
+// Date variants (decor.ts decorVariantFor): the same grids with their art colors rotated through
+// the six art tokens, a letter and its shaded capital together. A rotation is a permutation, so
+// equal cells stay equal and different ones stay different: shapes, runs and rhythm do not change.
+const ART_LETTERS = "cogemp";
+const variantCache = new Map<string, Grid>();
+export function decorVariantGrid(
+  name: "BOOKSHELF" | "PICTURE_A" | "PICTURE_B",
+  variant: number,
+): Grid {
+  // Any non-integer reads as 0, the rest wrap into 0..2 (the DECOR_VARIANTS in decor.ts).
+  const v = Number.isInteger(variant) ? ((variant % 3) + 3) % 3 : 0;
+  const key = `${name}:${v}`;
+  let grid = variantCache.get(key);
+  if (!grid) {
+    const shift = (v * 2) % ART_LETTERS.length;
+    const map = (c: string) => {
+      const i = ART_LETTERS.indexOf(c.toLowerCase());
+      if (i < 0) return c;
+      const to = ART_LETTERS[(i + shift) % ART_LETTERS.length];
+      return c === c.toLowerCase() ? to : to.toUpperCase();
+    };
+    grid = PROPS[name].map((row) => [...row].map(map).join(""));
+    variantCache.set(key, grid);
+  }
+  return grid;
+}
+
+// The shelf's contact shadow: '_' cells, a flat band rising to the right with the left wall's base
+// (one row per two columns, 2 cells thick), starting at the shelf's base row.
+export const BOOKSHELF_SHADOW: Grid = shadowBand(11, 20, (x) => 9 - Math.floor(x / 2));
+
+/** The contact shadow grid under each wall prop that has one, and where it sits from the prop's top-left. */
+export const SHADOWS = {
+  DISPENSER: DISPENSER_SHADOW,
+  COFFEE_STATION: COFFEE_SHADOW,
+  BOOKSHELF: BOOKSHELF_SHADOW,
+} as const;
+export const PROP_SHADOW_AT = {
+  DISPENSER: [0, 29],
+  COFFEE_STATION: [0, 45],
+  BOOKSHELF: [0, 39],
+} as const;
 
 // The sheet a subagent carries and hands over. 7x10 cells.
 export const PAPER: Grid = [
@@ -403,6 +622,9 @@ export const PROPS = {
   STEAM,
   DISPENSER,
   GURGLE,
+  BOOKSHELF,
+  PICTURE_A,
+  PICTURE_B,
   LAPTOP_LIT,
   LAPTOP_HALF,
   LAPTOP_DARK,

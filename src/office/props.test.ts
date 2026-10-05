@@ -22,9 +22,10 @@ const known = new Set([".", ...Object.keys(CELLS)]);
 const names = Object.keys(PROPS) as PropName[];
 
 describe("prop sprites", () => {
-  it("has the door, coffee station, dispenser, two plants, the paper, a clock, steam and a gurgle and two devices", () => {
+  it("has the door, coffee station, dispenser, two plants, the paper, a clock, steam and a gurgle, two devices and the left-wall bookshelf and pictures", () => {
     expect(names.sort()).toEqual(
       [
+        "BOOKSHELF",
         "CLOCK",
         "COFFEE_MACHINE",
         "COFFEE_STATION",
@@ -37,6 +38,8 @@ describe("prop sprites", () => {
         "LAPTOP_LIT",
         "PAPER",
         "PAPER_DESK",
+        "PICTURE_A",
+        "PICTURE_B",
         "PLANT_BUSH",
         "PLANT_TALL",
         "STEAM",

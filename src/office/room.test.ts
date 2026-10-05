@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import { DESKS_PER_ROW } from "../../shared/tuning";
 import { CELL } from "./pixel";
-import { COFFEE_STATION, DISPENSER, DOOR, propSize } from "./props";
-import { MIN_HEIGHT, MIN_WIDTH, TILE_W, layoutOffice } from "./iso";
+import { COFFEE_STATION, DISPENSER, DOOR, PROPS, propSize } from "./props";
+import { FLOOR_MARGIN, MIN_HEIGHT, MIN_WIDTH, TILE_W, layoutOffice } from "./iso";
 import { stand } from "./choreo";
 import { QUEUE_VISIBLE, STANDING_FOOT, geometryFor } from "./scene-model";
 import { RIG_HEIGHT, RIG_WIDTH } from "./CharacterRig";
@@ -269,6 +269,47 @@ describe("roomShell", () => {
     }
   });
 
+  // Value: the open door's light fans out from the gap (a constant-width patch read as a doormat).
+  it.each(counts)("fans the door light out from the gap onto the floor at %i agents", (n) => {
+    const shell = roomShell(layoutOffice(n, view));
+    const { near, far } = shell.doorLight;
+    expect(near).toHaveLength(4);
+    expect(far).toHaveLength(4);
+    for (const p of [...near, ...far]) expect(inside(shell.floor, p)).toBe(true);
+    // Wall-side edge: near sits on the wall line through the door, far starts where near ends.
+    const [top, , , left] = shell.floor;
+    const wallSide = (p: Point) =>
+      Math.abs((top.x - left.x) * (p.y - left.y) - (top.y - left.y) * (p.x - left.x));
+    expect(wallSide(near[0])).toBeLessThan(1e-6);
+    expect(wallSide(near[1])).toBeLessThan(1e-6);
+    expect(wallSide(far[0])).toBeGreaterThan(1e-6);
+    // Distance from the wall line grows: far is strictly farther and wider than near.
+    expect(wallSide(far[2])).toBeGreaterThan(wallSide(near[2]));
+    const width = (q: Point[]) => Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
+    const outer = (q: Point[]) => Math.hypot(q[2].x - q[3].x, q[2].y - q[3].y);
+    expect(outer(near)).toBeGreaterThan(width(near));
+    expect(outer(far)).toBeGreaterThan(outer(near));
+    expect(far[0]).toEqual(near[3]);
+    expect(far[1]).toEqual(near[2]);
+    // Clear of the door (the wall line itself is its foot): no sampled point of either quad lands on an opaque door cell.
+    const box = wallPropRect("DOOR", shell.door);
+    const opaque = (p: Point) => {
+      const col = Math.floor((p.x - box.left) / CELL);
+      const row = Math.floor((p.y - box.top) / CELL);
+      return DOOR[row]?.[col] !== undefined && DOOR[row][col] !== ".";
+    };
+    for (const q of [near, far])
+      for (let i = 0; i <= 8; i++)
+        for (let j = 1; j <= 8; j++) {
+          const lerp = (a: Point, b: Point, t: number) => ({
+            x: a.x + (b.x - a.x) * t,
+            y: a.y + (b.y - a.y) * t,
+          });
+          const p = lerp(lerp(q[0], q[1], i / 8), lerp(q[3], q[2], i / 8), j / 8);
+          expect(opaque(p), `${q === near ? "near" : "far"} ${i},${j}`).toBe(false);
+        }
+  });
+
   it.each(counts)(
     "sits the coffee station's back foot on the back-right baseboard at %i agents",
     (n) => {
@@ -383,9 +424,10 @@ describe("WALL_LAYOUT", () => {
       return { ...i, from: along - half, to: along + half };
     });
 
-  it("lists the door, clock, both stations, both plants, both spot lines and the windows", () => {
+  it("lists the door, clock, both stations, both plants, both spot lines, the windows and the left-wall dressing", () => {
     expect(WALL_LAYOUT.map((i) => i.name).sort()).toEqual(
       [
+        "bookshelf",
         "bush plant",
         "clock",
         "coffee spots",
@@ -393,6 +435,8 @@ describe("WALL_LAYOUT", () => {
         "dispenser",
         "door",
         "door queue",
+        "picture a",
+        "picture b",
         "tall plant",
         "water spots",
         "window left 1",
@@ -455,6 +499,72 @@ describe("WALL_LAYOUT", () => {
 
   it("reports the clock moved into the coffee station", () => {
     expect(overlaps(moved("clock", 2.2))).toContain("clock vs coffee station");
+  });
+});
+
+describe("wall dressing", () => {
+  const rowsOf = (n: number) => layoutOffice(n * DESKS_PER_ROW, view);
+  const names = (n: number) => roomShell(rowsOf(n)).wallDecor.map((d) => d.name);
+  const all = ["bookshelf", "picture a", "picture b"];
+
+  it("draws nothing on the one-row wall, the shelf from two rows, the pictures from three", () => {
+    expect(names(1)).toEqual([]);
+    expect(names(2)).toEqual(["bookshelf"]);
+    for (const n of [3, 4, 5, 6]) expect(names(n)).toEqual(all);
+    expect(roomShell(layoutOffice(0, view)).wallDecor).toEqual([]);
+  });
+
+  it("lists each in the wall lane of the left wall, past the window, none allowlisted", () => {
+    const win = WALL_LAYOUT.find((i) => i.name === "window left 1")!;
+    for (const name of all) {
+      const i = WALL_LAYOUT.find((x) => x.name === name)!;
+      expect([i.wall, i.lane], name).toEqual(["left", "wall"]);
+      expect(i.from, name).toBeGreaterThanOrEqual(win.to);
+    }
+  });
+
+  it("measures the shelf into the free span at two rows (frontY - window edge)", () => {
+    const win = WALL_LAYOUT.find((i) => i.name === "window left 1")!;
+    const shelf = WALL_LAYOUT.find((i) => i.name === "bookshelf")!;
+    const frontY = 2 - 1 + FLOOR_MARGIN.frontLeft;
+    expect(frontY - win.to).toBeGreaterThan(0.3);
+    expect(frontY - win.to).toBeLessThan(0.4);
+    expect(shelf.to).toBeLessThanOrEqual(frontY);
+    expect(propSize("BOOKSHELF").width / (TILE_W / 2)).toBeCloseTo(shelf.to - shelf.from);
+  });
+
+  it("keeps every item where it was, against the back desk, for rows 2 to 6", () => {
+    const ref = rowsOf(6);
+    const refDecor = roomShell(ref).wallDecor;
+    expect(refDecor).toHaveLength(3);
+    for (let n = 2; n <= 6; n++) {
+      const layout = rowsOf(n);
+      for (const d of roomShell(layout).wallDecor) {
+        const r = refDecor.find((x) => x.name === d.name)!;
+        expect(d.base.x - layout.desks[0].x, `${d.name} ${n}`).toBeCloseTo(
+          r.base.x - ref.desks[0].x,
+        );
+        expect(d.base.y - layout.desks[0].y, `${d.name} ${n}`).toBeCloseTo(
+          r.base.y - ref.desks[0].y,
+        );
+      }
+    }
+  });
+
+  // The grids shear at 1 row per 2 columns; the wall base climbs 160/296 px per px, so the staircase
+  // sits within one cell of the line (the door and windows do the same): allow that cell.
+  it("hangs every drawn cell of each item inside the left wall, to within one cell", () => {
+    const shell = roomShell(rowsOf(6));
+    for (const d of shell.wallDecor) {
+      const r = wallPropRect(d.prop, d.base);
+      PROPS[d.prop].forEach((row, y) => {
+        for (let x = 0; x < row.length; x++) {
+          if (row[x] === ".") continue;
+          const p = { x: r.left + (x + 0.5) * CELL, y: r.top + (y - 0.5) * CELL };
+          expect(inside(shell.leftWall, p), `${d.name} ${x},${y}`).toBe(true);
+        }
+      });
+    }
   });
 });
 

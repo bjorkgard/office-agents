@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { HANDOVER_MS, PAPER_MS, WALK_SPEED, stand, type SubagentCtx } from "./choreo";
+import {
+  FADE_MS,
+  HANDOVER_MS,
+  PAPER_MS,
+  WALK_SPEED,
+  stand,
+  subagentDoorAt,
+  type SubagentCtx,
+} from "./choreo";
 import { DESK_KINDS, type Rect } from "./desk-kinds";
 import { layoutOffice } from "./iso";
-import type { Agent } from "./machine";
+import { TUNING, type Agent } from "./machine";
 import {
   MAX_WAKE_MS,
   planMotion,
@@ -15,7 +23,10 @@ import {
   PAPER_FADE_MS,
   PAPER_HOLD_MS,
   PAPER_MAX_MS,
+  DOOR_TUNING,
   armPaperTimer,
+  doorOpen,
+  doorOpenFor,
   paperDelay,
   paperOfParent,
   paperOnDesk,
@@ -422,5 +433,181 @@ describe("PAPER_DESK", () => {
     expect(top(2)).toBe(top(0) + 1);
     expect(top(3)).toBe(top(2));
     expect(top(4)).toBe(top(2) + 1);
+  });
+});
+
+describe("doorOpenFor", () => {
+  const { ARRIVE_OPEN_MS, LEAD_MS, RUN_CAP_MS, GAP_MS } = DOOR_TUNING;
+  const door = (subs: ReturnType<typeof sub>[], now: number, c: () => SubagentCtx | null = ctx) =>
+    doorOpenFor(subs, c, now);
+  const reach = (arrivedAt: number, leftAt: number) =>
+    subagentDoorAt(sub(arrivedAt, "leaving", leftAt), ctx()) as number;
+
+  it("opens at arrival and closes after ARRIVE_OPEN_MS", () => {
+    expect(door([sub(1000)], 999)).toEqual({ open: false, nextChange: 1000 });
+    expect(door([sub(1000)], 1000)).toEqual({ open: true, nextChange: 1000 + ARRIVE_OPEN_MS });
+    expect(door([sub(1000)], 1000 + ARRIVE_OPEN_MS - 1).open).toBe(true);
+    expect(door([sub(1000)], 1000 + ARRIVE_OPEN_MS)).toEqual({ open: false, nextChange: null });
+  });
+
+  it("never opens for a resumed subagent or one with no path", () => {
+    const resume = { at: 500, point: geo.door, mirror: false, carry: false };
+    expect(door([sub(1000)], 1000, () => ctx({ resume }))).toEqual({
+      open: false,
+      nextChange: null,
+    });
+    expect(door([sub(1000)], 1000, () => null)).toEqual({ open: false, nextChange: null });
+  });
+
+  it("opens LEAD_MS before a leaver reaches the door and closes FADE_MS after", () => {
+    const leftAt = 60_000;
+    const r = reach(1000, leftAt);
+    const l = sub(1000, "leaving", leftAt);
+    expect(r).toBeGreaterThan(leftAt);
+    expect(door([l], r - LEAD_MS - 1)).toEqual({ open: false, nextChange: r - LEAD_MS });
+    expect(door([l], r - LEAD_MS)).toEqual({ open: true, nextChange: r + FADE_MS });
+    expect(door([l], r + FADE_MS - 1).open).toBe(true);
+    expect(door([l], r + FADE_MS)).toEqual({ open: false, nextChange: null });
+  });
+
+  it("ends a leaver's window at its removal", () => {
+    const leftAt = 60_000;
+    const removal = leftAt + TUNING.subagentLeavingMs;
+    const l = sub(1000, "leaving", leftAt);
+    const farCtx = (dx: number) => ctx({ home: { x: geo.door.x - dx, y: geo.door.y + dx / 2 } });
+    // A home far enough that the leaver reaches the door just before it is removed.
+    let lo = 0;
+    let hi = 1e6;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if ((subagentDoorAt(l, farCtx(mid)) as number) < removal - 100) lo = mid;
+      else hi = mid;
+    }
+    const slow = farCtx(lo);
+    const r = subagentDoorAt(l, slow) as number;
+    expect(r).toBeLessThan(removal);
+    expect(r + FADE_MS).toBeGreaterThan(removal);
+    expect(door([l], removal - 1, () => slow)).toEqual({ open: true, nextChange: removal });
+    expect(door([l], removal, () => slow).open).toBe(false);
+  });
+
+  it("unions overlapping windows, then caps a run at RUN_CAP_MS with a GAP_MS closed gap", () => {
+    const subs = [sub(1000), sub(2000), sub(3000)];
+    const end = 3000 + ARRIVE_OPEN_MS;
+    expect(end - 1000).toBeGreaterThan(RUN_CAP_MS);
+    expect(door(subs, 1000 + RUN_CAP_MS - 1)).toEqual({
+      open: true,
+      nextChange: 1000 + RUN_CAP_MS,
+    });
+    expect(door(subs, 1000 + RUN_CAP_MS)).toEqual({
+      open: false,
+      nextChange: 1000 + RUN_CAP_MS + GAP_MS,
+    });
+    const again = door(subs, 1000 + RUN_CAP_MS + GAP_MS);
+    expect(again.open).toBe(true);
+    expect(again.nextChange).toBe(end);
+    expect(door(subs, end)).toEqual({ open: false, nextChange: null });
+  });
+
+  it("is closed before leftAt and for non-finite times", () => {
+    const l = sub(0, "leaving", 60_000);
+    expect(door([l], 59_000).open).toBe(false);
+    expect(door([sub(Number.NaN)], 1000)).toEqual({ open: false, nextChange: null });
+    expect(door([sub(1000, "leaving", Number.POSITIVE_INFINITY)], 5000).open).toBe(false);
+    expect(door([sub(1000)], Number.NaN)).toEqual({ open: false, nextChange: null });
+  });
+
+  // Value: protects=the run cap is a hard bound and the early skip of ended windows never changes the answer; fails_when=the loop can run unbounded, or a skipped window shifts a later run; why_new=the uncapped algorithm was only checked on hand-built schedules; seam=none
+  describe("run cap and ended-window skip", () => {
+    type S = ReturnType<typeof sub>;
+    // The pre-cap, pre-skip algorithm, kept verbatim as the oracle.
+    const oracle = (subs: S[], now: number) => {
+      const spans: [number, number][] = [];
+      for (const a of subs) {
+        const leaving = a.phase === "leaving";
+        const leftAt = a.leftAt ?? a.arrivedAt;
+        if (leaving && now < leftAt) continue;
+        const removal = leaving ? leftAt + TUNING.subagentLeavingMs : Infinity;
+        const c = ctx();
+        spans.push([a.arrivedAt, Math.min(a.arrivedAt + ARRIVE_OPEN_MS, removal)]);
+        const at = subagentDoorAt(a, c);
+        if (at !== null) spans.push([at - LEAD_MS, Math.min(at + FADE_MS, removal)]);
+      }
+      const merged: [number, number][] = [];
+      for (const [s, e] of spans
+        .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s)
+        .sort((a, b) => a[0] - b[0])) {
+        const last = merged[merged.length - 1];
+        if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+        else merged.push([s, e]);
+      }
+      let free = -Infinity;
+      let next = Infinity;
+      for (const [s, e] of merged) {
+        for (let a = Math.max(s, free); a < e; a = free) {
+          const b = Math.min(e, a + RUN_CAP_MS);
+          free = b + GAP_MS;
+          if (now >= a && now < b) return { open: true, nextChange: b };
+          if (a > now) next = Math.min(next, a);
+        }
+      }
+      return { open: false, nextChange: Number.isFinite(next) ? next : null };
+    };
+
+    it("terminates and closes past MAX_RUNS runs; equals the uncapped answer within them", () => {
+      // One arrival a second for 200 s: a single merged window, ~84 runs.
+      const subs = Array.from({ length: 200 }, (_, i) => sub(i * 1000));
+      const t0 = Date.now();
+      for (const now of [500, 10_000, 100_000, 150_000]) {
+        expect(door(subs, now), String(now)).toEqual(oracle(subs, now));
+      }
+      expect(door(subs, 190_000)).toEqual({ open: false, nextChange: null });
+      expect(Date.now() - t0).toBeLessThan(2000);
+    });
+
+    it("matches the oracle on 2000 random schedules", () => {
+      let seed = 20261005;
+      const rnd = () => {
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      let skipped = 0;
+      for (let n = 0; n < 2000; n++) {
+        const count = 1 + Math.floor(rnd() * 30);
+        const chain = n % 2 === 0;
+        let at = 1000 + rnd() * 5000;
+        const subs: S[] = [];
+        for (let i = 0; i < count; i++) {
+          at = chain ? at + 500 + rnd() * 1000 : 1000 + rnd() * 120_000;
+          const phase = rnd() < 0.4 ? "leaving" : "working";
+          subs.push(sub(at, phase, phase === "leaving" ? at + rnd() * 40_000 : null));
+        }
+        const hi = Math.max(...subs.map((s) => (s.leftAt ?? s.arrivedAt) + 30_000));
+        for (let k = 0; k < 5; k++) {
+          const now = rnd() * (hi + 5000);
+          const got = door(subs, now);
+          const want = oracle(subs, now);
+          expect(got, `schedule ${n} now ${now}`).toEqual(want);
+          if (now > 20_000) skipped++;
+        }
+      }
+      expect(skipped).toBeGreaterThan(1000);
+    });
+  });
+
+  it("is always closed under reduced motion", () => {
+    const a = {
+      key: "s1/a1",
+      agentId: "a1",
+      sessionId: "s1",
+      phase: "working",
+      arrivedAt: 1000,
+      leftAt: null,
+    } as unknown as Agent;
+    const motion = { subs: new Map([["s1/a1", { ctx: ctx(), queue: null }]]) };
+    expect(doorOpen([a], motion, false, 1000).open).toBe(true);
+    expect(doorOpen([a], motion, true, 1000)).toEqual({ open: false, nextChange: null });
   });
 });

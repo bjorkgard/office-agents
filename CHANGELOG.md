@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0.0] - 2026-10-05
+
+### Added
+
+- The office door now opens a crack while a helper walks in or out, and a dim fan of light falls on the floor from the gap. An open run lasts at most 2 seconds and is followed by a short closed gap, so a burst of arrivals reads as separate visits instead of a door stuck open. Under reduced motion the door stays closed.
+- A bookshelf and two framed pictures hang on the left wall past the window. The shelf appears from 2 rows of desks and the pictures from 3 rows, they never move when rows are added, and their book and picture colors change once per local day. For developers, `?decor=0`, `1` or `2` pins the colors in the dev server.
+
+### Changed
+
+- The water dispenser is redrawn to look three-dimensional: a lit left edge on the jug, a shaded right side, a visible water surface and a lit top on the cabinet.
+- The dispenser, the coffee counter and the bookshelf now stand on soft contact shadows, so they sit on the floor instead of looking pasted onto the wall.
+- The design rules now say that decor must read quieter than the waving agent, and the dev art sheet shows a 12-agent row at 50% with the new shelf, pictures and door light to check it.
+
+### Known
+
+- A helper's arrival is timed from its transcript time, not from the moment the page hears about it, and a new helper's file can take up to 5 seconds to be found. So the door opening is often over before the helper is drawn, and in live use it shows for only some arrivals. The demo shows it every time.
+- After these additions the style work for a new row at 12 agents sits at the 16 ms line (14 to 16 ms over several runs, was 14 to 15), and 24 agents is still about 20 ms.
+- A floor robot and its dock were built and then withdrawn: at the smallest size that fits the free floor it read as a grey box.
+
 ## [0.6.1.0] - 2026-10-05
 
 ### Changed

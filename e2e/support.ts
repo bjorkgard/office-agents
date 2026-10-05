@@ -257,6 +257,9 @@ export function twelveAgentFixtureSet(): FixtureFile[] {
 
 // ---- live lines -----------------------------------------------------------------------
 
+/** The pinned office view of the @visual test (office.spec.ts) and the release hero shot (release.ts). */
+export const VISUAL_QUERY = "/?hour=14&seed=e2e&scene=afternoon&decor=0";
+
 /** Fixed reference instant: a live line "aged" N ms is stamped LIVE_REF_TS - N, shifted to now - N. */
 export const LIVE_REF_TS = Date.parse("2026-01-01T00:00:00.000Z");
 

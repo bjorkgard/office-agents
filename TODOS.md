@@ -64,6 +64,8 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **What:** Find what a settled 24-agent row insertion restyles and cut it. At 12 agents the large miss is fixed (the 12-agent gate is unstable near the line, with one failing run in four, and has no owner yet): the inherited `--scale` property is gone and the worst style-recalc event went from an old burst figure of about 48 ms to a median worst event of 14.7 to 17.3 ms over four runs (different metrics, budget 16 ms). The 12-agent gate sits on the 16 ms line and can flip between runs: medians 14.9, 14.7, 15.6 and 17.3 ms, the last with repeats 17.3/14.8/22.2 ms. At 24 agents the settled median is still 19.1, 19.5, 19.3 and 22.6 ms (headless Chrome, M1 Max, `vp run perf`, 4 runs; fourth run repeats 19.6/22.6/34.2 ms). The fourth run overlapped with other work on the machine (review agents and an e2e run just before it), so it is noisier. The per-repeat line now prints the worst event's offset after the write; comparing it with the printed 'row appeared' time, in that run the worst 12-agent events fell within 50 ms of the new row appearing, while the 24-agent ones fell 17 to 280 ms before it, so the 24-agent cost is not yet tied to one step. The cause is unknown.
 
+2026-10-05, after the decor changes: 12 agents now sits at the 16 ms line (15.8 to 16.1 ms vs 13.7 to 14.6 ms before, 3 runs each), 24 agents is unchanged (19.7 to 21.2 ms vs 19.8 to 21.4 ms). A `RoomDecor` memo was tried the same day and gave no gain (reverted).
+
 **Why:** Decision D8 of phase-6-finish: a missed budget is a dated entry, not a release block. p95 frame time passes (16.7 to 16.8 ms against 20 and 33 ms).
 
 **Context:** Numbers and method are in DESIGN.md "Performance". Next step: a trace breakdown of what the settled 24-agent insertion restyles. A fresh page restyles about 3,200 elements with no fit change and costs about 4.5 ms, so this looks like a page-age effect; the mechanism is untested. Safari is not measured.
@@ -74,11 +76,11 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 #### Frame cost and caches in the break and paper code
 
-**What:** Cache per-cycle trip segments so a waiting parent builds its timeline once per frame (`choreo.ts:381`), evict one plan instead of clearing all (`breaks.ts:112`), group subagents by session once (`paper.ts:139`), and memoize `DeskLayer`, `RoomDecor` and `RoomShell` (`Scene.tsx:300`).
+**What:** Cache per-cycle trip segments so a waiting parent builds its timeline once per frame (`choreo.ts:381`), evict one plan instead of clearing all (`breaks.ts:112`), group subagents by session once (`paper.ts:139`), and memoize `DeskLayer` and `RoomShell` (`Scene.tsx:300`).
 
 **Why:** Avoids garbage and re-render work with 24 waiting parents; unmeasured, so do it only if M10 shows pressure.
 
-**Context:** `settled` also keeps a rAF loop for the first 2 s of idle (`motion.ts:183`); `nextChange` already knows the wake time. The 2026-10-05 measurement shows p95 frame passes at both sizes (16.7 to 16.8 ms) and the miss is style recalc, so these caches have no measured pressure yet.
+**Context:** `settled` also keeps a rAF loop for the first 2 s of idle (`motion.ts:183`); `nextChange` already knows the wake time. The 2026-10-05 measurement shows p95 frame passes at both sizes (16.7 to 16.8 ms) and the miss is style recalc, so these caches have no measured pressure yet. Memoizing `RoomDecor` was measured on 2026-10-05 and gave no gain, so it was removed from the cache list.
 
 **Effort:** M
 **Priority:** P3
@@ -178,33 +180,51 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 **Context:** CSS-only motion so no animation loop runs. The lane must stay clear of desks (`deskFootprint` in `room.ts`), and the free aisle changes as V9 adds rows, so decide the lane after V9. Stack by feet like floor props (`floorProp` in `Scene.tsx`).
 
+**Context:** Built and deferred 2026-10-05 at design gate 6A. A 10x7-cell robot (the only size that stays clear of every `deskFootprint` along the front-right floor edge at rows 1 to 6, per the eng review probe) reads as a ~12x9 px grey box at 50% and a grey rectangle at 100%. Options when revisited: a bigger robot needs a lane that is not on the front-right margin (for example a deliberately designed aisle), a different silhouette, or a different ambient creature. Build reports: `.claude/scratch/office-decor/reports/builder-05.md`.
+
+**Context:** The robot dock (X2) was deferred with it.
+
 **Effort:** M (human ~1 day / CC ~40min)
 **Priority:** P4
 **Depends on:** V9
 
-#### Door ajar frame on arrivals and departures
+### Decor follow-ups (2026-10-05)
 
-**What:** A second hand-drawn door frame shows while a subagent comes in or goes out.
+#### Decor variety and the 1-row room
 
-**Why:** Arrivals and departures visibly use the door.
+**What:** (1) The 3 decor palette variants are one color rotation of the same shapes; they could differ in shape (book heights, picture layout). (2) The 1-row room has no bookshelf or pictures because its left wall is too short.
 
-**Context:** New `DOOR_AJAR` grid, 20x60 cells, sized like `DOOR` and anchored at `WALL_ANCHOR.DOOR`. A pure `doorOpen(agents, now)` from `arrivedAt` and `leftAt` windows. Scene renders on events and a 15 s tick only, so a timer or the existing frame loop must close the door again. Static under reduced motion.
+**Why:** More daily variety and a less bare 1-row room.
 
-**Effort:** M (human ~1 day / CC ~40min)
+**Context:** Shipped in the office-decor branch (D4: left wall past the window, shelf from 2 rows, pictures from 3 rows). Keep tokens only, no text, and the decor tier below shirts (DESIGN.md "Visual weight order").
+
+**Effort:** S
 **Priority:** P4
 **Depends on:** None
 
-#### Wall dressing: bookshelf and picture-only posters
+#### Door opens for only some live arrivals (arrivedAt is the transcript time)
 
-**What:** A bookshelf and framed wall pictures, as in the picked mockup variant B (`~/.gstack/projects/office-agents/designs/office-life-windows-20261002/variant-B.png`).
+**What:** Time a subagent's arrival from when the page receives its first event, not from the transcript line's timestamp, so the door-ajar window and the walk-in start on screen.
 
-**Why:** Makes the room feel lived in.
+**Why:** Found at /ship (2026-10-05). `applyOwned` uses `Math.min(event.ts, now)` as the clock for live events (`src/office/machine.ts:296`), so `arrivedAt` is the line's ts. A subagent's transcript is a new file that the server finds on its 5 s tree walk (`server/feed-plugin.ts:30`, `:677`), so the event reaches the page 0 to 5 s late. The 1.2 s door window (`DOOR_TUNING.ARRIVE_OPEN_MS`, `paper.ts`) is then already over at first paint, and the walk-in starts partway along its path. Measured in the e2e walk-in fixture: arrivedAt 2800 ms before first render, door never open; in `?demo` (events stamped at send time) the door opens every time. Estimated from that lag spread, about a quarter of live arrivals show the door; a reload mid-arrival never does.
 
-**Context:** From the design review (2026-10-02). No text anywhere in the room (DESIGN.md Principle 4), so posters are abstract pictures. The right wall is crowded (clock, counter, dispenser, windows), so place by the `WALL_LAYOUT` table and its no-overlap test. Pixel grid at 2px cells, existing tokens only, at least 2 cells for line features, check at 50% on the `?art` sheet.
+**Context:** Proposed fix (debugger report, `.claude/scratch/office-decor/reports/debugger-17.md`): at `machine.ts:141` pass `now` (receive time) to `arrive` for `arrivedAt`, keep `lastEventAt` and tool clocks on the event clock; replays already pass `min(ts, now)` as `now`. Fixes the door, the mid-path walk-in and the paper timing together. Risks: machine tests that expect a live `arrivedAt` to equal ts, subagent ordering by arrivedAt (`choreo.ts:153`, `scene-model.ts:190`), and an old file found late on a live walk would now walk in at receipt time. Re-verify with `vp test`, the e2e walk-in and reduced-motion specs and a `[data-door]` observer run. Also check whether the hooks adapter reports subagents sooner.
 
-**Effort:** M (human ~1 day / CC ~40min)
-**Priority:** P4
-**Depends on:** WALL_LAYOUT table (CEO T1), V1
+**Effort:** M
+**Priority:** P2
+**Depends on:** None
+
+#### Review polish from the 0.7.0.0 ship (2026-10-05)
+
+**What:** Informational items the /ship reviews raised and the user skipped: stale or opaque comments (`props.ts:373` shadow paragraph, `ArtSheet.tsx:644`, `room.ts:253` "parallelogram", `paper.ts` "decision 2B" and "D3" references and the skip-rule invariant); unused exports (`DISPENSER_SHADOW`, `COFFEE_SHADOW`, `BOOKSHELF_SHADOW`, `PICTURE_LIFT`, `DECOR_VARIANTS` outside tests); `PixelShadow` could reuse `pathOf`; `decorVariantGrid` hardcodes `% 3` and `v * 2` instead of deriving them from `DECOR_VARIANTS`; ArtSheet Legibility row is on `--bar` instead of `--bg`, and DESIGN.md's decor sentence should name the Legibility row; a `PROP_SHADOW_AT` placement test; reset the seed override in `decor.test.ts` `afterEach`; test pins for the `MAX_RUNS` boundary and the `GAP_MS` edge in `paper.test.ts` and a softer "verbatim" oracle comment; random schedules without `ctx.resume` or null ctx.
+
+**Why:** None is a defect; each makes the code or tests a little clearer.
+
+**Context:** Also from the adversarial passes (all low, unreachable today): `doorOpenFor` returns CLOSED with `nextChange: null` after `MAX_RUNS` (64) runs, about 150 s of unbroken door traffic, which would lose a timer wake; `subagentDoorAt` and `subagentPath` use different fallbacks if a leaver ever had `leftAt === null` (`machine.ts:220` always sets it); `PixelDecor` keys its runs cache by the raw variant; a leaver whose `leftAt` is in the future adds no door window and no wake; the `decorDay` cache can be stale for up to a day after a timezone change; module caches go stale under Vite HMR in dev. Simplification advisories to weigh against these: drop `MAX_RUNS` or the ended-window skip, drop the cache layers, build `DOOR_AJAR` rows with `Array.from`, one `DecorProp` type. Also: the e2e visual baseline pins `decor=0` but not the door state (check the 4-agent fixture has no live-stamped subagent). Leaf-level memoizing of the decor components shipped; the 12-agent row-change recalc sits at the 16 ms line (`Row-change style recalc` entry above).
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
 
 ## Feed hardening
 

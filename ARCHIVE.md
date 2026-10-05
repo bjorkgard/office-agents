@@ -414,3 +414,15 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Priority:** P1
 **Depends on:** Bubble layout and hit-area spacing (M9)
 **Completed:** v0.3.0.0 (2026-10-03)
+
+### Door ajar frame on arrivals and departures (DONE: office-decor branch)
+
+**Status:** DONE (2026-10-05): `DOOR_AJAR` and `doorOpen` in `src/office/`, with a floor light wedge; closed under reduced motion.
+
+**Priority:** P4
+
+### Wall dressing: bookshelf and picture-only posters (DONE: office-decor branch)
+
+**Status:** DONE (2026-10-05): bookshelf and two pictures on the left wall past the window, with a date-varied palette; no text.
+
+**Priority:** P4

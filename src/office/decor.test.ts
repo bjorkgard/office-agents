@@ -17,10 +17,16 @@ import {
   clockHandCells,
   clockHands,
   clockShear,
+  activeOverrides,
+  decorVariantAt,
+  decorVariantFor,
   localDateKey,
+  parseDecorParam,
   sceneAt,
   sceneFor,
+  setDecorOverride,
   setSceneOverride,
+  setSeedOverride,
   windowArt,
   windowScene,
   windowShear,
@@ -160,6 +166,7 @@ describe("clockHandCells", () => {
 afterEach(() => {
   vi.restoreAllMocks();
   setSceneOverride(null);
+  setDecorOverride(null);
 });
 
 describe("sceneFor", () => {
@@ -580,5 +587,103 @@ describe("window grids", () => {
           );
         }
     });
+  });
+});
+
+describe("decorVariantFor", () => {
+  const dates = Array.from({ length: 30 }, (_, i) => `2026-03-${String(i + 1).padStart(2, "0")}`);
+
+  it("is deterministic per (date, salt) and always one of the three variants", () => {
+    for (const d of dates) {
+      const v = decorVariantFor(d);
+      expect(decorVariantFor(d)).toBe(v);
+      expect([0, 1, 2]).toContain(v);
+      expect([0, 1, 2]).toContain(decorVariantFor(d, "e2e"));
+      expect(decorVariantFor(d, "e2e")).toBe(decorVariantFor(d, "e2e"));
+    }
+  });
+
+  // Value: protects=the date and the salt cannot run together into one hash input; fails_when=the hash input has no delimiter between date and salt; why_new=salt was only tested against no salt; seam=none
+  it("does not collide a date with a salt that continues it", () => {
+    const pairs = Array.from({ length: 30 }, (_, i) => {
+      const d = `2026-03-${String(i + 1).padStart(2, "0")}`;
+      return [decorVariantFor(d, "1"), decorVariantFor(`${d}1`)];
+    });
+    expect(pairs.some(([a, b]) => a !== b)).toBe(true);
+  });
+
+  // Value: the decor must change from day to day, or the variation is dead code.
+  it("uses every variant across 30 consecutive dates", () => {
+    expect(new Set(dates.map((d) => decorVariantFor(d))).size).toBe(3);
+  });
+
+  // Value: protects=a clock that reads NaN still draws a valid variant, not undefined grids;
+  // fails_when=decorVariantAt returns anything outside 0..2 for a non-finite now; why_new=only the
+  // override path was tested with NaN; seam=none
+  it("reads a non-finite now as a valid variant", () => {
+    expect([0, 1, 2]).toContain(decorVariantAt(Number.NaN));
+  });
+
+  it("lets a dev override win and ignores an invalid one", () => {
+    const now = new Date(2026, 2, 5, 12).getTime();
+    const natural = decorVariantAt(now);
+    expect(natural).toBe(decorVariantFor(localDateKey(now)));
+    const other = (natural + 1) % 3;
+    setDecorOverride(other);
+    expect(decorVariantAt(now)).toBe(other);
+    for (const bad of [3, -1, 1.5, Number.NaN]) {
+      setDecorOverride(bad);
+      expect(decorVariantAt(now), String(bad)).toBe(natural);
+    }
+    setDecorOverride(null);
+    expect(decorVariantAt(now)).toBe(natural);
+  });
+
+  // Value: protects=the per-day cache of decorVariantAt still follows the date (forward, back, and
+  // a new seed); fails_when=the cache outlives its local day or ignores setSeedOverride;
+  // why_new=the cache is new and the other tests call it once per date; seam=none
+  it("changes variant when the date changes, however the cache was warmed", () => {
+    const at = (i: number, h = 12) => new Date(2026, 2, i, h).getTime();
+    const day = Array.from({ length: 29 }, (_, i) => i + 1).find(
+      (i) => decorVariantFor(localDateKey(at(i))) !== decorVariantFor(localDateKey(at(i + 1))),
+    )!;
+    const [a, b] = [
+      decorVariantFor(localDateKey(at(day))),
+      decorVariantFor(localDateKey(at(day + 1))),
+    ];
+    expect(decorVariantAt(at(day, 0))).toBe(a);
+    expect(decorVariantAt(at(day, 23))).toBe(a);
+    expect(decorVariantAt(at(day + 1, 0))).toBe(b);
+    expect(decorVariantAt(at(day, 12))).toBe(a);
+    const salted = decorVariantFor(localDateKey(at(day)), "salt");
+    setSeedOverride("salt");
+    expect(decorVariantAt(at(day))).toBe(salted);
+    setSeedOverride("");
+    expect(decorVariantAt(at(day))).toBe(a);
+  });
+
+  it("lists only a valid decor override in activeOverrides", () => {
+    setDecorOverride(7);
+    expect(activeOverrides().filter((o) => o.startsWith("decor="))).toEqual([]);
+    setDecorOverride(2);
+    expect(activeOverrides()).toContain("decor=2");
+    setDecorOverride(null);
+  });
+
+  // Value: protects=?decor accepts only the digits 0 to 2, not "0x1", "1e0" or padded text; fails_when=the parse is Number()-based; why_new=parseDecorParam is new; seam=none
+  it("parses ?decor as exactly 0, 1 or 2 and ignores anything else", () => {
+    expect(parseDecorParam("0")).toBe(0);
+    expect(parseDecorParam("1")).toBe(1);
+    expect(parseDecorParam("2")).toBe(2);
+    for (const bad of ["", " 1 ", "0x1", "1e0", "3", "-1", "01", null]) {
+      expect(parseDecorParam(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("reads ?decor only inside import.meta.env.DEV in main.tsx", () => {
+    expect(mainSrc.match(/get\("decor"\)/g)).toHaveLength(1);
+    expect(mainSrc.indexOf('get("decor")')).toBeGreaterThan(mainSrc.indexOf("import.meta.env.DEV"));
+    expect(mainSrc).toContain("setDecorOverride");
+    expect(mainSrc).toContain("parseDecorParam");
   });
 });

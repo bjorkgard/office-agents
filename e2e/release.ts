@@ -17,6 +17,7 @@ import {
   isRealDirectory,
   isRunRoot,
   removeRoot,
+  VISUAL_QUERY,
   writeFixtureSet,
 } from "./support.ts";
 
@@ -701,7 +702,7 @@ async function perf(): Promise<number> {
 export const HERO_PATH = join(import.meta.dirname, "..", "docs", "hero.png");
 /** Agents in the core fixture scene (e2e/office.spec.ts @visual). */
 const HERO_AGENTS = 4;
-const HERO_QUERY = "/?hour=14&seed=e2e&scene=afternoon";
+const HERO_QUERY = VISUAL_QUERY;
 
 /** Playwright looks for browsers under $HOME; find them via the account's home so a different HOME still works. */
 function pinBrowserCache(): void {

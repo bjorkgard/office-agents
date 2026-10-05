@@ -1,8 +1,18 @@
 // Paper: <paperOnDesk parent subagents ctxOf now/> whether the sheet lies on a parent's desk, and when that next changes.
 // Pure and a function of timestamps: the sheet is there from a subagent's arrival until it takes the paper, and
 // from a leaver's handover until the parent has had it a while. Times follow the paths in choreo.ts.
-import { HANDOVER_MS, PAPER_MS, WALK_SPEED, stand, subagentPath, type SubagentCtx } from "./choreo";
-import type { Agent } from "./machine";
+// Also owns the door ajar's timing from the same spans: doorOpen, doorOpenFor and DOOR_TUNING.
+import {
+  FADE_MS,
+  HANDOVER_MS,
+  PAPER_MS,
+  WALK_SPEED,
+  stand,
+  subagentDoorAt,
+  subagentPath,
+  type SubagentCtx,
+} from "./choreo";
+import { TUNING, type Agent } from "./machine";
 import { MAX_WAKE_MS, type Motion } from "./motion";
 
 /** After a leaver hands the paper over it lies at least this long. */
@@ -139,6 +149,101 @@ export function paperOfParent(
     return stillPaperOnDesk(parent, placed, now);
   }
   return paperOnDesk(parent, subs, (a) => motion.subs.get(a.key)?.ctx ?? null, now);
+}
+
+/** Door ajar: how long it opens for an arrival and ahead of a leaver, and the run cap (decision 2B). */
+export const DOOR_TUNING = {
+  /** An arriving subagent holds the door open this long from `arrivedAt`. */
+  ARRIVE_OPEN_MS: 1200,
+  /** A leaver opens it this long before it reaches the door (and it closes FADE_MS after). */
+  LEAD_MS: 600,
+  /** An open run lasts at most this long... */
+  RUN_CAP_MS: 2000,
+  /** ...and is followed by this long closed. */
+  GAP_MS: 400,
+  /** One call looks at no more runs than this (a guard: real schedules are far below it). */
+  MAX_RUNS: 64,
+};
+
+export type Door = {
+  open: boolean;
+  /** The next instant the answer changes (epoch ms), null when it will not by itself. */
+  nextChange: number | null;
+};
+
+const CLOSED: Door = { open: false, nextChange: null };
+
+/** The open windows of each subagent (arrival; leaving, ending at its removal), non-finite spans dropped. */
+function doorWindows<S extends Sub>(
+  subs: readonly S[],
+  ctxOf: (a: S) => SubagentCtx | null,
+  now: number,
+): Span[] {
+  const { ARRIVE_OPEN_MS, LEAD_MS } = DOOR_TUNING;
+  const spans: Span[] = [];
+  for (const a of subs) {
+    const ctx = ctxOf(a);
+    if (!ctx) continue;
+    const leaving = a.phase === "leaving";
+    const leftAt = a.leftAt ?? a.arrivedAt;
+    if (leaving && now < leftAt) continue;
+    const removal = leaving ? leftAt + TUNING.subagentLeavingMs : Infinity;
+    // Only one that walks in from the door opens it (not a re-planned one, which walks on).
+    if (!ctx.resume) spans.push([a.arrivedAt, Math.min(a.arrivedAt + ARRIVE_OPEN_MS, removal)]);
+    const reach = subagentDoorAt(a, ctx);
+    if (reach !== null) spans.push([reach - LEAD_MS, Math.min(reach + FADE_MS, removal)]);
+  }
+  return spans.filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s);
+}
+
+/**
+ * Whether the door stands ajar at `now`, and when that next changes. It opens while a subagent
+ * walks in from it or out to it (windows above), the windows are unioned, and no run stays open
+ * longer than RUN_CAP_MS: it then closes for GAP_MS (also after a run that ended by itself).
+ */
+export function doorOpenFor<S extends Sub>(
+  subs: readonly S[],
+  ctxOf: (a: S) => SubagentCtx | null,
+  now: number,
+): Door {
+  if (!Number.isFinite(now)) return CLOSED;
+  const windows = doorWindows(subs, ctxOf, now).sort((a, b) => a[0] - b[0]);
+  const merged: Span[] = [];
+  for (const [s, e] of windows) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  const { RUN_CAP_MS, GAP_MS, MAX_RUNS } = DOOR_TUNING;
+  // A window that ended at least GAP_MS before the next starts leaves nothing behind (its `free`
+  // is already past), so those can be dropped; one that ended closer keeps shifting the next run.
+  let first = 0;
+  for (let i = 0; i + 1 < merged.length; i++)
+    if (merged[i][1] <= now && merged[i][1] + GAP_MS <= merged[i + 1][0]) first = i + 1;
+  let free = -Infinity;
+  let runs = 0;
+  for (const [s, e] of merged.slice(first)) {
+    for (let a = Math.max(s, free); a < e; a = free) {
+      if (a > now) return { open: false, nextChange: a };
+      if (++runs > MAX_RUNS) return CLOSED;
+      const b = Math.min(e, a + RUN_CAP_MS);
+      free = b + GAP_MS;
+      if (now >= a && now < b) return { open: true, nextChange: b };
+    }
+  }
+  return CLOSED;
+}
+
+/** The door from the plan the walkers use (`motion`); under reduced motion it stays closed (D3). */
+export function doorOpen(
+  agents: readonly Agent[],
+  motion: Pick<Motion, "subs">,
+  reducedMotion: boolean,
+  now: number,
+): Door {
+  if (reducedMotion) return CLOSED;
+  const subs = agents.filter((a) => a.agentId !== null);
+  return doorOpenFor(subs, (a) => motion.subs.get(a.key)?.ctx ?? null, now);
 }
 
 /** Milliseconds to wait for a timer to reach `next`: rounded up, plus 1, so it never fires early. */
