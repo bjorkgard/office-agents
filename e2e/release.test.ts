@@ -6,18 +6,20 @@ import {
   assertTempRoot,
   budgetVerdict,
   decide,
+  FRAME_BUDGET_MS,
   hero,
   makeRunRoot,
   medianOf,
   officeEnv,
   p95,
+  perfVerdicts,
   RECALC_BUDGET_MS,
   ROWS,
-  burstRecalc,
   rowChangeVerdict,
   rowVerdict,
   specResults,
   startOffice,
+  tracedWorstMs,
   worstRecalc,
 } from "./release.ts";
 import { agentFixtureSet, removeRoot, twelveAgentFixtureSet } from "./support.ts";
@@ -213,24 +215,6 @@ describe("agentFixtureSet", () => {
   });
 });
 
-describe("burstRecalc", () => {
-  it("is the largest chunk minus the median chunk", () => {
-    const r = burstRecalc([5, 5, 5, 70, 5, 5, 5]);
-    expect(r?.burstMs).toBe(65);
-    expect(r?.maxMs).toBe(70);
-    expect(r?.medianMs).toBe(5);
-    expect(r?.maxIndex).toBe(3);
-  });
-
-  it("is zero for a flat series", () => {
-    expect(burstRecalc([4, 4, 4, 4])?.burstMs).toBe(0);
-  });
-
-  it("returns null for no chunks, which must never read as a pass", () => {
-    expect(burstRecalc([])).toBeNull();
-  });
-});
-
 describe("worstRecalc", () => {
   const mark = { name: "row-write", ph: "R", ts: 1_000_000 };
   const layout = (ts: number, dur: number, ph = "X", name = "UpdateLayoutTree") => ({
@@ -275,6 +259,21 @@ describe("worstRecalc", () => {
   });
 });
 
+describe("tracedWorstMs", () => {
+  const events = [
+    { name: "row-write", ph: "R", ts: 1_000_000 },
+    { name: "UpdateLayoutTree", ph: "X", ts: 1_100_000, dur: 7_000 },
+  ];
+
+  it("is the worst recalc when the trace kept all its data", () => {
+    expect(tracedWorstMs(events, 1500, false)).toBe(7);
+  });
+
+  it("is null when the trace lost data, however good the events look", () => {
+    expect(tracedWorstMs(events, 1500, true)).toBeNull();
+  });
+});
+
 describe("medianOf", () => {
   it("takes the middle of an odd count", () => {
     expect(medianOf([9, 1, 5])).toBe(5);
@@ -296,50 +295,68 @@ describe("rowChangeVerdict", () => {
   });
 
   it("passes at a median of exactly the budget", () => {
-    const v = rowChangeVerdict([rep(10), rep(16), rep(30)], [50, 60, 70]);
+    const v = rowChangeVerdict([rep(10), rep(16), rep(30)]);
     expect(v.status).toBe("PASS");
   });
 
   it("fails just over the budget", () => {
-    expect(rowChangeVerdict([rep(10), rep(16.1), rep(16.1)], [1, 2, 3]).status).toBe("FAIL");
+    expect(rowChangeVerdict([rep(10), rep(16.1), rep(16.1)]).status).toBe("FAIL");
   });
 
   it("is the median, so one outlier repeat does not decide", () => {
-    expect(rowChangeVerdict([rep(5), rep(6), rep(90)], [1, 2, 3]).status).toBe("PASS");
+    expect(rowChangeVerdict([rep(5), rep(6), rep(90)]).status).toBe("PASS");
   });
 
   it("fails when any repeat never saw the new agents, naming the reason", () => {
-    const v = rowChangeVerdict([rep(5), rep(5, null), rep(5)], [1, 2, 3]);
+    const v = rowChangeVerdict([rep(5), rep(5, null), rep(5)]);
     expect(v.status).toBe("FAIL");
     expect(v.measured).toContain("never appeared");
   });
 
   it("fails when any repeat has no worst event", () => {
-    expect(rowChangeVerdict([rep(5), rep(null), rep(5)], [1, 2, 3]).status).toBe("FAIL");
+    expect(rowChangeVerdict([rep(5), rep(null), rep(5)]).status).toBe("FAIL");
   });
 
   it("fails with no repeats", () => {
-    expect(rowChangeVerdict([], []).status).toBe("FAIL");
+    expect(rowChangeVerdict([]).status).toBe("FAIL");
   });
 
-  it("reports every repeat value, the old burst figure and the appeared times", () => {
-    const v = rowChangeVerdict(
-      [rep(11.2, 4100), rep(12.4, 4200), rep(13.6, 4300)],
-      [55.5, 44.4, null],
-    );
-    for (const s of [
-      "11.2",
-      "12.4",
-      "13.6",
-      "12.4 ms",
-      "55.5",
-      "44.4",
-      "old burst method",
-      "4100",
-      "4200",
-      "4300",
-    ]) {
+  it("reports every repeat value and the appeared times", () => {
+    const v = rowChangeVerdict([rep(11.2, 4100), rep(12.4, 4200), rep(13.6, 4300)]);
+    for (const s of ["11.2", "12.4", "13.6", "12.4 ms", "4100", "4200", "4300"]) {
       expect(v.measured).toContain(s);
     }
+  });
+});
+
+// Value: protects=perf verdicts never pass when the steady sample is missing or a repeat threw;
+//   fails_when=the no-frames guard is dropped, the p95 budget is ignored, or a thrown repeat stops failing the row;
+//   why_new=perfAt assembled these inline behind live-browser code, so nothing ran them;
+//   seam=perfVerdicts (non-test callers: 1, via perfAt)
+describe("perfVerdicts", () => {
+  const good = { appearedMs: 4000, worstMs: 5 };
+
+  it("fails the frame verdict when there is no steady sample or no frames", () => {
+    for (const steady of [null, { frames: [], recalcMs: 0 }]) {
+      const v = perfVerdicts(12, steady, [good, good, good]);
+      expect(v[0]).toEqual({ status: "FAIL", measured: "p95 frame: no frames measured" });
+    }
+  });
+
+  it("checks the p95 frame against the budget for the agent count, row verdict second", () => {
+    const budget = FRAME_BUDGET_MS[12]!;
+    const under = perfVerdicts(12, { frames: [budget - 1, budget - 1], recalcMs: 0 }, [good]);
+    const over = perfVerdicts(12, { frames: [budget + 1, budget + 1], recalcMs: 0 }, [good]);
+    expect(under).toHaveLength(2);
+    expect(under[0]!.status).toBe("PASS");
+    expect(over[0]!.status).toBe("FAIL");
+    expect(under[1]!.measured).toContain("row-change style recalc");
+  });
+
+  it("fails the row verdict when a repeat threw and was recorded as all null", () => {
+    const thrown = { appearedMs: null, worstMs: null };
+    const v = perfVerdicts(12, { frames: [10], recalcMs: 0 }, [good, thrown, good]);
+    expect(v[0]!.status).toBe("PASS");
+    expect(v[1]!.status).toBe("FAIL");
   });
 });
