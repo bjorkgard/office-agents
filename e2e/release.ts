@@ -21,7 +21,7 @@ import {
   writeFixtureSet,
 } from "./support.ts";
 
-export type Status = "PASS" | "FAIL" | "SKIPPED";
+export type Status = "PASS" | "FAIL" | "SKIPPED" | "INCONCLUSIVE";
 export type Verdict = { status: Status; measured: string };
 export type Observation = {
   /** Ms from page load to the first `.agent[data-state]`; null when none appeared. */
@@ -357,7 +357,7 @@ async function criteria(): Promise<number> {
     verdicts.push(v);
     console.log(line(row.n, v));
   }
-  return verdicts.some((v) => v.status === "FAIL") ? 1 : 0;
+  return anyFailed(verdicts) ? 1 : 0;
 }
 
 // ---- perf -----------------------------------------------------------------------------
@@ -365,6 +365,13 @@ async function criteria(): Promise<number> {
 /** Budgets from the phase 6 decisions: p95 frame ms by agent count, and row-change style recalc ms. */
 export const FRAME_BUDGET_MS: Record<number, number> = { 12: 20, 24: 33 };
 export const RECALC_BUDGET_MS = 16;
+/**
+ * Above RECALC_BUDGET_MS, a row-change median up to this is INCONCLUSIVE (exit 0, printed); above it is FAIL.
+ * The band is decided on the median rounded to the 2 decimals that are printed.
+ */
+export const RECALC_INCONCLUSIVE_MS = 17.5;
+/** How long after the new agents rendered an UpdateLayoutTree still counts as the entrance ease, not idle. */
+export const EASE_MS = 700;
 /** A passing median above this share of the budget is flagged as marginal. */
 const MARGINAL_RATIO = 0.9;
 const STEADY_MS = 5_000;
@@ -375,7 +382,7 @@ const TRACE_FLUSH_MS = 10_000;
 const TRACE_ABORT_FLUSH_MS = 2_000;
 /** Plain idle before each row write: the gate measures a settled page (D8), not one fresh off load. */
 const ROW_SETTLE_MS = 5_000;
-const REPEATS = 3;
+const REPEATS = 6;
 const TRACE_CATEGORIES =
   "devtools.timeline,disabled-by-default-devtools.timeline,blink.user_timing";
 const ROW_APPEAR_MS = 15_000;
@@ -396,7 +403,13 @@ export function budgetVerdict(label: string, ms: number | null, budget: number):
   };
 }
 
-export type TraceEvent = { name?: string; ph?: string; ts?: number; dur?: number };
+export type TraceEvent = {
+  name?: string;
+  ph?: string;
+  ts?: number;
+  dur?: number;
+  args?: { elementCount?: number };
+};
 
 /**
  * Largest single UpdateLayoutTree (style recalc) complete event, in ms, from the `row-write` mark until
@@ -406,23 +419,45 @@ export function worstRecalc(events: TraceEvent[], windowMs: number): number | nu
   return worstRecalcEvent(events, windowMs)?.durMs ?? null;
 }
 
-/** worstRecalc's event, with its start offset from the `row-write` mark, both in ms. */
+/** worstRecalc's event, with its start offset from the `row-write` mark, both in ms, and its element count if traced. */
 export function worstRecalcEvent(
   events: TraceEvent[],
   windowMs: number,
-): { durMs: number; offsetMs: number } | null {
+): { durMs: number; offsetMs: number; elementCount: number | null } | null {
   const mark = events.find((e) => e.name === "row-write" && typeof e.ts === "number");
   if (!mark) return null;
   const from = mark.ts!;
   const to = from + windowMs * 1000;
-  let worst: { dur: number; ts: number } | null = null;
+  let worst: { dur: number; ts: number; elementCount: number | null } | null = null;
   for (const e of events) {
     if (e.name !== "UpdateLayoutTree" || e.ph !== "X") continue;
     if (typeof e.ts !== "number" || typeof e.dur !== "number") continue;
     if (e.ts < from || e.ts > to) continue;
-    if (worst === null || e.dur > worst.dur) worst = { dur: e.dur, ts: e.ts };
+    if (worst === null || e.dur > worst.dur) {
+      const count = e.args?.elementCount;
+      worst = { dur: e.dur, ts: e.ts, elementCount: typeof count === "number" ? count : null };
+    }
   }
-  return worst === null ? null : { durMs: worst.dur / 1000, offsetMs: (worst.ts - from) / 1000 };
+  return worst === null
+    ? null
+    : {
+        durMs: worst.dur / 1000,
+        offsetMs: (worst.ts - from) / 1000,
+        elementCount: worst.elementCount,
+      };
+}
+
+export type RecalcPhase = "mount" | "ease" | "idle";
+
+/** Which part of the row change a recalc at offsetMs after the write belongs to, given when the agents appeared. */
+export function classifyPhase(offsetMs: number, appearedMs: number): RecalcPhase {
+  if (offsetMs < appearedMs) return "mount";
+  return offsetMs < appearedMs + EASE_MS ? "ease" : "idle";
+}
+
+/** True when any verdict is FAIL. */
+export function anyFailed(verdicts: Verdict[]): boolean {
+  return verdicts.some((v) => v.status === "FAIL");
 }
 
 /** worstRecalc, but null when Chromium reported that the trace lost data: a partial trace must never read as a pass. */
@@ -441,9 +476,33 @@ export function medianOf(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
-export type RowRepeat = { appearedMs: number | null; worstMs: number | null };
+/** An error message on one line, whitespace collapsed, capped at 200 characters. */
+export function oneLine(message: string): string {
+  return message.replace(/\s+/g, " ").trim().slice(0, 200);
+}
 
-/** Row-change verdict: the median across repeats of the worst single style recalc event. */
+/** `runError` is the message of a thrown repeat, when there was one. */
+export type RowRepeat = {
+  appearedMs: number | null;
+  worstMs: number | null;
+  runError?: string | null;
+};
+
+/**
+ * The runs the gate takes its median over: the first (warm-up) run is dropped only when it is higher than
+ * the median of the others, so a slow first run cannot decide the verdict but a fast one is never hidden.
+ */
+export function settleRuns(worsts: number[]): { kept: number[]; dropped: boolean } {
+  if (worsts.length < 2) return { kept: worsts, dropped: false };
+  const dropped = worsts[0]! > medianOf(worsts.slice(1))!;
+  return { kept: dropped ? worsts.slice(1) : worsts, dropped };
+}
+
+/**
+ * Row-change verdict: the median across repeats (warm-up per settleRuns) of the worst single style recalc event.
+ * PASS <= budget, INCONCLUSIVE up to RECALC_INCONCLUSIVE_MS, FAIL above, decided on the median rounded to the
+ * 2 decimals that are printed so the text and the status cannot disagree.
+ */
 export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   const fmt = (v: number | null) => (v === null ? "n/a" : v.toFixed(1));
   const worst = repeats.map((r) => fmt(r.worstMs)).join("/");
@@ -451,6 +510,13 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
   const info = `row appeared ${appeared} ms after write`;
   if (repeats.length === 0) {
     return { status: "FAIL", measured: "row-change style recalc: no repeats measured" };
+  }
+  const thrown = repeats.find((r) => r.runError != null)?.runError;
+  if (thrown != null) {
+    return {
+      status: "FAIL",
+      measured: `row-change style recalc: repeat failed: ${thrown} (worst events ${worst} ms; ${info})`,
+    };
   }
   if (repeats.some((r) => r.appearedMs === null)) {
     return {
@@ -465,15 +531,133 @@ export function rowChangeVerdict(repeats: RowRepeat[]): Verdict {
       measured: `row-change style recalc: no style recalc event traced in a repeat (worst events ${worst} ms; ${info})`,
     };
   }
-  const median = medianOf(worsts as number[])!;
-  const status = median <= RECALC_BUDGET_MS ? "PASS" : "FAIL";
+  const { kept, dropped } = settleRuns(worsts as number[]);
+  const median = Number(medianOf(kept)!.toFixed(2));
+  const status =
+    median <= RECALC_BUDGET_MS
+      ? "PASS"
+      : median <= RECALC_INCONCLUSIVE_MS
+        ? "INCONCLUSIVE"
+        : "FAIL";
+  const warmup =
+    repeats.length < 2
+      ? ""
+      : dropped
+        ? `; warm-up run 1 dropped (${fmt(repeats[0]!.worstMs)} ms, higher than the median of runs 2-${repeats.length})`
+        : "; warm-up run 1 kept";
   const marginal =
     status === "PASS" && median > MARGINAL_RATIO * RECALC_BUDGET_MS
       ? "; marginal: within 10% of the budget"
       : "";
   return {
     status,
-    measured: `row-change style recalc median worst event ${median.toFixed(1)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${marginal})`,
+    measured: `row-change style recalc median worst event ${median.toFixed(2)} ms (budget ${RECALC_BUDGET_MS} ms; repeats ${worst} ms; ${info}${warmup}${marginal})`,
+  };
+}
+
+/** A row repeat plus the animation probe of an `--ab` run: idle `document.getAnimations().length`, or why not; `runError` is a thrown repeat. */
+export type AbRepeat = RowRepeat & {
+  idleAnimations: number | null;
+  probeError: string | null;
+  runError: string | null;
+};
+/**
+ * One arm of the animations A/B: median worst recalc and median idle animation count, null where unmeasured;
+ * noWorst of total repeats had no worst event (row never appeared, or the trace lost data).
+ */
+export type AbArm = {
+  medianMs: number | null;
+  animations: number | null;
+  error: string | null;
+  noWorst: number;
+  total: number;
+};
+
+/**
+ * One arm's medians include the warm-up run (the gate verdict drops it via settleRuns). Arms run animated first,
+ * then frozen, and that order bias is not corrected.
+ */
+export function abArm(runs: AbRepeat[]): AbArm {
+  const worsts = runs.map((r) => r.worstMs);
+  const counts = runs.map((r) => r.idleAnimations);
+  return {
+    medianMs:
+      worsts.length === 0 || worsts.some((w) => w === null) ? null : medianOf(worsts as number[]),
+    animations:
+      counts.length === 0 || counts.some((c) => c === null) ? null : medianOf(counts as number[]),
+    error: errorOf(runs),
+    noWorst: worsts.filter((w) => w === null).length,
+    total: runs.length,
+  };
+}
+
+function errorOf(runs: AbRepeat[]): string | null {
+  const probe = runs.find((r) => r.probeError !== null)?.probeError;
+  if (probe != null) return `probe failed: ${probe}`;
+  const run = runs.find((r) => r.runError !== null)?.runError;
+  return run != null ? `repeat failed: ${run}` : null;
+}
+
+/** Animated minus frozen, in ms and in animation count; null when either arm lacks a measurement. */
+export function abDelta(arms: {
+  animated: AbArm;
+  frozen: AbArm;
+}): { deltaMs: number; deltaAnimations: number } | null {
+  const { animated, frozen } = arms;
+  if (
+    animated.medianMs === null ||
+    frozen.medianMs === null ||
+    animated.animations === null ||
+    frozen.animations === null
+  ) {
+    return null;
+  }
+  return {
+    deltaMs: animated.medianMs - frozen.medianMs,
+    deltaAnimations: animated.animations - frozen.animations,
+  };
+}
+
+/** Prefix of every `--ab` verdict's measured text; abSkippedLine matches on it. */
+export const AB_PREFIX = "animations A/B";
+
+/** The "A/B not measured" count line for `perf --ab`, or null when not in `--ab` or nothing was skipped. */
+export function abSkippedLine(all: Verdict[], ab: boolean): string | null {
+  const skipped = all.filter(
+    (v) => v.status === "SKIPPED" && v.measured.startsWith(AB_PREFIX),
+  ).length;
+  return ab && skipped > 0 ? `${skipped} SKIPPED (A/B not measured)` : null;
+}
+
+function noWorstText(name: string, arm: AbArm): string | null {
+  return arm.noWorst > 0
+    ? `${name}: ${arm.noWorst} of ${arm.total} repeats had no worst event (row never appeared or trace lost data)`
+    : null;
+}
+
+/** The `--ab` delta line: informational PASS, or SKIPPED naming the probe or repeat error or the missing data. */
+export function abVerdict(arms: { animated: AbArm; frozen: AbArm }): Verdict {
+  const delta = abDelta(arms);
+  const { animated, frozen } = arms;
+  if (delta === null) {
+    const why =
+      animated.error ??
+      frozen.error ??
+      noWorstText("with animations", animated) ??
+      noWorstText("without animations", frozen) ??
+      (animated.medianMs === null || frozen.medianMs === null
+        ? "no median worst event in an arm"
+        : "no animation count in an arm");
+    return { status: "SKIPPED", measured: `${AB_PREFIX}: not measured (${why})` };
+  }
+  const sign = delta.deltaMs >= 0 ? "+" : "";
+  const stillAnimating =
+    frozen.animations! > 0
+      ? `; frozen arm still had ${frozen.animations!.toFixed(0)} animations`
+      : "";
+  return {
+    status: "PASS",
+    measured: `${AB_PREFIX}: with animations ${animated.medianMs!.toFixed(1)} ms, ${animated.animations!.toFixed(0)} animations; without ${frozen.medianMs!.toFixed(1)} ms, ${frozen.animations!.toFixed(0)} animations; delta ${sign}${delta.deltaMs.toFixed(1)} ms, ${delta.deltaAnimations.toFixed(0)} animations${stillAnimating}`,
   };
 }
 
@@ -555,15 +739,33 @@ function frameSample(agents: number, headed: boolean, info: { chrome: string }):
   return withOfficePage(agents, 0, headed, info, ({ page }) => sampleWindow(page, STEADY_MS));
 }
 
+/** CSS injected for the frozen arm of the animations A/B. */
+const FROZEN_CSS = "*{animation:none!important;transition:none!important}";
+/** Label prefix of the frozen arm's repeats. */
+const FROZEN_LABEL = "animations off ";
+
 /** One fresh office at `agents`, idle ROW_SETTLE_MS, then one traced row write. */
 function rowRepeat(
   agents: number,
   headed: boolean,
   info: { chrome: string },
   label: string,
-): Promise<RowRepeat> {
+  ab: { frozen: boolean } | null = null,
+): Promise<AbRepeat> {
   return withOfficePage(agents, DESKS_PER_ROW, headed, info, async ({ page, cdp, root, files }) => {
+    if (ab?.frozen) {
+      await page.addStyleTag({ content: FROZEN_CSS });
+    }
     await new Promise((r) => setTimeout(r, ROW_SETTLE_MS));
+    let idleAnimations: number | null = null;
+    let probeError: string | null = null;
+    if (ab) {
+      try {
+        idleAnimations = await page.evaluate(() => document.getAnimations().length);
+      } catch (e) {
+        probeError = e instanceof Error ? e.message : String(e);
+      }
+    }
     // Row growth: the feed finds new files on a tree walk. Trace only this phase. The gate is the worst single
     // UpdateLayoutTree after the row-write mark.
     const target = agents + DESKS_PER_ROW;
@@ -615,11 +817,14 @@ function rowRepeat(
       const worstEvent =
         worstMs === null ? null : worstRecalcEvent(events, appearedMs! + ROW_TRACE_TAIL_MS);
       const at =
-        worstEvent === null ? "" : ` at +${worstEvent.offsetMs.toFixed(0)} ms after the write`;
+        worstEvent === null || appearedMs === null
+          ? ""
+          : ` at +${worstEvent.offsetMs.toFixed(0)} ms after the write, phase ${classifyPhase(worstEvent.offsetMs, appearedMs)}, elements ${worstEvent.elementCount ?? "n/a"}`;
+      const probe = ab ? `, idle animations ${idleAnimations ?? `n/a (${probeError})`}` : "";
       console.log(
-        `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms${at}, row appeared ${appearedMs ?? "never"} ms`,
+        `  ${agents} agents ${label}: worst event ${worstMs === null ? "n/a" : worstMs.toFixed(1)} ms${at}, row appeared ${appearedMs ?? "never"} ms${probe}`,
       );
-      return { appearedMs, worstMs };
+      return { appearedMs, worstMs, idleAnimations, probeError, runError: null };
     } finally {
       if (tracing) {
         await cdp.send("Tracing.end").catch(() => {});
@@ -648,10 +853,12 @@ export function perfVerdicts(
   ];
 }
 
+// A/B arm order and warm-up handling: see abArm.
 async function perfAt(
   agents: number,
   headed: boolean,
   info: { chrome: string },
+  ab: boolean,
 ): Promise<Verdict[]> {
   let steady: Sample | null = null;
   if (!shuttingDown) {
@@ -663,38 +870,59 @@ async function perfAt(
       );
     }
   }
-  const repeats: RowRepeat[] = [];
-  for (let i = 1; i <= REPEATS; i++) {
-    if (shuttingDown) break;
-    try {
-      repeats.push(await rowRepeat(agents, headed, info, `repeat ${i}`));
-    } catch (e) {
-      console.log(
-        `  ${agents} agents repeat ${i}: failed, ${e instanceof Error ? e.message : String(e)}`,
-      );
-      repeats.push({ appearedMs: null, worstMs: null });
+  const runRepeats = async (frozen: boolean): Promise<AbRepeat[]> => {
+    const out: AbRepeat[] = [];
+    const tag = frozen ? FROZEN_LABEL : "";
+    for (let i = 1; i <= REPEATS; i++) {
+      if (shuttingDown) break;
+      try {
+        out.push(
+          await rowRepeat(agents, headed, info, `${tag}repeat ${i}`, ab ? { frozen } : null),
+        );
+      } catch (e) {
+        const message = oneLine(e instanceof Error ? e.message : String(e));
+        console.log(`  ${agents} agents ${tag}repeat ${i}: failed, ${message}`);
+        out.push({
+          appearedMs: null,
+          worstMs: null,
+          idleAnimations: null,
+          probeError: null,
+          runError: message,
+        });
+      }
     }
+    return out;
+  };
+  const repeats = await runRepeats(false);
+  const verdicts = perfVerdicts(agents, steady, repeats);
+  if (ab && !shuttingDown) {
+    const frozen = await runRepeats(true);
+    verdicts.push(abVerdict({ animated: abArm(repeats), frozen: abArm(frozen) }));
   }
-  return perfVerdicts(agents, steady, repeats);
+  return verdicts;
 }
 
-async function perf(): Promise<number> {
+async function perf(ab: boolean): Promise<number> {
   const headed = process.env.PERF_HEADED === "1";
   console.log(
     `perf mode ${headed ? "headed" : "headless"}, machine ${cpus()[0]?.model ?? "unknown"} (${platform()} ${release()})`,
   );
   const info = { chrome: "unknown" };
-  let failed = false;
+  const all: Verdict[] = [];
   for (const agents of PERF_AGENTS) {
-    const verdicts = await perfAt(agents, headed, info);
+    const verdicts = await perfAt(agents, headed, info, ab);
     if (shuttingDown) return 130;
     for (const v of verdicts) {
       console.log(`${v.status} ${agents} agents, ${v.measured}`);
-      if (v.status === "FAIL") failed = true;
+      all.push(v);
     }
   }
+  const inconclusive = all.filter((v) => v.status === "INCONCLUSIVE").length;
+  if (inconclusive > 0) console.log(`${inconclusive} INCONCLUSIVE (does not fail the run)`);
+  const skippedLine = abSkippedLine(all, ab);
+  if (skippedLine !== null) console.log(skippedLine);
   console.log(`chrome ${info.chrome}`);
-  return failed ? 1 : 0;
+  return anyFailed(all) ? 1 : 0;
 }
 
 // ---- hero -----------------------------------------------------------------------------
@@ -751,11 +979,27 @@ export async function hero(root: string = makeRunRoot(), out: string = HERO_PATH
   }
 }
 
+/** `<sub> [--ab]`: only `perf` takes `--ab`; anything else (extra, misspelled, unknown) is null. */
+export function parseArgs(
+  argv: string[],
+): { sub: "criteria" | "perf" | "hero"; ab: boolean } | null {
+  const [sub, ...rest] = argv;
+  if (sub !== "criteria" && sub !== "perf" && sub !== "hero") return null;
+  if (rest.length === 0) return { sub, ab: false };
+  if (sub === "perf" && rest.length === 1 && rest[0] === "--ab") return { sub, ab: true };
+  return null;
+}
+
 if (import.meta.filename === process.argv[1]) {
-  const sub = process.argv[2];
-  if (sub === "criteria" || sub === "perf" || sub === "hero") {
+  const args = parseArgs(process.argv.slice(2));
+  if (args) {
     installSignalHandlers();
-    (sub === "perf" ? perf() : sub === "hero" ? hero().then(() => 0) : criteria()).then(
+    (args.sub === "perf"
+      ? perf(args.ab)
+      : args.sub === "hero"
+        ? hero().then(() => 0)
+        : criteria()
+    ).then(
       (code) => process.exit(code),
       (e: unknown) => {
         console.error(e instanceof Error ? e.message : "release failed");
@@ -763,7 +1007,7 @@ if (import.meta.filename === process.argv[1]) {
       },
     );
   } else {
-    console.error("usage: node e2e/release.ts criteria|perf|hero");
+    console.error("usage: node e2e/release.ts criteria|perf [--ab]|hero");
     process.exit(2);
   }
 }

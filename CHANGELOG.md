@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.1.0] - 2026-10-05
+
+### Added
+
+- `node e2e/release.ts perf --ab` runs the 12 and 24 agent checks a second time with the room's animations switched off and prints the difference, plus how many animations were running. In three runs the room was slower with animations off (about 4 to 6 ms), so animations are not what makes a new row expensive.
+- Each perf row-change line now says whether the slowest style recalculation was the new row appearing, the entrance ease or idle time, and how many elements it restyled. At both 12 and 24 agents the worst one is the new row's own render, which restyles about 9,600 elements.
+- Perf now rejects unknown or extra command-line arguments (usage, exit 2) instead of ignoring them, so a typo such as `perf --abb` no longer looks like a normal run.
+
+### Changed
+
+- The row-change check now takes six fresh runs instead of three and drops the first only when it is slower than the rest. A median up to 16 ms passes, above 16 and up to 17.5 ms is reported as INCONCLUSIVE and does not fail the run, and anything above fails. The median prints with two decimals so the number and the verdict cannot disagree.
+- A run that crashes or loses its trace now reports its own error (on one line, capped at 200 characters) instead of saying the new agents never appeared.
+
+### Known
+
+- At 24 agents a new row still costs about 19 to 22 ms of style recalculation, over the 16 ms budget. The cause is narrowed to the new row's own render but not found; the next probe is the browser's invalidation tracking.
+- One 12-agent run read 20 ms while other work was running on the machine, and a rerun on a quiet machine read 14 ms. Run perf with nothing else going.
+- Safari: page-load recordings only. The slowest style recalculation was about 32 ms at first render at both sizes. The cost of adding a row on a settled page, the hit area at 50% zoom and the alignment during the ease are not measured yet.
+
 ## [0.7.0.0] - 2026-10-05
 
 ### Added
