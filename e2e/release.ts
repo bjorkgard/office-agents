@@ -365,7 +365,9 @@ async function criteria(): Promise<number> {
 /** Budgets from the phase 6 decisions: p95 frame ms by agent count, and row-change style recalc ms. */
 export const FRAME_BUDGET_MS: Record<number, number> = { 12: 20, 24: 33 };
 export const RECALC_BUDGET_MS = 16;
-/** A row-change median above the budget but within this is INCONCLUSIVE (exit 0); above it is FAIL. */
+/**
+ * Above RECALC_BUDGET_MS, a row-change median up to this is INCONCLUSIVE (exit 0, printed); above it is FAIL.
+ */
 export const RECALC_INCONCLUSIVE_MS = 17.5;
 /** How long after the new agents rendered an UpdateLayoutTree still counts as the entrance ease, not idle. */
 export const EASE_MS = 700;
@@ -540,8 +542,17 @@ export type AbRepeat = RowRepeat & {
   probeError: string | null;
   runError: string | null;
 };
-/** One arm of the animations A/B: median worst recalc and median idle animation count, null where unmeasured. */
-export type AbArm = { medianMs: number | null; animations: number | null; error: string | null };
+/**
+ * One arm of the animations A/B: median worst recalc and median idle animation count, null where unmeasured;
+ * noWorst of total repeats had no worst event (row never appeared, or the trace lost data).
+ */
+export type AbArm = {
+  medianMs: number | null;
+  animations: number | null;
+  error: string | null;
+  noWorst: number;
+  total: number;
+};
 
 /**
  * One arm's medians include the warm-up run (the gate verdict drops it via settleRuns). Arms run animated first,
@@ -556,6 +567,8 @@ export function abArm(runs: AbRepeat[]): AbArm {
     animations:
       counts.length === 0 || counts.some((c) => c === null) ? null : medianOf(counts as number[]),
     error: errorOf(runs),
+    noWorst: worsts.filter((w) => w === null).length,
+    total: runs.length,
   };
 }
 
@@ -588,8 +601,16 @@ export function abDelta(arms: {
 
 /** The "A/B not measured" count line for `perf --ab`, or null when not in `--ab` or nothing was skipped. */
 export function abSkippedLine(all: Verdict[], ab: boolean): string | null {
-  const skipped = all.filter((v) => v.status === "SKIPPED").length;
+  const skipped = all.filter(
+    (v) => v.status === "SKIPPED" && v.measured.startsWith("animations A/B"),
+  ).length;
   return ab && skipped > 0 ? `${skipped} SKIPPED (A/B not measured, exit 0)` : null;
+}
+
+function noWorstText(name: string, arm: AbArm): string | null {
+  return arm.noWorst > 0
+    ? `${name}: ${arm.noWorst} of ${arm.total} repeats had no worst event (row never appeared or trace lost data)`
+    : null;
 }
 
 /** The `--ab` delta line: informational PASS, or SKIPPED naming the probe or repeat error or the missing data. */
@@ -598,7 +619,11 @@ export function abVerdict(arms: { animated: AbArm; frozen: AbArm }): Verdict {
   const { animated, frozen } = arms;
   if (delta === null) {
     const why =
-      animated.error ?? frozen.error ?? "no median worst event or animation count in an arm";
+      animated.error ??
+      frozen.error ??
+      noWorstText("with animations", animated) ??
+      noWorstText("without animations", frozen) ??
+      "no animation count in an arm";
     return { status: "SKIPPED", measured: `animations A/B: not measured (${why})` };
   }
   const sign = delta.deltaMs >= 0 ? "+" : "";

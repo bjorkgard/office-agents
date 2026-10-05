@@ -420,6 +420,13 @@ describe("rowChangeVerdict", () => {
     expect(rowChangeVerdict([]).status).toBe("FAIL");
   });
 
+  it("mentions neither warm-up nor dropped with a single repeat", () => {
+    const v = rowChangeVerdict([rep(10)]);
+    expect(v.status).toBe("PASS");
+    expect(v.measured).not.toContain("warm-up");
+    expect(v.measured).not.toContain("dropped");
+  });
+
   it("flags a pass within 10% of the budget as marginal, and nothing else", () => {
     const rep3 = (m: number) => rowChangeVerdict([rep(m), rep(m), rep(m)]);
     expect(rep3(14.5).status).toBe("PASS");
@@ -449,6 +456,12 @@ describe("rowChangeVerdict", () => {
       expect(v.measured).toContain("no style recalc event traced");
     });
 
+    it("fails when only the first of six runs has no worst event", () => {
+      const v = rowChangeVerdict([rep(null), rep(5), rep(5), rep(5), rep(5), rep(5)]);
+      expect(v.status).toBe("FAIL");
+      expect(v.measured).toContain("no style recalc event traced");
+    });
+
     it("drops a first run higher than the median of runs 2-6, median of the remaining 5", () => {
       // runs 2-6 median 10; first 50 is higher so dropped; median of [10,10,10,12,14] = 10
       const v = six([50, 10, 12, 10, 14, 10]);
@@ -466,7 +479,9 @@ describe("rowChangeVerdict", () => {
       expect(v.measured).toContain("warm-up run 1 kept");
       expect(v.measured).toContain("median worst event 10.0 ms");
       // a low first run is kept (median here stays 18; the next test pins a case where it moves)
-      expect(six([1, 18, 18, 18, 18, 18]).measured).toContain("warm-up run 1 kept");
+      const low = six([1, 18, 18, 18, 18, 18]).measured;
+      expect(low).toContain("warm-up run 1 kept");
+      expect(low).toContain("median worst event 18.0 ms");
       // first equal to the median of the rest is kept
       expect(six([10, 10, 10, 10, 10, 10]).measured).toContain("warm-up run 1 kept");
     });
@@ -509,10 +524,14 @@ describe("abDelta and abVerdict", () => {
     medianMs: number | null,
     animations: number | null,
     error: string | null = null,
+    noWorst = 0,
+    total = 3,
   ) => ({
     medianMs,
     animations,
     error,
+    noWorst,
+    total,
   });
 
   it("is animated minus frozen, by named arm, so swapped columns flip the sign", () => {
@@ -529,6 +548,32 @@ describe("abDelta and abVerdict", () => {
   it("is null when either arm lacks data", () => {
     expect(abDelta({ animated: arm(null, 3), frozen: arm(12, 0) })).toBeNull();
     expect(abDelta({ animated: arm(12, 3), frozen: arm(12, null) })).toBeNull();
+    expect(abDelta({ animated: arm(12, 3), frozen: arm(null, 0) })).toBeNull();
+    expect(abDelta({ animated: arm(12, null), frozen: arm(12, 0) })).toBeNull();
+  });
+
+  it("reports the animated error before the frozen error", () => {
+    const v = abVerdict({
+      animated: arm(null, null, "probe failed: a"),
+      frozen: arm(null, null, "repeat failed: b"),
+    });
+    expect(v.measured).toContain("probe failed: a");
+    expect(v.measured).not.toContain("repeat failed: b");
+  });
+
+  it("names the arm and how many repeats had no worst event", () => {
+    const v = abVerdict({ animated: arm(12, 3), frozen: arm(null, 0, null, 2, 6) });
+    expect(v.status).toBe("SKIPPED");
+    expect(v.measured).toContain("without animations: 2 of 6 repeats had no worst event");
+    expect(v.measured).not.toContain("with animations:");
+    const a = abVerdict({ animated: arm(null, 3, null, 1, 6), frozen: arm(null, 0, null, 2, 6) });
+    expect(a.measured).toContain("with animations: 1 of 6 repeats had no worst event");
+    const e = abVerdict({
+      animated: arm(null, 3, null, 1, 6),
+      frozen: arm(12, 0, "probe failed: x"),
+    });
+    expect(e.measured).toContain("probe failed: x");
+    expect(e.measured).not.toContain("had no worst event");
   });
 
   it("prints a PASS delta line with both medians and counts", () => {
@@ -572,9 +617,12 @@ describe("abSkippedLine", () => {
   const v = (status: "PASS" | "FAIL" | "SKIPPED" | "INCONCLUSIVE") => ({ status, measured: "" });
 
   it("counts SKIPPED verdicts only when --ab is set", () => {
-    const all = [v("PASS"), v("SKIPPED"), v("SKIPPED")];
+    const ab = { status: "SKIPPED" as const, measured: "animations A/B: not measured (x)" };
+    const all = [v("PASS"), ab, ab];
     expect(abSkippedLine(all, true)).toBe("2 SKIPPED (A/B not measured, exit 0)");
     expect(abSkippedLine(all, false)).toBeNull();
+    expect(abSkippedLine([v("SKIPPED"), ab], true)).toBe("1 SKIPPED (A/B not measured, exit 0)");
+    expect(abSkippedLine([v("SKIPPED")], true)).toBeNull();
     expect(abSkippedLine([v("PASS"), v("INCONCLUSIVE")], true)).toBeNull();
   });
 });
@@ -595,7 +643,7 @@ describe("abArm", () => {
 
   it("takes the median worst and median idle animation count", () => {
     const a = abArm([run(10, 4), run(30, 6), run(20, 5)]);
-    expect(a).toEqual({ medianMs: 20, animations: 5, error: null });
+    expect(a).toEqual({ medianMs: 20, animations: 5, error: null, noWorst: 0, total: 3 });
   });
 
   it("carries a probe error and nulls the count", () => {
@@ -617,6 +665,12 @@ describe("abArm", () => {
   it("nulls the median when a run has no worst event or no runs exist", () => {
     expect(abArm([run(null, 1)]).medianMs).toBeNull();
     expect(abArm([]).medianMs).toBeNull();
+  });
+
+  it("counts the repeats that had no worst event", () => {
+    const a = abArm([run(null, 1), run(5, 1), run(null, 1)]);
+    expect(a.noWorst).toBe(2);
+    expect(a.total).toBe(3);
   });
 });
 
