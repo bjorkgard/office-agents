@@ -586,7 +586,8 @@ describe("Scene door ajar for a leaver", () => {
         /data-door="(open|closed)"/,
       )?.[1];
     const seen = new Set<string | undefined>();
-    for (let ms = leftAt; ms < leftAt + TUNING.subagentLeavingMs; ms += 50) seen.add(doorAt(ms));
+    // The open window is at least LEAD_MS + FADE_MS (1 s) wide, so a 500 ms step cannot step over it: 40 renders, not 400.
+    for (let ms = leftAt; ms < leftAt + TUNING.subagentLeavingMs; ms += 500) seen.add(doorAt(ms));
     expect(seen.has("open")).toBe(true);
     expect(doorAt(leftAt + TUNING.subagentLeavingMs + 1)).toBe("closed");
     expect(doorAt(leftAt - 1)).toBe("closed");
