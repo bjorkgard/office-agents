@@ -25,7 +25,7 @@ The feed reads the transcripts Claude Code already writes in `~/.claude/projects
 Requirements: Node.js and the global [Vite+](https://viteplus.dev/guide/) CLI (`vp`).
 
 ```sh
-git clone <this repository>
+git clone https://github.com/bjorkgard/office-agents.git
 cd office-agents
 vp install
 vp dev

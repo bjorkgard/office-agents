@@ -4,8 +4,6 @@ Detailed behavior, banners, release checks, hooks and test notes. Moved from the
 
 A local web app that shows your running Claude Code agents and subagents as people in an isometric office.
 
-> **Status: early development.** The live office works in `vp dev`: the feed, the scene and the top bar are built. Some of the behavior below is still planned; progress is tracked in the roadmap.
-
 Run it with `vp dev` and open the page. Every recently active Claude Code session appears as a character sitting at a computer (only macOS is exercised at first). Each session wears its own shirt color (its subagents wear their parent's), and each gets a generated name and gender that stay the same across reloads.
 
 - **Working:** the character types at the desk, and the screen shows scrolling lines. A waiting agent's screen stays half lit; every other screen is dark.
@@ -31,31 +29,9 @@ The feed reads the transcripts Claude Code already writes in `~/.claude/projects
 
 Design and review notes: [docs/designs/office-agents-isometric-office.md](designs/office-agents-isometric-office.md); office-life plan: [docs/designs/office-life-ceo-review.md](designs/office-life-ceo-review.md). Visual rules: [DESIGN.md](../DESIGN.md). Build order: [BUILD_TODO.md](../BUILD_TODO.md). Phase 0 art check: [docs/designs/phase-0-sprite-notes.md](designs/phase-0-sprite-notes.md). Third-party notices: [NOTICE](../NOTICE). Deferred ideas: [TODOS.md](../TODOS.md) (sorted, with stable `T01`..`T46` ids); finished ones: [ARCHIVE.md](../ARCHIVE.md).
 
-## Roadmap
-
-- [x] Design doc, engineering review and design review
-- [x] Check CC0 sprite packs for poses and a clean shirt color band (none fit; characters and props will be drawn)
-- [x] Draw characters and props as isometric pixel sprites (BUILD_TODO 4.0)
-- [x] Recolor shirts with a CSS variable, one color per session (BUILD_TODO 4.3)
-- [x] Event types and transcript normalizer
-- [x] Feed plugin: tail transcripts, stream to the browser, refuse non-localhost hosts
-- [x] State machine and seeded identity (name, gender, project color)
-- [x] Office scene: desks, characters, top bar, status banner
-- [x] Subagent walk-in and paper handoff
-- [x] Wave, speech bubble and tab title count
-- [x] Reduced motion, keyboard and screen reader support
-- [x] Office life: wall clock, hour-matched windows and floor light, two desk kinds, working screens, desk paper, subagent laptops and tablets, drink breaks (coffee and water dispenser), door ajar for subagents, bookshelf and pictures, rows that grow to 24 desks, debug hooks
-- [x] End-to-end test with fixture transcripts (Playwright, `vp run e2e`)
-- [x] Release checks: success criteria, frame budget and README picture (`vp run criteria`, `vp run perf`, `vp run hero`)
-- [x] Opt-in attention chime: speaker button in the top bar, off by default (design-reviewed in DESIGN.md, "Chime toggle"; the sound itself is not yet checked in a real browser, see TODOS.md)
-- [x] Hooks adapter for exact attention signals, optional and installed only on request (BUILD_TODO Phase 7); which Notification types fire is still unverified
+## Release checks
 
 The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome (median of six repeats; a median above 16 ms and up to 17.5 ms is reported as INCONCLUSIVE and does not fail the run). `node e2e/release.ts perf --ab` repeats the row-change check with animations switched off and prints the difference; `node e2e/release.ts perf --strict` exits with code 3 when nothing failed but a verdict is INCONCLUSIVE (without it that is exit 0). Each perf repeat has a 2 minute deadline and the whole run 30 minutes; a hung repeat fails with a line naming the limit. `perf` rejects unknown or repeated arguments. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
-
-### Roadmap rules
-
-- Tick a checkbox when the work is done.
-- Add a new checkbox when we get a new idea.
 
 ## Exact attention signals (optional hooks)
 
