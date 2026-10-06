@@ -5,7 +5,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_STRING_LENGTH, parseAgentEvent, type AgentEvent } from "../shared/events.ts";
-import { createNormalizerState, endsWithQuestion, normalize, normalizeBatch } from "./normalize.ts";
+import {
+  createNormalizerState,
+  endsWithQuestion,
+  NOTIFICATION_STATUSES,
+  normalize,
+  normalizeBatch,
+} from "./normalize.ts";
 import { hashId, parseCliArgs, sanitizeFileName, sanitizeTranscript } from "./sanitize-fixtures.ts";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -83,6 +89,71 @@ describe("async flow", () => {
     const json = JSON.stringify(events);
     expect(json).not.toContain("secret");
     expect(json).not.toContain("/Users/");
+  });
+});
+
+describe("task-notification ids", () => {
+  const use = (id: string, name: string, input: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: "2026-10-02T10:00:00Z",
+      message: { content: [{ type: "tool_use", id, name, input }], stop_reason: "tool_use" },
+    });
+  const notify = (toolUseId: string, taskId = "task1") =>
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      sessionId: "s",
+      timestamp: "2026-10-02T10:00:01Z",
+      content: `<task-notification><task-id>${taskId}</task-id><tool-use-id>${toolUseId}</tool-use-id><status>completed</status></task-notification>`,
+    });
+  it("a non-agent tool_use in the same file emits nothing and is not drift", () => {
+    const state = top();
+    normalize(state, use("bg1", "Bash"));
+    expect(normalize(state, notify("bg1"))).toEqual([]);
+    expect(state.drift).toEqual({});
+    expect(state.completed.size).toBe(0);
+  });
+  it("a Monitor tool_use is silent too", () => {
+    const state = top();
+    normalize(state, use("mon1", "Monitor"));
+    expect(normalize(state, notify("mon1"))).toEqual([]);
+    expect(state.drift).toEqual({});
+  });
+  it("a Read tool_use or an unknown launcher name stays an orphan", () => {
+    const state = top();
+    normalize(state, use("r1", "Read"));
+    normalize(state, use("n1", "RenamedLauncher", { run_in_background: true }));
+    expect(state.otherTools.size).toBe(0);
+    normalize(state, notify("r1"));
+    normalize(state, notify("n1", "task2"));
+    expect(state.drift).toEqual({ orphan_completion: 2 });
+  });
+  it("an id with no tool_use in the file is still an orphan", () => {
+    const state = top();
+    expect(normalize(state, notify("ghost"))).toEqual([]);
+    expect(state.drift).toEqual({ orphan_completion: 1 });
+  });
+  it("an Agent launch still hands back", () => {
+    const state = top();
+    normalize(state, use("a1", "Agent", { run_in_background: true }));
+    expect(handoffs(normalize(state, notify("a1")))).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+  it("a SendMessage resume of a known agent still hands back", () => {
+    const state = top();
+    normalize(state, use("a1", "Agent", { run_in_background: true }));
+    state.launches.get("a1")!.agentId = "ag1";
+    normalize(state, use("m1", "SendMessage", { to: "ag1" }));
+    expect(handoffs(normalize(state, notify("m1", "task2")))).toEqual(["ag1:back"]);
+    expect(state.drift).toEqual({});
+  });
+  it("a SendMessage to an unknown agent is not a known tool id and stays an orphan", () => {
+    const state = top();
+    normalize(state, use("m1", "SendMessage", { to: "nobody" }));
+    normalize(state, notify("m1"));
+    expect(state.drift).toEqual({ orphan_completion: 1 });
   });
 });
 
@@ -251,6 +322,24 @@ describe("drift", () => {
     expect(state.launches.has("t0")).toBe(false);
     expect(state.launches.has("t2000")).toBe(true);
   });
+  it("evicts the oldest non-agent tool id past MAP_CAP and ignores an over-long one", () => {
+    const state = top();
+    const use = (id: string, name: string) =>
+      JSON.stringify({
+        type: "assistant",
+        sessionId: "s",
+        timestamp: "2026-10-02T10:00:00Z",
+        message: { content: [{ type: "tool_use", id, name, input: {} }], stop_reason: "tool_use" },
+      });
+    for (let i = 0; i < 2001; i++) normalize(state, use(`b${i}`, "Bash"));
+    const long = "x".repeat(MAX_STRING_LENGTH + 1);
+    normalize(state, use(long, "Bash"));
+    expect(state.otherTools.size).toBe(2000);
+    expect(state.otherTools.has(long)).toBe(false);
+    expect(state.otherTools.has("b0")).toBe(false);
+    expect(state.otherTools.has("b1")).toBe(true);
+    expect(state.otherTools.has("b2000")).toBe(true);
+  });
   it("an unknown line type returns [] without drift", () => {
     const state = top();
     expect(normalize(state, JSON.stringify({ type: "mystery", sessionId: "s" }))).toEqual([]);
@@ -263,7 +352,7 @@ describe("fixture leak check (ET5)", () => {
   const ISO = /^\d{4}-\d\d-\d\dT[\d:.]+Z$/;
   const NOTIFICATION = new RegExp(
     "^<task-notification><task-id>[0-9a-f]{16}</task-id><tool-use-id>[0-9a-f]{16}</tool-use-id>" +
-      "<status>(completed|failed)</status></task-notification>$",
+      `<status>(${NOTIFICATION_STATUSES.join("|")})</status></task-notification>$`,
   );
   const WORDS = new Set([
     "assistant",
@@ -286,8 +375,7 @@ describe("fixture leak check (ET5)", () => {
     "stop_sequence",
     "max_tokens",
     "async_launched",
-    "completed",
-    "failed",
+    ...NOTIFICATION_STATUSES,
     "enqueue",
     "remove",
     "dequeue",
@@ -374,6 +462,16 @@ describe("fixture leak check (ET5)", () => {
     const out = sanitizeTranscript(raw);
     expect(out).not.toMatch(/password|someone|leak|passwd/);
     expect(out).toContain('"text":"x?"');
+  });
+
+  // Value: protects=killed completions survive fixture sanitizing; fails_when=killed is dropped from the status list or an unknown status passes through; why_new=only async_launched was asserted; seam=none
+  it("the sanitizer keeps a killed status and maps an unknown one away", () => {
+    const line = (status: string) =>
+      JSON.stringify({ type: "user", sessionId: "s", toolUseResult: { status } });
+    expect(JSON.parse(sanitizeTranscript(line("killed"))).toolUseResult.status).toBe("killed");
+    const out = sanitizeTranscript(line("secret-status"));
+    expect(out).not.toContain("secret");
+    expect(JSON.parse(out).toolUseResult.status).toBeUndefined();
   });
 
   it("re-serializes timestamps so date-parsable text cannot leak", () => {
@@ -819,5 +917,135 @@ describe("subagentKind", () => {
     expect(events.length).toBeGreaterThan(0);
     expect(JSON.stringify(events)).not.toContain(marker);
     expect(JSON.stringify(state.drift)).not.toContain(marker);
+  });
+});
+
+describe("killed notifications", () => {
+  const T = "2026-10-02T10:00:00Z";
+  const launch = (toolId: string, bg: boolean) =>
+    JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: T,
+      message: {
+        content: [
+          { type: "tool_use", id: toolId, name: "Agent", input: { run_in_background: bg } },
+        ],
+      },
+    });
+  const result = (toolId: string, status: string) =>
+    JSON.stringify({
+      type: "user",
+      sessionId: "s",
+      timestamp: T,
+      message: { content: [{ type: "tool_result", tool_use_id: toolId }] },
+      toolUseResult: { status, agentId: "c1" },
+    });
+  const notify = (toolId: string, status: string) =>
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      sessionId: "s",
+      timestamp: T,
+      content: `<task-notification><task-id>c1</task-id><tool-use-id>${toolId}</tool-use-id><status>${status}</status></task-notification>`,
+    });
+  const backs = (events: AgentEvent[]) =>
+    events.filter((e) => e.kind === "handoff" && e.direction === "back");
+
+  it("the status set is completed, failed and killed", () => {
+    expect([...NOTIFICATION_STATUSES].sort()).toEqual(["completed", "failed", "killed"]);
+  });
+
+  it("killed emits one back handoff and no drift", () => {
+    const state = top();
+    const events = [
+      launch("tu1", true),
+      result("tu1", "async_launched"),
+      notify("tu1", "killed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("killed and a completed copy for the same task and tool use emit one back", () => {
+    const state = top();
+    const events = [
+      launch("tu1", true),
+      result("tu1", "async_launched"),
+      notify("tu1", "killed"),
+      notify("tu1", "completed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("completed then killed for the same task and tool use emit one back", () => {
+    const state = top();
+    const events = [
+      launch("tu1", true),
+      result("tu1", "async_launched"),
+      notify("tu1", "completed"),
+      notify("tu1", "killed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("a SendMessage resume that ends killed emits a back and no drift", () => {
+    const state = top();
+    const resume = JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: T,
+      message: {
+        content: [{ type: "tool_use", id: "tu2", name: "SendMessage", input: { to: "c1" } }],
+      },
+    });
+    const events = [
+      launch("tu1", true),
+      result("tu1", "async_launched"),
+      resume,
+      notify("tu2", "killed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("killed after a sync completed result is suppressed", () => {
+    const state = top();
+    const events = [
+      launch("tu1", false),
+      result("tu1", "completed"),
+      notify("tu1", "killed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("killed with an unknown launch is an orphan completion", () => {
+    const state = top();
+    const events = normalize(state, notify("nope", "killed"));
+    expect(events).toEqual([]);
+    expect(state.drift).toEqual({ orphan_completion: 1 });
+  });
+
+  it("the killed-flow fixture hands back once", () => {
+    const state = top();
+    const events = run(state, "killed-flow");
+    expect(backs(events)).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+
+  it("the sanitizer keeps killed and maps an unknown status away", () => {
+    const line = (status: string) =>
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "enqueue",
+        content: `<task-notification><task-id>a</task-id><tool-use-id>b</tool-use-id><status>${status}</status></task-notification>`,
+      });
+    expect(sanitizeTranscript(line("killed"))).toContain("<status>killed</status>");
+    const out = sanitizeTranscript(line("cancelled"));
+    expect(out).not.toContain("cancelled");
+    expect(out).toContain('"content":"x"');
   });
 });

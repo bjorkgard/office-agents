@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.9.2.0] - 2026-10-06
+
+### Added
+
+- `vp run census` checks the feed against your real Claude Code transcripts and prints counts only: how many files it read, how often each kind of drift showed up, whether any session id differs from its file name, how long agent ids are, and the longest line against the read cap. It never prints a path, project name, id or any transcript text, and it does not follow symlinks.
+
+### Fixed
+
+- An agent you stop by hand (a background task that ends as "killed") now walks back to its desk. Before, the line was thrown away and the agent could stay "away" for good.
+- Finished background shell and monitor tasks no longer count as drift, so the drift counter at `/__office/status` points at real changes. On the transcripts checked here it dropped from 90 to 55.
+
+### Changed
+
+- Checked against 182 real sessions (about 1,300 subagent files): session ids match their file names, agent ids are all 17 characters, no line comes near the read cap, and the second hand-back message format is already covered by the existing completion signals. Known limit: this ran on one machine, and only 3 resumed sessions were seen.
+
 ## [0.9.1.0] - 2026-10-06
 
 ### Added

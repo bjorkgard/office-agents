@@ -41,6 +41,8 @@ export type NormalizerState = {
   >;
   /** SendMessage tool_use id -> the known agent it resumes. */
   resumes: Map<string, string>;
+  /** tool_use ids of tools other than Agent/Task/SendMessage: their task-notifications are not drift. */
+  otherTools: Map<string, true>;
   /** `task-id|tool-use-id` of completions already emitted. */
   completed: Set<string>;
   /** Whether the first batch (first sight, E3) was already consumed. */
@@ -63,6 +65,7 @@ export function createNormalizerState(opts: {
     suppress: false,
     launches: new Map(),
     resumes: new Map(),
+    otherTools: new Map(),
     completed: new Set(),
     batched: false,
   };
@@ -232,6 +235,8 @@ const onAssistant: Handler = (ctx) => {
       ) {
         remember(state.resumes, id, to);
       }
+    } else if ((BACKGROUND_TOOLS as readonly string[]).includes(name)) {
+      remember(state.otherTools, id, true);
     }
   }
   if (toolUses === 0 && message.stop_reason !== "end_turn") {
@@ -325,6 +330,12 @@ export function tag(text: string, name: keyof typeof TAG_PATTERNS): string | nul
   return m === null || m[1].length === 0 ? null : m[1];
 }
 
+/** Task-notification statuses that end a launch; each hands the parent back once. */
+export const NOTIFICATION_STATUSES = ["completed", "failed", "killed"] as const;
+
+/** Tools that can finish later through a task-notification without being agents; only these are exempt from orphan counting. */
+export const BACKGROUND_TOOLS = ["Bash", "Monitor"] as const;
+
 const onQueueOperation: Handler = (ctx) => {
   const { state, rec } = ctx;
   if (rec.operation !== "enqueue") return []; // remove copies are not counted
@@ -333,13 +344,14 @@ const onQueueOperation: Handler = (ctx) => {
   const toolUseId = tag(rec.content, "tool-use-id");
   const status = tag(rec.content, "status");
   if (taskId === null || toolUseId === null || status === null) return "bad_shape";
-  if (status !== "completed" && status !== "failed") return "bad_shape";
+  if (!(NOTIFICATION_STATUSES as readonly string[]).includes(status)) return "bad_shape";
   if (tooLong(taskId) || tooLong(toolUseId)) return "bad_shape";
   const key = `${taskId}|${toolUseId}`;
   if (state.completed.has(key)) return [];
   const launch = state.launches.get(toolUseId);
   const resumed = state.resumes.get(toolUseId);
   if (launch === undefined && resumed === undefined) {
+    if (state.otherTools.has(toolUseId)) return []; // a background Bash/Monitor task, not an agent
     bump(state, "orphan_completion");
     return [];
   }

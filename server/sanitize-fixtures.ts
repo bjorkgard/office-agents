@@ -18,7 +18,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { endsWithQuestion, isObj, tag } from "./normalize.ts";
+import { endsWithQuestion, isObj, NOTIFICATION_STATUSES, tag } from "./normalize.ts";
 import type { Json } from "./normalize.ts";
 
 export const PLACEHOLDER_CWD = "/fixture/project";
@@ -118,7 +118,7 @@ function notification(content: unknown, h: Hash): string {
   if (typeof content !== "string" || !content.startsWith("<task-notification>")) return "x";
   const taskId = tag(content, "task-id");
   const toolUseId = tag(content, "tool-use-id");
-  const status = enumOf(tag(content, "status") ?? "", ["completed", "failed"]);
+  const status = enumOf(tag(content, "status") ?? "", NOTIFICATION_STATUSES);
   if (taskId === null || toolUseId === null || status === undefined) return "x";
   return (
     "<task-notification>" +
@@ -153,7 +153,7 @@ function sanitizeLine(rec: Json, h: Hash): Json {
   if (isObj(rec.toolUseResult)) {
     const r = rec.toolUseResult;
     out.toolUseResult = {
-      status: enumOf(r.status, ["async_launched", "completed", "failed"]),
+      status: enumOf(r.status, ["async_launched", ...NOTIFICATION_STATUSES]),
       agentId: hashed(r.agentId, h),
       ...keep(r, ["isAsync"]),
     };

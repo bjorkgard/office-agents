@@ -101,6 +101,14 @@ describe("tailer", () => {
     expect(t.status().filesTracked).toBe(1);
   });
 
+  it("replays the killed-flow fixture into one back handoff", async () => {
+    putTop("p1", "killed-flow");
+    const { t, events } = tailer();
+    await t.scanOnce();
+    expect(events.filter((e) => e.kind === "handoff" && e.direction === "back")).toHaveLength(1);
+    expect(t.status().drift).toEqual({});
+  });
+
   it("buffers a split line until its newline arrives", async () => {
     const lines = fixtureLines("top-live");
     const file = putTop("p1", "top-live", lines[0] + "\n");

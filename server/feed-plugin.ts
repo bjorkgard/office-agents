@@ -37,7 +37,7 @@ const COLD_TAIL_BYTES = 400 * 1024;
 // READ_CAP_BYTES bounds the first-read window when growing it to fit one line, each later
 // read, and the longest unterminated line kept between reads. That last use is the invariant:
 // the line cap must be >= the read chunk so a line that fits in one chunk is never dropped as oversize.
-const READ_CAP_BYTES = 4 * 1024 * 1024;
+export const READ_CAP_BYTES = 4 * 1024 * 1024;
 const MAX_READ_RETRIES = 5;
 // A path denied for anything but permissions is retried after this long; the set stays bounded.
 const DENY_RETRY_MS = 60_000;

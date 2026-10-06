@@ -1,6 +1,6 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T46` are stable handles: a new entry takes the number above the highest ever issued (T46), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T47` are stable handles: a new entry takes the number above the highest ever issued (T47), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
 ## P1 available (3)
 
@@ -18,17 +18,19 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P1
 **Depends on:** None
 
-### T03 Verify the normalizer against real transcripts
+### T05 Key sessions by filename, not record sessionId, for resumed sessions
 
 **Area:** Feed hardening
 
-**What:** Run server/sanitize-fixtures.ts on a few real Claude Code transcripts (sync, async, resume) and check the output events against the committed fixtures.
+**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
 
-**Why:** The fixtures are hand-built from a described shape; a real-file drift would go unseen until a user hits it.
+**Why:** Two files could collapse into one agent, or one agent split across two.
 
-**Context:** Found in the Phase 2-3 /ship review. Keep the leak check green on every new fixture.
+**Context:** Verify against real transcripts first (see T03).
 
-**Effort:** S (human ~1h / CC ~15min)
+**Evidence (2026-10-06, T03 census of the real transcript root):** `sessionId` differs from the file name in 0 of 182 files, so the resume premise was not reproduced locally (3 resumes seen, so resume is only partly verified). The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P1
 **Depends on:** None
 
@@ -50,23 +52,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P1
 **Depends on:** None
 
-## P1 blocked (1)
-
-### T05 Key sessions by filename, not record sessionId, for resumed sessions
-
-**Area:** Feed hardening
-
-**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
-
-**Why:** Two files could collapse into one agent, or one agent split across two.
-
-**Context:** Verify against real transcripts first (see T03).
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P1
-**Depends on:** T03 Verify the normalizer against real transcripts
-
-## P2 available (3)
+## P2 available (5)
 
 ### T07 Hook rate windows break on a backward clock step
 
@@ -77,6 +63,38 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Why:** Adversarial finding at the 0.8.0.0 /ship (D4 skipped). The same logic existed in `feed-plugin.ts` before the hook route split, so it predates this release; the new attention budget copies it.
 
 **Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+### T10 Compensate for a dropped oversized tool_result line
+
+**Area:** Feed hardening
+
+**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
+
+**Why:** The agent keeps showing a running tool or an open handoff.
+
+**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** the longest line is 890298 bytes against the 4 MiB read cap (4194304 bytes), and 0 lines are over the cap. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+### T06 Validate id format in parseAgentEvent
+
+**Area:** Feed hardening
+
+**What:** Reject ids that do not match a conservative pattern (length and character set).
+
+**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
+
+**Context:** Add after the id formats of real transcripts are confirmed (see T03).
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** all 2719 ids seen are 17 characters of `[A-Za-z0-9_-]`, with 0 outside that set. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P2
 **Depends on:** None
 
@@ -110,21 +128,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** None
 
-## P2 blocked (3)
-
-### T10 Compensate for a dropped oversized tool_result line
-
-**Area:** Feed hardening
-
-**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
-
-**Why:** The agent keeps showing a running tool or an open handoff.
-
-**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** T03 Verify the normalizer against real transcripts
+## P2 blocked (1)
 
 ### T11 Make the hooks attention mapping exact, then retire the heuristics
 
@@ -140,21 +144,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** The user running the probe
 
-### T06 Validate id format in parseAgentEvent
-
-**Area:** Feed hardening
-
-**What:** Reject ids that do not match a conservative pattern (length and character set).
-
-**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
-
-**Context:** Add after the id formats of real transcripts are confirmed (see T03).
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** T03 Verify the normalizer against real transcripts
-
-## P3 available (22)
+## P3 available (23)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -307,6 +297,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Context:** Files: `src/office/useChime.ts`, `src/office/chime-audio.ts`, `src/office/TopBar.tsx` and their tests. For (1), re-check the generation after the `await` before scheduling. Audio and Safari were not tried in a real browser by any tool.
 
 **Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### T47 Census and normalizer follow-ups from the /ship review of v0.9.2.0 (2026-10-06)
+
+**Area:** Feed hardening
+
+**What:** Skipped review items from the v0.9.2.0 /ship (0 critical, 19 informational after the PR review fixes), all in `server/census-transcripts.ts`, `server/normalize.ts` and their tests. Normalizer: the `otherTools` map in `normalize.ts` (Bash and Monitor ids only) shares MAP_CAP (2000) with its own entries, so a background task that outlives 2000 later tool calls is counted as an orphan again; the eviction test does not assert that effect, and nameless tool_use and notification-before-tool_use have no test. Census: add a top-level catch in `main()` so a crash prints one fixed line, not a stack trace with paths; count skipped symlinks and files that fail mid-read (their mismatch and id checks are dropped, so the T05/T06/T10 numbers are a lower bound); drop or count an unterminated last line when a session is live; rename `maxLineChars` (it holds bytes); move READ_CAP_BYTES out of `feed-plugin.ts`; hoist `isRealDir`; tidy `enumKey`. Census tests missing: no trailing newline, CRLF and blank lines; non-object JSON records; `remove` operation and status-less notifications; a root that is a file (the CLI already exits 2, probed); explicit timeouts on the large-line tests; `process.execPath` instead of bare `node`. Also add a one-line comment on why `otherTools` is a Map.
+
+**Why:** Keeps the drift counter and the census honest after a Claude Code format change, and keeps the census output exactly counts-only on every error path.
+
+**Context:** Findings came from five specialist reviewers, a red-team pass and the native adversarial pass of the v0.9.2.0 ship, which the user chose to skip rather than start another review cycle. The 55 orphans left in the census all have a tool-use id that is not in the same file (0 of 55), so they are probably cross-file or compaction cases (inferred, not checked).
+
+**Effort:** S (human ~3h / CC ~30min)
 **Priority:** P3
 **Depends on:** None
 

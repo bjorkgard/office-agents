@@ -1,6 +1,6 @@
 {
   "name": "office-agents",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "lint": "vp lint",
     "preview": "vp preview",
     "e2e": "playwright test",
+    "census": "node server/census-transcripts.ts",
     "criteria": "node e2e/release.ts criteria",
     "perf": "node e2e/release.ts perf",
     "hero": "node e2e/release.ts hero",
