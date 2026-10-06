@@ -7,6 +7,7 @@ import {
   chmodSync,
   closeSync,
   constants,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -41,7 +42,12 @@ export function writeDiscovery(
 ): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // A planted symlink must not redirect the token to another directory.
-  if (lstatSync(dir).isSymbolicLink()) throw new Error("hook dir is a symlink");
+  const st = lstatSync(dir);
+  if (st.isSymbolicLink()) throw new Error("hook dir is a symlink");
+  // A pre-existing directory owned by someone else is neither tightened nor trusted with the token.
+  if (process.getuid !== undefined && st.uid !== process.getuid()) {
+    throw new Error("hook dir is not owned by this user");
+  }
   chmodSync(dir, 0o700);
   const file = join(dir, HOOK_FILE);
   const tmp = `${file}.${process.pid}.tmp`;
@@ -79,11 +85,24 @@ export function writeDiscovery(
   renameSync(tmp, file);
 }
 
+const INFO_CAP = 64 * 1024;
+
 /** Removes the file only when it still holds this token, so a newer dev server's file stays. */
 export function removeDiscovery(dir: string, token: string): void {
   const file = join(dir, HOOK_FILE);
   try {
-    if ((JSON.parse(readFileSync(file, "utf8")) as { token?: unknown }).token !== token) return;
+    // O_NONBLOCK so a planted FIFO (no writer) cannot hang the SIGINT cleanup; only a small
+    // regular file is ever read.
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    let text: string;
+    try {
+      const st = fstatSync(fd);
+      if (!st.isFile() || st.size > INFO_CAP) return;
+      text = readFileSync(fd, "utf8");
+    } finally {
+      closeSync(fd);
+    }
+    if ((JSON.parse(text) as { token?: unknown }).token !== token) return;
     rmSync(file, { force: true });
   } catch {
     // absent or unreadable: nothing of ours to remove

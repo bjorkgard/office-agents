@@ -167,6 +167,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   setSceneOverride(null);
   setDecorOverride(null);
+  setSeedOverride("");
 });
 
 describe("sceneFor", () => {

@@ -137,6 +137,43 @@ describe("tailer", () => {
     expect(t.status().filesTracked).toBe(2);
   });
 
+  describe("tracked-file cap", () => {
+    const CAP = 3;
+    const fill = (n: number) => {
+      for (let i = 0; i < n; i++) putTop("p1", "top-live", undefined, `cap-${i}`);
+    };
+
+    it.each([
+      [CAP - 1, CAP - 1, 0],
+      [CAP, CAP, 0],
+      [CAP + 1, CAP, 1],
+    ])("with %i files tracks %i and warns %i time(s)", async (files, tracked, warns) => {
+      fill(files);
+      const { t, logs } = tailer({ maxTrackedFiles: CAP });
+      await t.scanOnce();
+      await t.scanOnce();
+      expect(t.status().filesTracked).toBe(tracked);
+      expect(logs.filter((l) => l.includes("tracked-file cap"))).toHaveLength(warns);
+    });
+
+    it("keeps reading an already-tracked file after the cap is hit", async () => {
+      const first = putTop("p1", "top-live", undefined, "cap-0");
+      let skew = 0;
+      const { t, events, logs } = tailer({ maxTrackedFiles: 1, now: () => Date.now() + skew });
+      await t.scanOnce();
+      fill(3);
+      skew += 10_000; // past the tree-walk throttle
+      await t.scanOnce();
+      expect(t.status().filesTracked).toBe(1);
+      const n = events.length;
+      appendFileSync(first, fixtureLines("top-live")[2] + "\n");
+      skew += 10_000;
+      await t.scanOnce();
+      expect(events.length).toBeGreaterThan(n);
+      expect(logs.filter((l) => l.includes("tracked-file cap"))).toHaveLength(1);
+    });
+  });
+
   it("does not track a file outside the ATTENTION_STALE_MS window (ET3)", async () => {
     const file = putTop("p1", "top-live");
     const old = new Date(Date.now() - ATTENTION_STALE_MS - 60_000);
@@ -351,6 +388,9 @@ describe("tailer", () => {
     expect(t.status().drift.normalizer_error).toBe(2);
     expect(logs.filter((l) => l.includes("normalizing failed"))).toHaveLength(1);
     expect(logs.join("\n")).not.toContain('x"');
+    // The error's name, never its message: a message can quote transcript text.
+    expect(logs.filter((l) => l.includes("normalizing failed"))[0]).toContain("Error");
+    expect(logs.join("\n")).not.toContain("launch bug");
   });
 
   it("fills parentAgentId from a tracked launcher file, else null", async () => {
@@ -973,6 +1013,8 @@ describe("feed", () => {
     [{ origin: "http://[::1]:8080" }, 200],
     [{ "x-forwarded-for": "10.0.0.1" }, 403],
     [{ "x-forwarded-host": "evil.example" }, 403],
+    [{ forwarded: "for=10.0.0.1;proto=https" }, 403],
+    [{ "x-real-ip": "10.0.0.1" }, 403],
     [{ "sec-fetch-site": "cross-site" }, 403],
     [{ "sec-fetch-site": "same-site" }, 403],
     [{ "sec-fetch-site": "same-origin" }, 200],

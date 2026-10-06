@@ -35,6 +35,54 @@ export const SMOKE_MS = 30_000;
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
 
+/** Thrown by withDeadline; the message names the deadline that fired. */
+export class DeadlineError extends Error {}
+
+/**
+ * Rejects with a DeadlineError if `work` has not settled after `ms`. `onTimeout` runs first and is awaited
+ * (it should stop the work; a throw from it is ignored), so nothing abandoned overlaps what comes next.
+ */
+export function withDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string,
+  onTimeout?: () => Promise<void>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new DeadlineError(`${what} exceeded its ${seconds(ms)} deadline`);
+      void (onTimeout ? onTimeout().catch(() => {}) : Promise.resolve()).then(() => reject(error));
+    }, ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+const closers = new Set<() => Promise<void>>();
+
+/** Register how to stop a piece of running work; the returned function unregisters it. */
+export function trackCloser(close: () => Promise<void>): () => void {
+  closers.add(close);
+  return () => {
+    closers.delete(close);
+  };
+}
+
+/** Stop every tracked piece of work (each once); a closer that throws does not stop the others. */
+export async function closeTracked(): Promise<void> {
+  const all = [...closers];
+  closers.clear();
+  await Promise.all(all.map((close) => close().catch(() => {})));
+}
+
 /** The pure smoke rule (eng E-D2): PASS <= 10 s; FAIL on trouble or a 10-30 s render; else SKIPPED. */
 export function decide(obs: Observation): Verdict {
   if (obs.failure === "banner") return { status: "FAIL", measured: "error banner shown" };
@@ -707,12 +755,24 @@ async function withOfficePage<T>(
   const root = makeRunRoot();
   tempDirs.add(root);
   let office: Office | null = null;
+  let browser: import("@playwright/test").Browser | null = null;
+  let cleaned = false;
+  // Idempotent: the deadline path calls it to stop abandoned work, the finally blocks call it again.
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await browser?.close().catch(() => {});
+    office?.stop();
+    removeRoot(root);
+    tempDirs.delete(root);
+  };
+  const untrack = trackCloser(cleanup);
   try {
     const files = agentFixtureSet(agents + extra);
     writeFixtureSet(root, files.slice(0, agents), { anchorNow: Date.now() });
     office = await startOffice({ root });
     const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({ headless: !headed });
+    browser = await chromium.launch({ headless: !headed });
     try {
       info.chrome = browser.version();
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -725,12 +785,11 @@ async function withOfficePage<T>(
       );
       return await fn({ page, cdp, root, files });
     } finally {
-      await browser.close();
+      await browser.close().catch(() => {});
     }
   } finally {
-    office?.stop();
-    removeRoot(root);
-    tempDirs.delete(root);
+    untrack();
+    await cleanup();
   }
 }
 
@@ -853,6 +912,18 @@ export function perfVerdicts(
   ];
 }
 
+/** A hung page ends its repeat (or frame sample) as a failed one, and the whole perf run as a FAIL, after these. */
+export const PERF_REPEAT_DEADLINE_MS = 120_000;
+export const PERF_TOTAL_DEADLINE_MS = 1_800_000;
+/** Exit code of `perf --strict` when nothing failed but a verdict is INCONCLUSIVE. */
+export const STRICT_INCONCLUSIVE_EXIT = 3;
+
+/** 1 on any FAIL, else STRICT_INCONCLUSIVE_EXIT when `strict` and a verdict is INCONCLUSIVE, else 0. */
+export function perfExitCode(all: Verdict[], strict: boolean): number {
+  if (anyFailed(all)) return 1;
+  return strict && all.some((v) => v.status === "INCONCLUSIVE") ? STRICT_INCONCLUSIVE_EXIT : 0;
+}
+
 // A/B arm order and warm-up handling: see abArm.
 async function perfAt(
   agents: number,
@@ -863,23 +934,36 @@ async function perfAt(
   let steady: Sample | null = null;
   if (!shuttingDown) {
     try {
-      steady = await frameSample(agents, headed, info);
+      steady = await withDeadline(
+        frameSample(agents, headed, info),
+        PERF_REPEAT_DEADLINE_MS,
+        `${agents} agents frame sample`,
+        closeTracked,
+      );
     } catch (e) {
       console.log(
         `  ${agents} agents frame sample: failed, ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
+  // Once a repeat has timed out, later repeats at this count are not started.
+  let timedOut = false;
   const runRepeats = async (frozen: boolean): Promise<AbRepeat[]> => {
     const out: AbRepeat[] = [];
     const tag = frozen ? FROZEN_LABEL : "";
     for (let i = 1; i <= REPEATS; i++) {
-      if (shuttingDown) break;
+      if (shuttingDown || timedOut) break;
       try {
         out.push(
-          await rowRepeat(agents, headed, info, `${tag}repeat ${i}`, ab ? { frozen } : null),
+          await withDeadline(
+            rowRepeat(agents, headed, info, `${tag}repeat ${i}`, ab ? { frozen } : null),
+            PERF_REPEAT_DEADLINE_MS,
+            `${agents} agents ${tag}repeat ${i}`,
+            closeTracked,
+          ),
         );
       } catch (e) {
+        if (e instanceof DeadlineError) timedOut = true;
         const message = oneLine(e instanceof Error ? e.message : String(e));
         console.log(`  ${agents} agents ${tag}repeat ${i}: failed, ${message}`);
         out.push({
@@ -895,22 +979,39 @@ async function perfAt(
   };
   const repeats = await runRepeats(false);
   const verdicts = perfVerdicts(agents, steady, repeats);
-  if (ab && !shuttingDown) {
+  if (ab && !shuttingDown && !timedOut) {
     const frozen = await runRepeats(true);
     verdicts.push(abVerdict({ animated: abArm(repeats), frozen: abArm(frozen) }));
   }
   return verdicts;
 }
 
-async function perf(ab: boolean): Promise<number> {
+async function perf(ab: boolean, strict: boolean): Promise<number> {
   const headed = process.env.PERF_HEADED === "1";
   console.log(
     `perf mode ${headed ? "headed" : "headless"}, machine ${cpus()[0]?.model ?? "unknown"} (${platform()} ${release()})`,
   );
   const info = { chrome: "unknown" };
   const all: Verdict[] = [];
+  const startedAt = Date.now();
   for (const agents of PERF_AGENTS) {
-    const verdicts = await perfAt(agents, headed, info, ab);
+    let verdicts: Verdict[];
+    try {
+      verdicts = await withDeadline(
+        perfAt(agents, headed, info, ab),
+        Math.max(0, PERF_TOTAL_DEADLINE_MS - (Date.now() - startedAt)),
+        `perf run (total, at ${agents} agents)`,
+        async () => {
+          await closeTracked();
+          await shutdown();
+        },
+      );
+    } catch (e) {
+      if (!(e instanceof DeadlineError)) throw e;
+      console.log(`FAIL ${agents} agents, ${e.message}`);
+      all.push({ status: "FAIL", measured: e.message });
+      break;
+    }
     if (shuttingDown) return 130;
     for (const v of verdicts) {
       console.log(`${v.status} ${agents} agents, ${v.measured}`);
@@ -918,11 +1019,17 @@ async function perf(ab: boolean): Promise<number> {
     }
   }
   const inconclusive = all.filter((v) => v.status === "INCONCLUSIVE").length;
-  if (inconclusive > 0) console.log(`${inconclusive} INCONCLUSIVE (does not fail the run)`);
+  if (inconclusive > 0) {
+    console.log(
+      strict
+        ? `${inconclusive} INCONCLUSIVE (--strict: exit ${STRICT_INCONCLUSIVE_EXIT})`
+        : `${inconclusive} INCONCLUSIVE (does not fail the run)`,
+    );
+  }
   const skippedLine = abSkippedLine(all, ab);
   if (skippedLine !== null) console.log(skippedLine);
   console.log(`chrome ${info.chrome}`);
-  return anyFailed(all) ? 1 : 0;
+  return perfExitCode(all, strict);
 }
 
 // ---- hero -----------------------------------------------------------------------------
@@ -979,15 +1086,17 @@ export async function hero(root: string = makeRunRoot(), out: string = HERO_PATH
   }
 }
 
-/** `<sub> [--ab]`: only `perf` takes `--ab`; anything else (extra, misspelled, unknown) is null. */
+/** `<sub> [--ab] [--strict]`: only `perf` takes the flags, once each, in either order; anything else (extra, misspelled, unknown) is null. */
 export function parseArgs(
   argv: string[],
-): { sub: "criteria" | "perf" | "hero"; ab: boolean } | null {
+): { sub: "criteria" | "perf" | "hero"; ab: boolean; strict: boolean } | null {
   const [sub, ...rest] = argv;
   if (sub !== "criteria" && sub !== "perf" && sub !== "hero") return null;
-  if (rest.length === 0) return { sub, ab: false };
-  if (sub === "perf" && rest.length === 1 && rest[0] === "--ab") return { sub, ab: true };
-  return null;
+  if (rest.length === 0) return { sub, ab: false, strict: false };
+  if (sub !== "perf") return null;
+  const flags = new Set(rest);
+  if (flags.size !== rest.length || rest.some((f) => f !== "--ab" && f !== "--strict")) return null;
+  return { sub, ab: flags.has("--ab"), strict: flags.has("--strict") };
 }
 
 if (import.meta.filename === process.argv[1]) {
@@ -995,7 +1104,7 @@ if (import.meta.filename === process.argv[1]) {
   if (args) {
     installSignalHandlers();
     (args.sub === "perf"
-      ? perf(args.ab)
+      ? perf(args.ab, args.strict)
       : args.sub === "hero"
         ? hero().then(() => 0)
         : criteria()
@@ -1007,7 +1116,7 @@ if (import.meta.filename === process.argv[1]) {
       },
     );
   } else {
-    console.error("usage: node e2e/release.ts criteria|perf [--ab]|hero");
+    console.error("usage: node e2e/release.ts criteria|perf [--ab] [--strict]|hero");
     process.exit(2);
   }
 }

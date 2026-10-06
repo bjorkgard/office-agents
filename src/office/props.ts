@@ -370,10 +370,6 @@ export const DISPENSER: Grid = [
 // Two bubbles in the jug; CSS steps them up and fades them (.gurgle). 4x4 cells.
 export const GURGLE: Grid = ["!!..", "!!..", "..!!", "..!!"];
 
-// Contact shadows on the floor under the dispenser and the counter: the figure ground shadow's
-// '_' cells (drawn at SHADOW_OPACITY under the prop), a flat band sheared at the wall slope, 2 cells
-// across to a row down, 2 cells thick at the ends and 3 between. Not in PROPS: the room and the
-// dev sheet draw them with PixelShadow, at PROP_SHADOW_AT cells from the prop's top-left.
 /**
  * A shadow band of `rows` x `cols` '_' cells: column x holds `thick(x)` cells from row `top(x)` down
  * (a flat band at the wall slope, one row per two columns, 2 cells thick).
@@ -389,6 +385,10 @@ const shadowBand = (
       "",
     ),
   );
+// Contact shadows on the floor under the dispenser and the counter: the figure ground shadow's
+// '_' cells (drawn at SHADOW_OPACITY under the prop), a flat band sheared at the wall slope, 2 cells
+// across to a row down, 2 cells thick at the ends and 3 between. Not in PROPS: the room and the
+// dev sheet draw them with PixelShadow, at PROP_SHADOW_AT cells from the prop's top-left.
 // Descending bands (the right wall's slope), 3 thick between the 2-thick ends.
 const descending = (rows: number, cols: number): Grid =>
   shadowBand(
@@ -485,17 +485,21 @@ export const PICTURE_B: Grid = picture(12, 14, [
 // the six art tokens, a letter and its shaded capital together. A rotation is a permutation, so
 // equal cells stay equal and different ones stay different: shapes, runs and rhythm do not change.
 const ART_LETTERS = "cogemp";
+/** How many decor palettes there are (a day's variant is 0..DECOR_VARIANTS - 1). */
+export const DECOR_VARIANTS = 3;
 const variantCache = new Map<string, Grid>();
 export function decorVariantGrid(
   name: "BOOKSHELF" | "PICTURE_A" | "PICTURE_B",
   variant: number,
 ): Grid {
-  // Any non-integer reads as 0, the rest wrap into 0..2 (the DECOR_VARIANTS in decor.ts).
-  const v = Number.isInteger(variant) ? ((variant % 3) + 3) % 3 : 0;
+  // Any non-integer reads as 0, the rest wrap into 0..DECOR_VARIANTS - 1.
+  const v = Number.isInteger(variant)
+    ? ((variant % DECOR_VARIANTS) + DECOR_VARIANTS) % DECOR_VARIANTS
+    : 0;
   const key = `${name}:${v}`;
   let grid = variantCache.get(key);
   if (!grid) {
-    const shift = (v * 2) % ART_LETTERS.length;
+    const shift = (v * (ART_LETTERS.length / DECOR_VARIANTS)) % ART_LETTERS.length;
     const map = (c: string) => {
       const i = ART_LETTERS.indexOf(c.toLowerCase());
       if (i < 0) return c;

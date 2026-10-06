@@ -104,7 +104,7 @@ export const WINDOW_SPOTS: readonly WindowSpot[] = [
  * wall's front end), so the shelf shows from two rows and the pictures from three, and none
  * moves when rows are added.
  */
-export const PICTURE_LIFT = 56;
+const PICTURE_LIFT = 56;
 export type DecorSpot = {
   name: string;
   prop: "BOOKSHELF" | "PICTURE_A" | "PICTURE_B";
@@ -250,7 +250,7 @@ export type RoomShell = {
   door: Point;
   coffee: Point;
   dispenser: Point;
-  /** The floor parallelogram lit by the open door (4 points). */
+  /** The floor wedge lit by the open door: a near and a far quad, 4 points each. */
   doorLight: { near: Point[]; far: Point[] };
   /** Center of the clock on the back-right wall. */
   clock: Point;

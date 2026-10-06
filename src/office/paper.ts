@@ -151,7 +151,7 @@ export function paperOfParent(
   return paperOnDesk(parent, subs, (a) => motion.subs.get(a.key)?.ctx ?? null, now);
 }
 
-/** Door ajar: how long it opens for an arrival and ahead of a leaver, and the run cap (decision 2B). */
+/** Door ajar: how long it opens for an arrival and ahead of a leaver, and the run cap. */
 export const DOOR_TUNING = {
   /** An arriving subagent holds the door open this long from `arrivedAt`. */
   ARRIVE_OPEN_MS: 1200,
@@ -234,7 +234,7 @@ export function doorOpenFor<S extends Sub>(
   return CLOSED;
 }
 
-/** The door from the plan the walkers use (`motion`); under reduced motion it stays closed (D3). */
+/** The door from the plan the walkers use (`motion`); under reduced motion it stays closed. */
 export function doorOpen(
   agents: readonly Agent[],
   motion: Pick<Motion, "subs">,

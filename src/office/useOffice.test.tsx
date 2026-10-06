@@ -85,6 +85,22 @@ describe("ErrorBoundary (D16)", () => {
   });
 });
 
+describe("ErrorBoundary onError", () => {
+  it("logs and tells the parent when a render error is caught", () => {
+    const onError = vi.fn();
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    new ErrorBoundary({ children: "ok", onError }).componentDidCatch(new Error("x"));
+    expect(onError).toHaveBeenCalledTimes(1);
+    log.mockRestore();
+    // onError is optional.
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() =>
+      new ErrorBoundary({ children: "ok" }).componentDidCatch(new Error("x")),
+    ).not.toThrow();
+    vi.restoreAllMocks();
+  });
+});
+
 describe("failure as data (D16, DR2)", () => {
   it("useOffice returns a machine failure instead of throwing", () => {
     const failure = new Error("machine broke");

@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.8.0.0] - 2026-10-06
+
+### Added
+
+- An optional attention chime. A speaker button in the top bar plays a soft two-note tone when an agent starts waiting for you, so you notice with the tab hidden. It is off by default and plays at most once every 5 seconds however many agents start waiting. A reload or reconnect stays silent. Browsers only allow sound after a click, so the button reads "Chime: click" until the first click unlocks audio (and again if the browser later suspends audio and it cannot resume), and a second click turns it off if audio cannot unlock.
+- `node e2e/release.ts perf --strict` exits with code 3 when a verdict is INCONCLUSIVE, so a script can tell it from a pass. Without the flag nothing changes.
+
+### Changed
+
+- A hung page can no longer stall `perf` for ever: each repeat has a 2 minute limit and the whole run 30 minutes, and a repeat over its limit fails with a line naming the limit.
+- A "needs attention" signal from Claude Code now has its own small rate budget, so a burst of other hook events can no longer drop the one that says an agent is waiting.
+- `hooks/install.mjs --apply` replaces an Office hook entry from another checkout instead of adding a second one (it names each replaced path), and `--remove` removes only the hooks this checkout installed. The installer also stops with a message if another tool changes the settings file while it is working.
+- The feed refuses requests carrying `Forwarded` or `X-Real-IP` headers, as it already did for `X-Forwarded-*`, and stops tracking new transcript files after 5,000, with one warning.
+- `server/sanitize-fixtures.ts` treats an empty `OFFICE_FIXTURE_SALT` as unset and accepts `--salt` anywhere on the command line.
+- When the feed removes its hook discovery file it reads it without blocking and leaves it alone if it is too large or not a regular file. The feed also refuses to publish into a discovery directory owned by someone else, and warns when it is bound to an address the hook script cannot reach.
+
+### Fixed
+
+- The waiting time on the top bar chips and in the status line now come from one clock, so they cannot show different minutes.
+
+### Known
+
+- The chime button has not been checked in a real browser or reviewed for design and accessibility yet. The tone and the audio unlock are tested only with a fake audio layer.
+- The perf deadlines are estimates, not measured against a full `perf --ab` run. A repeat that hits its limit now has its browser and server closed and no further repeat starts at that agent count; the total deadline exits through the same shutdown as a signal. Neither path has been exercised against a real hung page.
+
 ## [0.7.1.0] - 2026-10-05
 
 ### Added

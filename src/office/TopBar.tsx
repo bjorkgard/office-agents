@@ -1,14 +1,15 @@
 // TopBar props: `state` is the FeedState from useOffice (office, seats, projects, connection, failure).
-// `displayError` is true once the error boundary has caught; `onPulse(key)` pulses that agent's character.
+// `now` is the shared wait clock (ms). `displayError` is true once the error boundary has caught; `onPulse(key)` pulses that agent's character.
 // Chips show the longest wait first; a click on a departed or no-longer-waiting agent is a no-op.
 import { useEffect, useRef, useState } from "react";
+import { chimeLabel, chimeText } from "./chime-logic";
 import type { FeedState } from "./feed-client";
 import { agentIdentity, projectLabel } from "./label";
 import { waitingChips, type WaitingChip } from "./selectors";
+import { useChime } from "./useChime";
 import {
   chipClickTarget,
-  MINUTE_MS,
-  stepAnnouncer,
+  runAnnouncer,
   statusLine,
   statusTone,
   visibleChips,
@@ -26,30 +27,35 @@ export function TopBar({
   state,
   displayError,
   narrow = false,
+  now,
   onPulse,
 }: {
   state: FeedState;
   displayError: boolean;
   /** Below 800x500 every chip wraps into extra rows (DR11); otherwise extra chips fold into "+N". */
   narrow?: boolean;
+  /** The app's one wait clock, shared with the scene bubbles so both show the same wait. */
+  now: number;
   onPulse: (key: string) => void;
 }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), MINUTE_MS);
-    return () => clearInterval(id);
-  }, []);
-
   const seen = useRef<ReadonlySet<string>>(new Set());
   const [announcement, setAnnouncement] = useState<Announcement>({ text: "", seq: 0 });
   const announcementRef = useRef(announcement);
+  const chime = useChime();
+  const { notify } = chime;
   useEffect(() => {
-    const r = stepAnnouncer(state.office, state.projects, seen.current, announcementRef.current);
+    const r = runAnnouncer(
+      state.office,
+      state.projects,
+      seen.current,
+      announcementRef.current,
+      notify,
+    );
     seen.current = r.seen;
     if (r.announcement === announcementRef.current) return;
     announcementRef.current = r.announcement;
     setAnnouncement(r.announcement);
-  }, [state.office, state.projects]);
+  }, [state.office, state.projects, notify]);
 
   const failed = displayError || state.failure !== null;
   const line = statusLine(state.connection, failed);
@@ -89,6 +95,17 @@ export function TopBar({
           </li>
         )}
       </ul>
+      <button
+        type="button"
+        className="top-bar-chime"
+        aria-pressed={chime.status !== "off"}
+        aria-label={chimeLabel(chime.status)}
+        data-status={chime.status}
+        onClick={chime.toggle}
+      >
+        <span aria-hidden="true">{chime.status === "off" ? "\u{1F507}" : "\u{1F50A}"}</span>{" "}
+        {chimeText(chime.status)}
+      </button>
       <div aria-live="polite" className="visually-hidden">
         <span key={announcement.seq}>{announcement.text}</span>
       </div>

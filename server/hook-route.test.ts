@@ -11,6 +11,8 @@ import { createLogger, createServer } from "vite-plus";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   HOOK_BODY_TIMEOUT_MS,
+  HOOK_ATTENTION_PER_SEC,
+  HOOK_ATTENTION_TOTAL_PER_SEC,
   HOOK_WINDOW_MS,
   HOOK_MAX_BODY_BYTES,
   HOOK_SESSION_PER_SEC,
@@ -273,6 +275,19 @@ describe("POST /__office/hook", () => {
       expect(frames().filter((f) => f.type === "event")).toEqual([]);
     });
 
+    it("a client abort before end clears the 408 timer", () => {
+      vi.useFakeTimers();
+      const { feed } = newFeed();
+      const req = stalledReq();
+      const res = fakeRes();
+      feed.handle(req as never, res as never, () => {});
+      req.emit("data", Buffer.from('{"hook_event_name":'));
+      req.emit("close");
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(HOOK_BODY_TIMEOUT_MS * 2);
+      expect(res.ended).toBe(false);
+    });
+
     it("a body that finishes in time is not answered 408 afterwards", () => {
       vi.useFakeTimers();
       const { feed } = newFeed();
@@ -286,6 +301,53 @@ describe("POST /__office/hook", () => {
       expect(res.statusCode).toBe(204);
       expect(req.destroyed).toBe(false);
     });
+  });
+
+  it("a bug after parsing is not logged as an unparseable payload", async () => {
+    let calls = 0;
+    const { feed, logs } = newFeed({
+      now: () => {
+        if (++calls === 1) throw new Error("ingest bug");
+        return 1_800_000_000_000;
+      },
+    });
+    const r = await post(feed, { body: hook() });
+    expect(r.status).toBe(204);
+    expect(logs.join("\n")).not.toContain("unparseable");
+    expect(logs.join("\n")).toContain("hook handling failed: Error");
+    expect(logs.join("\n")).not.toContain("ingest bug");
+    const bad = await post(feed, { body: "{nope" });
+    expect(bad.status).toBe(204);
+    expect(logs.join("\n")).toContain("unparseable");
+  });
+
+  it("warns at publish time for a specific non-loopback bind, and without an httpServer", () => {
+    const warns: string[] = [];
+    const server = (httpServer: unknown) => ({
+      config: { mode: "development", logger: { warn: (m: string) => warns.push(m) } },
+      middlewares: { use() {} },
+      httpServer,
+    });
+    const http = (address: string) => ({
+      listening: true,
+      address: () => ({ port: 4321, address }),
+      on() {},
+      once() {},
+    });
+    const configure = (s: unknown, n: string) =>
+      (
+        officeFeed({ root, log: () => {}, hookDir: join(root, n) }).configureServer as (
+          s: unknown,
+        ) => void
+      )(s);
+    for (const [i, a] of ["127.0.0.1", "::1", "0.0.0.0", "::"].entries()) {
+      configure(server(http(a)), `ok${i}`);
+    }
+    expect(warns.filter((w) => w.includes("bound to"))).toEqual([]);
+    configure(server(http("192.168.1.5")), "lan");
+    expect(warns.filter((w) => w.includes("bound to 192.168.1.5"))).toHaveLength(1);
+    configure(server(undefined), "mw");
+    expect(warns.filter((w) => w.includes("no httpServer"))).toHaveLength(1);
   });
 
   it("an oversize content-length is refused before the body is read", async () => {
@@ -366,9 +428,7 @@ describe("POST /__office/hook", () => {
       const { feed } = newFeed({ now: () => t });
       const { frames } = listen(feed);
       for (let i = 0; i < HOOK_SESSION_PER_SEC + 10; i++) {
-        const r = await post(feed, {
-          body: hook({ hook_event_name: "PermissionRequest", tool_use_id: `tu${i}` }),
-        });
+        const r = await post(feed, { body: hook({ agent_id: `a${i}` }) });
         expect(r.status).toBe(204);
       }
       const count = () => frames().filter((f) => f.type === "event").length;
@@ -376,8 +436,56 @@ describe("POST /__office/hook", () => {
       await post(feed, { body: hook({ session_id: "other", transcript_path: undefined }) });
       expect(count()).toBe(HOOK_SESSION_PER_SEC + 1);
       t += 1001;
-      await post(feed, { body: hook({ hook_event_name: "PermissionRequest", tool_use_id: "z" }) });
+      await post(feed, { body: hook({ agent_id: "z" }) });
       expect(count()).toBe(HOOK_SESSION_PER_SEC + 2);
+    });
+
+    it("keeps a needs_attention when the ordinary session and overall windows are full", async () => {
+      const { feed } = newFeed({ now: () => 5_000_000 });
+      const { frames } = listen(feed);
+      for (let i = 0; i < HOOK_TOTAL_PER_SEC + 20; i++) {
+        await post(feed, { body: hook({ session_id: `s${i}`, transcript_path: undefined }) });
+      }
+      for (let i = 0; i < HOOK_SESSION_PER_SEC + 5; i++) {
+        await post(feed, { body: hook({ agent_id: `f${i}` }) });
+      }
+      const attention = () => frames().filter((f) => f.event?.kind === "needs_attention").length;
+      expect(attention()).toBe(0);
+      await post(feed, { body: hook({ hook_event_name: "PermissionRequest", tool_use_id: "t" }) });
+      expect(attention()).toBe(1);
+    });
+
+    it("bounds the needs_attention budget per session and per window", async () => {
+      let t = 1_000_000;
+      const { feed } = newFeed({ now: () => t });
+      const { frames } = listen(feed);
+      const attention = () => frames().filter((f) => f.event?.kind === "needs_attention").length;
+      for (let i = 0; i < HOOK_ATTENTION_PER_SEC + 10; i++) {
+        await post(feed, {
+          body: hook({ hook_event_name: "PermissionRequest", tool_use_id: `tu${i}` }),
+        });
+      }
+      expect(attention()).toBe(HOOK_ATTENTION_PER_SEC);
+      t += HOOK_WINDOW_MS + 1;
+      await post(feed, { body: hook({ hook_event_name: "PermissionRequest", tool_use_id: "z" }) });
+      expect(attention()).toBe(HOOK_ATTENTION_PER_SEC + 1);
+    });
+
+    it("drops needs_attention past the overall attention cap even across many sessions", async () => {
+      const { feed } = newFeed({ now: () => 5_000_000 });
+      const { frames } = listen(feed);
+      for (let i = 0; i < HOOK_ATTENTION_TOTAL_PER_SEC + 10; i++) {
+        await post(feed, {
+          body: hook({
+            hook_event_name: "PermissionRequest",
+            session_id: `s${i}`,
+            tool_use_id: `tu${i}`,
+            transcript_path: undefined,
+          }),
+        });
+      }
+      const attention = frames().filter((f) => f.event?.kind === "needs_attention").length;
+      expect(attention).toBe(HOOK_ATTENTION_TOTAL_PER_SEC);
     });
 
     it("bounds the per-session windows it remembers", async () => {

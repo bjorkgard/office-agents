@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -10,8 +11,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   HOOK_FILE,
   defaultHookDir,
@@ -19,6 +21,9 @@ import {
   removeDiscovery,
   writeDiscovery,
 } from "./hook-discovery.ts";
+
+/** False where mkfifo is missing, so the FIFO test reports SKIPPED instead of passing empty. */
+const hasMkfifo = spawnSync("mkfifo", ["-m", "600", "/dev/null/x"]).error === undefined;
 
 let tmp: string;
 beforeEach(() => {
@@ -63,6 +68,19 @@ describe("discovery file", () => {
     expect(statSync(dir).mode & 0o777).toBe(0o700);
   });
 
+  it("refuses a pre-existing directory it does not own, without chmod", () => {
+    const dir = join(tmp, "shared");
+    mkdirSync(dir, { mode: 0o755 });
+    const uid = vi.spyOn(process, "getuid").mockReturnValue((process.getuid?.() ?? 0) + 1);
+    try {
+      expect(() => writeDiscovery(dir, { port: 1, token: "t" })).toThrow(/not owned/);
+    } finally {
+      uid.mockRestore();
+    }
+    expect(statSync(dir).mode & 0o777).toBe(0o755);
+    expect(existsSync(join(dir, HOOK_FILE))).toBe(false);
+  });
+
   it("rewrites the file when the port changes and leaves no temp file", () => {
     writeDiscovery(tmp, { port: 1, token: "t" });
     writeDiscovery(tmp, { port: 2, token: "t" });
@@ -83,6 +101,45 @@ describe("discovery file", () => {
     writeFileSync(join(tmp, HOOK_FILE), "not json");
     expect(() => removeDiscovery(tmp, "t")).not.toThrow();
   });
+
+  // Value: protects=cleanup never reads an oversized hook.json planted by another process; fails_when=the INFO_CAP size check is dropped and the big file is parsed and removed; why_new=INFO_CAP branch was untested; seam=none
+  it("leaves a hook.json larger than 64 KB untouched even when it holds our token", () => {
+    const file = join(tmp, HOOK_FILE);
+    const body = JSON.stringify({ token: "t", pad: "x".repeat(70 * 1024) });
+    writeFileSync(file, body);
+    removeDiscovery(tmp, "t");
+    expect(readFileSync(file, "utf8")).toBe(body);
+  });
+
+  // Value: protects=cleanup ignores a non-regular hook.json such as a directory; fails_when=the isFile check is dropped and a non-file is read or removed; why_new=non-FIFO non-file branch untested; seam=none
+  it("leaves a directory at the hook.json path in place without throwing", () => {
+    const dirAtPath = join(tmp, HOOK_FILE);
+    mkdirSync(dirAtPath);
+    expect(() => removeDiscovery(tmp, "t")).not.toThrow();
+    expect(lstatSync(dirAtPath).isDirectory()).toBe(true);
+  });
+
+  it.skipIf(!hasMkfifo)(
+    "does not block on a FIFO hook.json and leaves it in place",
+    () => {
+      const fifo = join(tmp, HOOK_FILE);
+      expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+      // A child process, so a blocking read fails this test by timeout instead of hanging the run.
+      const mod = join(dirname(fileURLToPath(import.meta.url)), "hook-discovery.ts");
+      const r = spawnSync(
+        process.execPath,
+        [
+          "-e",
+          `import(${JSON.stringify(mod)}).then((m) => m.removeDiscovery(${JSON.stringify(tmp)}, "t"))`,
+        ],
+        { timeout: 3000 },
+      );
+      expect(r.error).toBeUndefined();
+      expect(r.status).toBe(0);
+      expect(lstatSync(fifo).isFIFO()).toBe(true);
+    },
+    10_000,
+  );
 
   it("refuses a directory that is a symlink", () => {
     const real = join(tmp, "real");

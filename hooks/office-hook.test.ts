@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -17,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { HOOK_ROUTE } from "../server/feed-plugin.ts";
 import { HOOK_FILE, defaultHookDir } from "../server/hook-discovery.ts";
+import { MAX_STRING_LENGTH } from "../shared/events.ts";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "office-hook.mjs");
 const DEFAULT_DIR = (() => {
@@ -28,7 +30,18 @@ const DEFAULT_DIR = (() => {
     if (saved !== undefined) process.env.OFFICE_HOOK_DIR = saved;
   }
 })();
+const ADAPTER = join(dirname(fileURLToPath(import.meta.url)), "..", "server", "hooks-adapter.ts");
 const TOKEN = "tok-".padEnd(64, "x");
+
+/** False on a host without an IPv6 loopback, where listening on ::1 fails. */
+const hasIpv6Loopback = () =>
+  new Promise<boolean>((resolve) => {
+    const probe = createTcpServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(0, "::1", () => probe.close(() => resolve(true)));
+  });
+
+const ipv6 = await hasIpv6Loopback();
 
 type Seen = { headers: IncomingMessage["headers"]; url?: string; method?: string; body: string };
 
@@ -166,6 +179,19 @@ describe("office-hook.mjs", () => {
     });
   });
 
+  it("keeps the script's value cap equal to the adapter's and its allowlist covering what the adapter reads", () => {
+    const src = readFileSync(SCRIPT, "utf8");
+    expect(Number(/const MAX_VALUE = (\d+);/.exec(src)?.[1])).toBe(MAX_STRING_LENGTH);
+    const allowed = [
+      ...(/const ALLOWED = \[([^\]]*)\]/.exec(src)?.[1] ?? "").matchAll(/"(\w+)"/g),
+    ].map((m) => m[1]);
+    const read = [...readFileSync(ADAPTER, "utf8").matchAll(/idOf\(p, "(\w+)"\)/g)].map(
+      (m) => m[1],
+    );
+    expect(read.length).toBeGreaterThan(0);
+    for (const key of read) expect(allowed).toContain(key);
+  });
+
   it("exits 0 quickly and silently when the server is down", async () => {
     const port = await listen();
     await new Promise<void>((r) => server!.close(() => r()));
@@ -248,20 +274,23 @@ describe("office-hook.mjs", () => {
     expect(seen[0]?.headers.host).toBe(`127.0.0.1:${port}`);
   });
 
-  it("connects to the host in hook.json when it is exactly ::1 or 127.0.0.1", async () => {
-    const v6 = await listen(true, "::1");
-    writeInfo({ port: v6, token: TOKEN, pid: process.pid, host: "::1" });
-    await runHook(JSON.stringify(payload));
-    expect(seen).toHaveLength(1);
-    expect(seen[0].headers.host).toBe(`[::1]:${v6}`);
+  it.skipIf(!ipv6)(
+    "connects to the host in hook.json when it is exactly ::1 or 127.0.0.1",
+    async () => {
+      const v6 = await listen(true, "::1");
+      writeInfo({ port: v6, token: TOKEN, pid: process.pid, host: "::1" });
+      await runHook(JSON.stringify(payload));
+      expect(seen).toHaveLength(1);
+      expect(seen[0].headers.host).toBe(`[::1]:${v6}`);
 
-    await new Promise<void>((r) => server!.close(() => r()));
-    seen = [];
-    const v4 = await listen(true, "127.0.0.1");
-    writeInfo({ port: v4, token: TOKEN, pid: process.pid, host: "127.0.0.1" });
-    await runHook(JSON.stringify(payload));
-    expect(seen[0]?.headers.host).toBe(`127.0.0.1:${v4}`);
-  });
+      await new Promise<void>((r) => server!.close(() => r()));
+      seen = [];
+      const v4 = await listen(true, "127.0.0.1");
+      writeInfo({ port: v4, token: TOKEN, pid: process.pid, host: "127.0.0.1" });
+      await runHook(JSON.stringify(payload));
+      expect(seen[0]?.headers.host).toBe(`127.0.0.1:${v4}`);
+    },
+  );
 
   it("ignores any other host value and uses 127.0.0.1", async () => {
     const port = await listen();

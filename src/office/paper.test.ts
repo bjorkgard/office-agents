@@ -437,7 +437,7 @@ describe("PAPER_DESK", () => {
 });
 
 describe("doorOpenFor", () => {
-  const { ARRIVE_OPEN_MS, LEAD_MS, RUN_CAP_MS, GAP_MS } = DOOR_TUNING;
+  const { ARRIVE_OPEN_MS, LEAD_MS, RUN_CAP_MS, GAP_MS, MAX_RUNS } = DOOR_TUNING;
   const door = (subs: ReturnType<typeof sub>[], now: number, c: () => SubagentCtx | null = ctx) =>
     doorOpenFor(subs, c, now);
   const reach = (arrivedAt: number, leftAt: number) =>
@@ -520,7 +520,7 @@ describe("doorOpenFor", () => {
   // Value: protects=the run cap is a hard bound and the early skip of ended windows never changes the answer; fails_when=the loop can run unbounded, or a skipped window shifts a later run; why_new=the uncapped algorithm was only checked on hand-built schedules; seam=none
   describe("run cap and ended-window skip", () => {
     type S = ReturnType<typeof sub>;
-    // The pre-cap, pre-skip algorithm, kept verbatim as the oracle.
+    // The pre-cap, pre-skip algorithm, kept as the oracle (same windows and run rule, no cap or skip).
     const oracle = (subs: S[], now: number) => {
       const spans: [number, number][] = [];
       for (const a of subs) {
@@ -563,6 +563,22 @@ describe("doorOpenFor", () => {
       }
       expect(door(subs, 190_000)).toEqual({ open: false, nextChange: null });
       expect(Date.now() - t0).toBeLessThan(2000);
+    });
+
+    it("answers on the MAX_RUNS-th run and closes on the next", () => {
+      const subs = Array.from({ length: 200 }, (_, i) => sub(i * 1000));
+      const runAt = (k: number) => 1000 + (k - 1) * (RUN_CAP_MS + GAP_MS);
+      expect(door(subs, runAt(MAX_RUNS)).open).toBe(true);
+      expect(door(subs, runAt(MAX_RUNS + 1))).toEqual({ open: false, nextChange: null });
+    });
+
+    it("shifts a run that starts closer than GAP_MS to the end of the last, not one that starts at GAP_MS", () => {
+      const first = sub(1000);
+      const end = 1000 + ARRIVE_OPEN_MS;
+      const next = (gap: number) => door([first, sub(end + gap)], end + 1).nextChange;
+      expect(next(GAP_MS - 1)).toBe(end + GAP_MS);
+      expect(next(GAP_MS)).toBe(end + GAP_MS);
+      expect(next(GAP_MS + 1)).toBe(end + GAP_MS + 1);
     });
 
     it("matches the oracle on 2000 random schedules", () => {

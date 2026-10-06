@@ -4,17 +4,21 @@
  * (isLoopbackRequest, assignSeat, createTailer). Nothing here reads transcript text
  * into an event: lines go through server/normalize.ts and parseAgentEvent only.
  *
- * Wire format at /__office/events (every frame is one `data:` line of JSON):
+ * Wire format at /__office/events (every frame is one `data:` line of JSON, apart from the
+ * `: ping` comment frame sent every HEARTBEAT_MS so a dead peer fails a write):
  *   {type:"snapshot", events, seats}  first frame, written synchronously with subscribe
  *   {type:"event", event}             a delta
  *   {type:"seat", sessionId, desk}    a seat was assigned
  *   {type:"gone", sessionId, agentId} that agent's events were dropped (file vanished, aged
  *                                     out, or truncated and about to be replayed)
+ *
+ * POST /__office/hook (token-gated by the x-office-token header, see HOOK_ROUTE): the Claude Code
+ * hook script posts ids only; they become events through server/hooks-adapter.ts.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { constants } from "node:fs";
 import { open, readdir as fsReaddir, lstat as fsLstat } from "node:fs/promises";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
@@ -23,7 +27,8 @@ import { parseAgentEvent } from "../shared/events.ts";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, normalizeBatch } from "./normalize.ts";
 import type { NormalizerState } from "./normalize.ts";
-import { hookToEvents } from "./hooks-adapter.ts";
+import { createHookRoute } from "./hook-route.ts";
+import type { HookWindow } from "./hook-route.ts";
 import { defaultHookDir, newHookToken, removeDiscovery, writeDiscovery } from "./hook-discovery.ts";
 
 const ACTIVE_SCAN_MS = 1000;
@@ -56,18 +61,22 @@ const DRAIN_TIMEOUT_MS = 10_000;
 // An SSE comment frame this often makes a dead peer fail the write and drop its slot.
 const HEARTBEAT_MS = 15_000;
 const MAX_LOGGED_HEADER = 64;
-// POST /__office/hook: body cap, and events accepted per second per session and overall. A
-// window is one second; what exceeds it is dropped (still answered 204), not queued.
+// Transcripts tracked at once. Each costs a Tracked record and one stat+read per scan; 5000 is
+// far above any real session count (the mtime window keeps it to live files) yet bounds a
+// hostile or runaway tree. The cap bounds tracked files, not the directory listing, which is
+// still read in full. Past it new files are ignored; tracked ones keep working.
+export const MAX_TRACKED_FILES = 5000;
 /** The hook script (hooks/office-hook.mjs) posts here; a test pins that it agrees. */
 export const HOOK_ROUTE = "/__office/hook";
-export const HOOK_MAX_BODY_BYTES = 64 * 1024;
-export const HOOK_SESSION_PER_SEC = 20;
-export const HOOK_TOTAL_PER_SEC = 100;
-// A body that has not finished by then is dropped, so a stalled one cannot hold the socket.
-export const HOOK_BODY_TIMEOUT_MS = 5000;
-export const HOOK_WINDOW_MS = 1000;
-const HOOK_MAX_SESSIONS = 1000;
-const HOOK_LOG_MS = 5000;
+export {
+  HOOK_ATTENTION_PER_SEC,
+  HOOK_ATTENTION_TOTAL_PER_SEC,
+  HOOK_BODY_TIMEOUT_MS,
+  HOOK_MAX_BODY_BYTES,
+  HOOK_SESSION_PER_SEC,
+  HOOK_TOTAL_PER_SEC,
+  HOOK_WINDOW_MS,
+} from "./hook-route.ts";
 // A replaced file is told from a grown one by its inode and this many leading bytes.
 const HEAD_BYTES = 256;
 // Open without following a leaf symlink and without blocking on a FIFO or device.
@@ -124,7 +133,13 @@ export function crossOriginReason(req: {
 }): string | null {
   const h = req.headers;
   if (!isLoopbackOrigin(h.origin)) return "foreign origin";
-  if (Object.keys(h).some((k) => k.toLowerCase().startsWith("x-forwarded-"))) {
+  // A proxy in front of the feed makes the loopback socket check meaningless.
+  if (
+    Object.keys(h).some((k) => {
+      const key = k.toLowerCase();
+      return key.startsWith("x-forwarded-") || key === "forwarded" || key === "x-real-ip";
+    })
+  ) {
     return "forwarded request";
   }
   const site = h["sec-fetch-site"];
@@ -251,6 +266,7 @@ export type TailerOptions = {
   windowMs?: number;
   coldTailBytes?: number;
   coldCapBytes?: number;
+  maxTrackedFiles?: number;
 };
 
 type Tracked = {
@@ -304,6 +320,9 @@ export function createTailer(opts: TailerOptions) {
   const windowMs = opts.windowMs ?? ATTENTION_STALE_MS;
   const coldTail = opts.coldTailBytes ?? COLD_TAIL_BYTES;
   const coldCap = opts.coldCapBytes ?? READ_CAP_BYTES;
+  const maxTracked = opts.maxTrackedFiles ?? MAX_TRACKED_FILES;
+  /** True from the first refused file until the count drops below the cap again. */
+  let capWarned = false;
 
   const tracked = new Map<string, Tracked>();
   /** Denied path -> when it may be tried again; permission errors never expire. */
@@ -431,7 +450,8 @@ export function createTailer(opts: TailerOptions) {
       if (ownDrift[key] === 1) log(`${what} failed: ${String(e)}`);
     } else if (!loggedNormalizer.has(file)) {
       loggedNormalizer.add(file);
-      log(`${what} failed: ${String(e)}`);
+      // The name only: a message can quote transcript text.
+      log(`${what} failed: ${loggable(e instanceof Error ? e.name : typeof e)}`);
     }
   };
   /** Files whose normalizer failure was already logged: once per file, not per tailer. */
@@ -679,6 +699,13 @@ export function createTailer(opts: TailerOptions) {
       for (const c of await candidates()) {
         if (stopped) return;
         if (tracked.has(c.path) || isDenied(c.path)) continue;
+        if (tracked.size >= maxTracked) {
+          if (!capWarned) {
+            capWarned = true;
+            log(`tracked-file cap ${maxTracked} reached; ignoring new transcripts`);
+          }
+          continue;
+        }
         try {
           const stat = await io.lstat(c.path);
           if (now() - stat.mtimeMs > windowMs) continue;
@@ -704,6 +731,7 @@ export function createTailer(opts: TailerOptions) {
       if (stopped) return;
       await pollFile(file);
     }
+    if (tracked.size < maxTracked) capWarned = false;
     correctParents();
     flush();
     lastScanMs = now() - began;
@@ -1062,131 +1090,16 @@ export function createFeed(options: FeedOptions = {}) {
 
   // ---- hook route ----
 
-  const hookTokenDigest =
-    options.hookToken === undefined
-      ? null
-      : createHash("sha256").update(options.hookToken).digest();
-  const hookLogged = new Map<string, number>();
-  const hookSessions = new Map<string, { start: number; count: number }>();
-  let hookTotal = { start: Number.NEGATIVE_INFINITY, count: 0 };
-
-  /** One line per reason per HOOK_LOG_MS, so a flood of bad requests cannot flood the log. */
-  function hookLog(reason: string, detail = ""): void {
-    const at = now();
-    if (at - (hookLogged.get(reason) ?? Number.NEGATIVE_INFINITY) < HOOK_LOG_MS) return;
-    hookLogged.set(reason, at);
-    log(`hook ${reason}${detail}`);
-  }
-
-  function tokenOk(header: string | string[] | undefined): boolean {
-    if (hookTokenDigest === null || typeof header !== "string") return false;
-    return timingSafeEqual(createHash("sha256").update(header).digest(), hookTokenDigest);
-  }
-
-  /** True when the event fits both the session's and the overall window. */
-  function hookAdmit(sessionId: string): boolean {
-    const at = now();
-    if (at - hookTotal.start >= HOOK_WINDOW_MS) hookTotal = { start: at, count: 0 };
-    let w = hookSessions.get(sessionId);
-    if (w === undefined || at - w.start >= HOOK_WINDOW_MS) {
-      if (w === undefined && hookSessions.size >= HOOK_MAX_SESSIONS) {
-        hookSessions.delete(hookSessions.keys().next().value as string);
-      }
-      w = { start: at, count: 0 };
-      hookSessions.set(sessionId, w);
-    }
-    if (w.count >= HOOK_SESSION_PER_SEC || hookTotal.count >= HOOK_TOTAL_PER_SEC) return false;
-    w.count++;
-    hookTotal.count++;
-    return true;
-  }
-
-  function ingestHook(payload: unknown): void {
-    for (const event of hookToEvents(payload, { now: now() })) {
-      // The tailer announces the same subagent from its transcript, with its real parent; a hook
-      // start for a known agent would overwrite that, and a stop for an unknown one would make a
-      // ghost entry. Both are dropped; the hook only fills in what the tailer has not seen yet.
-      // A child already handed back is finished: a late hook must not revive it either (start or
-      // attention), even after the ring evicted it.
-      const known = event.agentId !== null && ring.has(event.sessionId, event.agentId);
-      const returned = event.agentId !== null && ring.wasReturned(event.sessionId, event.agentId);
-      if (event.kind === "agent_started" && (known || returned)) continue;
-      if (event.kind === "done" && (!known || returned)) continue;
-      if (event.kind === "needs_attention" && returned) continue;
-      if (!hookAdmit(event.sessionId)) {
-        hookLog("rate limited");
-        continue;
-      }
-      ring.add(event);
-      send({ type: "event", event });
-    }
-  }
-
-  function handleHook(req: Req, res: Res): void {
-    const empty = (code: number) => {
-      res.statusCode = code;
-      res.end();
-    };
-    if (hookTokenDigest === null) {
-      reply(res, 404, "text/plain; charset=utf-8", "not found\n");
-    } else if (req.method !== "POST") {
-      empty(405);
-    } else if (!tokenOk(req.headers["x-office-token"])) {
-      hookLog("refused (401)");
-      empty(401);
-    } else if (!/^application\/json\s*(;|$)/i.test(String(req.headers["content-type"] ?? ""))) {
-      hookLog("refused (415)", ` content-type=${loggable(req.headers["content-type"])}`);
-      empty(415);
-    } else if (Number(req.headers["content-length"]) > HOOK_MAX_BODY_BYTES) {
-      hookLog("refused (413)");
-      empty(413);
-      req.destroy?.();
-    } else {
-      readHookBody(req, empty);
-    }
-  }
-
-  function readHookBody(req: Req, empty: (code: number) => void): void {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let over = false;
-    const stalled = setTimeout(() => {
-      over = true;
-      chunks.length = 0;
-      hookLog("refused (408)");
-      empty(408);
-      req.destroy?.();
-    }, HOOK_BODY_TIMEOUT_MS);
-    stalled.unref();
-    req.on?.("data", (chunk) => {
-      if (over) return;
-      size += chunk.length;
-      if (size > HOOK_MAX_BODY_BYTES) {
-        over = true;
-        clearTimeout(stalled);
-        chunks.length = 0;
-        hookLog("refused (413)");
-        empty(413);
-        req.destroy?.();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on?.("end", () => {
-      clearTimeout(stalled);
-      if (over) return;
-      try {
-        ingestHook(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      } catch {
-        hookLog("ignored an unparseable payload");
-      }
-      empty(204);
-    });
-    req.on?.("error", () => {
-      clearTimeout(stalled);
-      if (!over) hookLog("request failed");
-    });
-  }
+  const hookSessions = new Map<string, HookWindow>();
+  const hookRoute = createHookRoute({
+    token: options.hookToken,
+    ring,
+    send,
+    now,
+    log,
+    loggable,
+    sessions: hookSessions,
+  });
 
   /** Connect-style handler: non-/__office URLs go to next() untouched. */
   function handle(req: Req, res: Res, next: () => void): void {
@@ -1205,7 +1118,7 @@ export function createFeed(options: FeedOptions = {}) {
       return;
     }
     if (path === HOOK_ROUTE) {
-      handleHook(req, res);
+      hookRoute.handle(req, res);
       return;
     }
     if (req.method !== "GET") {
@@ -1300,6 +1213,11 @@ export function officeFeed(options: FeedOptions & { hookDir?: string } = {}): Pl
         const publish = () => {
           const addr = http?.address();
           if (typeof addr !== "object" || addr === null) return;
+          if (!["127.0.0.1", "::1", "0.0.0.0", "::"].includes(addr.address)) {
+            server.config.logger.warn(
+              `[office] bound to ${loggable(addr.address)}: the hook script connects to loopback and will not reach this server`,
+            );
+          }
           try {
             writeDiscovery(dir, { port: addr.port, token, address: addr.address });
           } catch (e) {
@@ -1307,6 +1225,11 @@ export function officeFeed(options: FeedOptions & { hookDir?: string } = {}): Pl
           }
         };
         const unpublish = () => removeDiscovery(dir, token);
+        if (http === null || http === undefined) {
+          server.config.logger.warn(
+            "[office] no httpServer (middleware mode): hooks are not published",
+          );
+        }
         http?.on("listening", publish);
         if (http?.listening) publish();
         // Node's default SIGINT exit skips "exit", so Ctrl-C would leave the file. Remove it,

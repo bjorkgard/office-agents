@@ -5,10 +5,14 @@
  * task-id, tool-use-id, status. All text becomes `x`, or `x?` when the original ended in
  * a question mark (same predicate the normalizer uses). Everything else is dropped.
  *
- * Ids are hashed with a per-run salt (random unless OFFICE_FIXTURE_SALT or --salt is given, so
- * committed fixtures stay reproducible); tool names outside KNOWN_TOOLS become "x".
+ * Ids are hashed with a per-run salt (random unless OFFICE_FIXTURE_SALT or --salt is given; an
+ * empty OFFICE_FIXTURE_SALT counts as unset); tool names outside KNOWN_TOOLS become "x".
+ * The committed fixtures in server/fixtures use the EMPTY salt, which the CLI never accepts:
+ * regenerate them through the library, sanitizeTranscript(raw) and sanitizeFileName(name)
+ * with the default salt.
  *
  * Usage: node server/sanitize-fixtures.ts [--salt <salt>] <out-dir> <transcript.jsonl>...
+ * (--salt may appear anywhere in the arguments.)
  */
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -174,20 +178,40 @@ export function sanitizeTranscript(raw: string, salt = ""): string {
   return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  let salt = process.env.OFFICE_FIXTURE_SALT ?? randomBytes(16).toString("hex");
-  if (args[0] === "--salt") {
-    salt = args[1] ?? "";
-    args.splice(0, 2);
+export interface CliArgs {
+  salt: string;
+  outDir: string;
+  inputs: string[];
+}
+
+/** Parses CLI arguments; null means usage error. An empty env salt is treated as unset. */
+export function parseCliArgs(
+  args: readonly string[],
+  env: Record<string, string | undefined>,
+): CliArgs | null {
+  let salt = env.OFFICE_FIXTURE_SALT || randomBytes(16).toString("hex");
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--salt") {
+      salt = args[++i] ?? "";
+    } else {
+      positional.push(args[i]);
+    }
   }
-  const [outDir, ...inputs] = args;
-  if (!outDir || inputs.length === 0 || salt === "") {
+  const [outDir, ...inputs] = positional;
+  if (!outDir || inputs.length === 0 || salt === "") return null;
+  return { salt, outDir, inputs };
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const parsed = parseCliArgs(process.argv.slice(2), process.env);
+  if (parsed === null) {
     console.error(
       "usage: node server/sanitize-fixtures.ts [--salt <salt>] <out-dir> <transcript.jsonl>...",
     );
     process.exit(2);
   }
+  const { salt, outDir, inputs } = parsed;
   mkdirSync(outDir, { recursive: true });
   for (const file of inputs) {
     writeFileSync(

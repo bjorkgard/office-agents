@@ -6,6 +6,7 @@
 import { hash } from "./appearance";
 import type { GLASS } from "./palette";
 import type { Grid, Run } from "./pixel";
+import { DECOR_VARIANTS } from "./props";
 import { WALL_SKEW, WINDOW_COLS, WINDOW_FLAT_ROWS, WINDOW_ROWS } from "./room";
 
 /** The clock face is a flat CLOCK_FACE square of cells, sheared down to the right by whole cells. */
@@ -184,9 +185,6 @@ export function setSeedOverride(text: string): void {
   seedOverride = text;
   decorDay = null;
 }
-
-/** How many color variants the bookshelf and pictures have (props.ts decorVariantGrid). */
-export const DECOR_VARIANTS = 3;
 
 /**
  * The bookshelf and picture color variant, 0 to 2, for a local date key. Pure; its own namespaced

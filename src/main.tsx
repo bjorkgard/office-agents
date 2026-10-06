@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.tsx";
+import type { FeedDeps } from "./office/feed-client";
 import {
   parseDecorParam,
   parseHourParam,
@@ -14,6 +15,12 @@ import {
 } from "./office/decor";
 
 const root = createRoot(document.getElementById("root")!);
+const renderApp = (deps?: FeedDeps) =>
+  root.render(
+    <StrictMode>
+      <App deps={deps} />
+    </StrictMode>,
+  );
 const params = new URLSearchParams(location.search);
 
 // Dev-only window scene at ?scene=<id> (dusk, night, rain, snow, overcast, afternoon; any other id reads as dusk).
@@ -42,11 +49,7 @@ if (import.meta.env.DEV && params.has("art")) {
     )
     .catch((error) => {
       console.error(error);
-      root.render(
-        <StrictMode>
-          <App />
-        </StrictMode>,
-      );
+      renderApp();
     });
 } else if (import.meta.env.DEV && params.has("demo")) {
   // Dev-only demo feed at ?demo; the dynamic import keeps the module and its marker out of production.
@@ -63,24 +66,12 @@ if (import.meta.env.DEV && params.has("art")) {
             scenario,
           )
         : undefined;
-      root.render(
-        <StrictMode>
-          <App deps={deps} />
-        </StrictMode>,
-      );
+      renderApp(deps);
     })
     .catch((error) => {
       console.error(error);
-      root.render(
-        <StrictMode>
-          <App />
-        </StrictMode>,
-      );
+      renderApp();
     });
 } else {
-  root.render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+  renderApp();
 }

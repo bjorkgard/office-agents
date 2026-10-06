@@ -1,10 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, endsWithQuestion, normalize, normalizeBatch } from "./normalize.ts";
-import { hashId, sanitizeFileName, sanitizeTranscript } from "./sanitize-fixtures.ts";
+import { hashId, parseCliArgs, sanitizeFileName, sanitizeTranscript } from "./sanitize-fixtures.ts";
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const lines = (name: string): string[] =>
@@ -608,5 +610,79 @@ describe("backlog follow-ups", () => {
     state.launches.set = orig;
     expect(seen).toHaveLength(1);
     expect(events.length).toBeGreaterThan(0);
+  });
+});
+
+describe("sanitize-fixtures CLI args", () => {
+  it("treats an empty OFFICE_FIXTURE_SALT as unset and falls back to a random salt", () => {
+    const a = parseCliArgs(["out", "t.jsonl"], { OFFICE_FIXTURE_SALT: "" });
+    expect(a).toMatchObject({ outDir: "out", inputs: ["t.jsonl"] });
+    expect(a?.salt).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it("uses a non-empty OFFICE_FIXTURE_SALT", () => {
+    expect(parseCliArgs(["out", "t.jsonl"], { OFFICE_FIXTURE_SALT: "pepper" })?.salt).toBe(
+      "pepper",
+    );
+  });
+
+  it("recognises --salt in any position, and it beats the env var", () => {
+    const env = { OFFICE_FIXTURE_SALT: "env" };
+    for (const args of [
+      ["--salt", "cli", "out", "a.jsonl", "b.jsonl"],
+      ["out", "--salt", "cli", "a.jsonl", "b.jsonl"],
+      ["out", "a.jsonl", "b.jsonl", "--salt", "cli"],
+    ]) {
+      expect(parseCliArgs(args, env)).toEqual({
+        salt: "cli",
+        outDir: "out",
+        inputs: ["a.jsonl", "b.jsonl"],
+      });
+    }
+  });
+
+  it("rejects a missing or empty --salt value and missing positionals", () => {
+    expect(parseCliArgs(["out", "a.jsonl", "--salt"], {})).toBeNull();
+    expect(parseCliArgs(["--salt", "", "out", "a.jsonl"], {})).toBeNull();
+    expect(parseCliArgs(["out"], {})).toBeNull();
+  });
+
+  it("the committed fixtures use the empty salt, which the library default reproduces", () => {
+    expect(hashId("abc123", "")).toBe(hashId("abc123"));
+    expect(sanitizeTranscript("{}", "")).toBe(sanitizeTranscript("{}"));
+  });
+});
+
+describe("sanitize-fixtures CLI main block", () => {
+  const script = join(dirname(fileURLToPath(import.meta.url)), "sanitize-fixtures.ts");
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, [script, ...args], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: { ...process.env, OFFICE_FIXTURE_SALT: "" },
+    });
+
+  // Value: protects=a bad invocation prints usage and exits 2 instead of writing anything; fails_when=the null-args guard or exit code 2 changes; why_new=the script's main block never ran in a test; seam=none
+  it("exits 2 with usage when given no arguments", () => {
+    const r = run([]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("usage:");
+  });
+
+  // Value: protects=the CLI really writes one sanitized file per input into the out dir; fails_when=the write loop, out-dir creation or salt handling breaks; why_new=only parseCliArgs was covered, not the main block; seam=none
+  it("writes the sanitized transcript into a created out dir for valid arguments", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "office-sanitize-"));
+    try {
+      const input = join(tmp, "t.jsonl");
+      writeFileSync(input, "{}\n");
+      const out = join(tmp, "nested", "out");
+      const r = run(["--salt", "pepper", out, input]);
+      expect(r.status).toBe(0);
+      const files = readdirSync(out);
+      expect(files).toEqual([sanitizeFileName("t.jsonl", "pepper")]);
+      expect(readFileSync(join(out, files[0]), "utf8")).toBe(sanitizeTranscript("{}\n", "pepper"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

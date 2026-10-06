@@ -36,10 +36,6 @@ export function statusTone(conn: Connection, displayError: boolean): "warn" | "m
 /** Live-region content; `seq` changes on every announcement so a repeat is read again. */
 export type Announcement = { text: string; seq: number };
 
-export function nextAnnouncement(prev: Announcement, text: string): Announcement {
-  return { text, seq: prev.seq + 1 };
-}
-
 /** Spoken text for agents that started waiting, per DESIGN.md Accessibility. */
 export function announcementText(
   agents: readonly Agent[],
@@ -83,17 +79,31 @@ export function visibleChips<T>(
   return { shown: chips.slice(0, MAX_VISIBLE_CHIPS), hidden: chips.length - MAX_VISIBLE_CHIPS };
 }
 
-/** One step of the announcer: advances the seen set and, for a new wait, the live-region seq. */
+/** One step of the announcer: advances the seen set and, for a new wait, the live-region seq; `announced` feeds the chime. */
 export function stepAnnouncer(
   office: OfficeState,
   projects: Readonly<Record<string, string>>,
   seen: ReadonlySet<string>,
   prev: Announcement,
-): { seen: ReadonlySet<string>; announcement: Announcement } {
+): { seen: ReadonlySet<string>; announcement: Announcement; announced: Agent[] } {
   const r = announceNew(office, seen);
-  if (r.announce.length === 0) return { seen: r.seen, announcement: prev };
+  if (r.announce.length === 0) return { seen: r.seen, announcement: prev, announced: [] };
   return {
     seen: r.seen,
-    announcement: nextAnnouncement(prev, announcementText(r.announce, projects)),
+    announced: r.announce,
+    announcement: { text: announcementText(r.announce, projects), seq: prev.seq + 1 },
   };
+}
+
+/** The announcer effect's body: one step, plus a `notify` call when new waits were announced. */
+export function runAnnouncer(
+  office: OfficeState,
+  projects: Readonly<Record<string, string>>,
+  seen: ReadonlySet<string>,
+  prev: Announcement,
+  notify: (announced: Agent[]) => void,
+): ReturnType<typeof stepAnnouncer> {
+  const r = stepAnnouncer(office, projects, seen, prev);
+  if (r.announced.length > 0) notify(r.announced);
+  return r;
 }

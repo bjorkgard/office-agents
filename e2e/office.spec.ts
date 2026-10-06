@@ -225,6 +225,8 @@ test(
       await expect(active).toHaveClass(/top-bar-chip/);
       await expect(active).toHaveText(new RegExp(`^${names[i]} in project`));
     }
+    await page.keyboard.press("Tab");
+    await expect(active).toHaveClass(/top-bar-chime/);
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press("Tab");
       await expect(active).toHaveAttribute(

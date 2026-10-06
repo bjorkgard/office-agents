@@ -8,7 +8,7 @@ Status: tokens below are the contract and are now in `src/index.css` `:root` (th
 
 1. The room is the anchor. UI chrome stays quiet so a waving agent is the loudest thing on screen.
 2. Attention is never color alone (8B). Pose, bubble and floor ring carry it; color only reinforces.
-3. Calm by default. No sound, no neon (4C, 3A), and no camera movement except one: when the fit changes (a row is added or removed, or the window is resized) the whole room eases to its new fit over `--dur-base` (240ms) with `--ease`, and not at all under `prefers-reduced-motion: reduce`.
+3. Calm by default. No sound unless you turn on the attention chime (off by default), no neon (4C, 3A), and no camera movement except one: when the fit changes (a row is added or removed, or the window is resized) the whole room eases to its new fit over `--dur-base` (240ms) with `--ease`, and not at all under `prefers-reduced-motion: reduce`.
 4. Nothing is read from transcripts into the UI: bubbles say "Asking you" or "Stuck?" plus wait time, never message text (2B).
 5. A stable map. Desks, door and coffee station do not move once placed (8A). The decor palette (bookshelf books, pictures) may change once per local day and swaps instantly, like the hour scene, while the map stays stable.
 
@@ -106,7 +106,7 @@ Rules:
 
 ### Visual weight order
 
-Loudest first: waving pose with the violet floor ring, then monitor glow while working, then shirt, then skin and hair, then decor (1A). Decor is the bookshelf, the pictures, the door light wedge, the contact shadows and the dispenser art, and it must read below the waving agent and the monitor glow on the 12-agent 50% art-sheet row (the shelf, the pictures, the door ajar and the wedge are shown there), so the waving agent stays loudest (Principle 1); decor may use tones as bright as the quieter shirts. The `?art` sheet (dev only) shows a 12-agent row at 50% with one waving agent, and that agent must read first.
+Loudest first: waving pose with the violet floor ring, then monitor glow while working, then shirt, then skin and hair, then decor (1A). Decor is the bookshelf, the pictures, the door light wedge, the contact shadows and the dispenser art, and it must read below the waving agent and the monitor glow on the 12-agent 50% art-sheet row (the shelf, the pictures, the door ajar and the wedge are shown there, in the sheet's Legibility row), so the waving agent stays loudest (Principle 1); decor may use tones as bright as the quieter shirts. The `?art` sheet (dev only) shows a 12-agent row at 50% with one waving agent, and that agent must read first.
 
 ### State to look
 
@@ -249,7 +249,7 @@ State is readable from the DOM (attributes only, no behavior change). Scene root
 
 ### Top bar (pinned)
 
-Left: title "Agent Office" (placeholder name). Middle: status banner, one text line for refused (HTTP 403), reconnecting, or "No active Claude Code sessions" (R5). Right: waiting chips, longest wait first, each a real `<button>`: first name, project, wait time (omit time if unknown). Click pulses that character. Wait times update once per minute, not per frame. Many chips overflow with a "+N" chip; exact wording is tuned at build.
+Left: title "Agent Office" (placeholder name). Middle: status banner, one text line for refused (HTTP 403), reconnecting, or "No active Claude Code sessions" (R5). Right: waiting chips, longest wait first, each a real `<button>`: first name, project, wait time (omit time if unknown). Click pulses that character. Wait times update once per minute, not per frame. Many chips overflow with a "+N" chip; exact wording is tuned at build. At the far right, after the chips: the opt-in chime toggle (a real `<button>` with `aria-pressed`, speaker glyph and visible state text "Chime off", "Chime on" or "Chime: click" while audio is blocked until the first click; off by default; a soft two-note tone at most once every 5 seconds, silent on reload; its design review is open in TODOS.md).
 
 ### Speech bubble
 
