@@ -3,7 +3,7 @@ import { agentKey, type Agent } from "./machine";
 
 const audio = vi.hoisted(() => ({
   unlock: vi.fn<() => Promise<boolean>>(),
-  play: vi.fn<() => void>(),
+  play: vi.fn<() => Promise<boolean>>(),
 }));
 vi.mock("./chime-audio", () => ({ unlockChime: audio.unlock, playChime: audio.play }));
 
@@ -37,6 +37,7 @@ beforeEach(() => {
   store.clear();
   audio.unlock.mockReset();
   audio.play.mockReset();
+  audio.play.mockResolvedValue(true);
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => store.get(k) ?? null,
     setItem: (k: string, v: string) => void store.set(k, v),
@@ -96,6 +97,26 @@ describe("createChime", () => {
     t = 20000;
     c.notify([waiting(19500)]);
     expect(audio.play).not.toHaveBeenCalled();
+  });
+  it("a chime that cannot play goes back to blocked, and the next click retries the unlock", async () => {
+    audio.unlock.mockResolvedValue(true);
+    const c = createChime(() => 1000);
+    c.toggle();
+    await flush();
+    expect(c.status()).toBe("on");
+    audio.play.mockClear();
+    audio.play.mockResolvedValue(false);
+    c.notify([waiting(2000)]);
+    await flush();
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(c.status()).toBe("blocked");
+    expect(store.get("agent-office.chime")).toBe("on");
+    audio.unlock.mockClear();
+    c.toggle();
+    expect(audio.unlock).toHaveBeenCalledTimes(1);
+    expect(c.status()).toBe("blocked");
+    await flush();
+    expect(c.status()).toBe("on");
   });
   it("an unlock that never settles counts as failed, so the next click turns the chime off", async () => {
     vi.useFakeTimers();

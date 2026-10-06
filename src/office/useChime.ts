@@ -75,7 +75,7 @@ export function createChime(now: () => number = Date.now) {
         if (!enabled) return;
         unlocked = ok;
         unlockFailed = !ok;
-        if (ok) playChime();
+        if (ok) void playChime();
         emit();
       });
     },
@@ -84,7 +84,13 @@ export function createChime(now: () => number = Date.now) {
       const at = now();
       if (!shouldChime({ enabled, announced, loadedAt, now: at, lastChimeAt })) return;
       lastChimeAt = at;
-      playChime();
+      // A context the browser suspended again that will not resume: show "Chime: click" so a click retries.
+      void playChime().then((played) => {
+        if (played || !enabled || !unlocked) return;
+        unlocked = false;
+        unlockFailed = false;
+        emit();
+      });
     },
   };
 }

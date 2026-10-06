@@ -20,11 +20,19 @@ export function unlockChime(): Promise<boolean> {
   }
 }
 
-/** Two short sine notes at low gain; a no-op until unlocked and running. */
-export function playChime(): void {
+/**
+ * Two short sine notes at low gain. A context the browser suspended since the unlock gets one resume()
+ * try first. Resolves false when nothing could play (no context, or it will not run).
+ */
+export async function playChime(): Promise<boolean> {
   try {
     const c = ctx;
-    if (!c || c.state !== "running") return;
+    if (!c) return false;
+    if (c.state !== "running") {
+      await c.resume();
+      // resume() changes the state; read it as the full union so TS does not keep the narrowing above.
+      if ((c.state as AudioContextState) !== "running") return false;
+    }
     const t = c.currentTime;
     [660, 880].forEach((hz, i) => {
       const osc = c.createOscillator();
@@ -39,7 +47,9 @@ export function playChime(): void {
       osc.start(at);
       osc.stop(at + 0.32);
     });
+    return true;
   } catch {
     // Blocked or unsupported audio stays silent.
+    return false;
   }
 }
