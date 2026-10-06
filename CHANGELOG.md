@@ -4,7 +4,7 @@
 
 ### Added
 
-- An optional attention chime. A speaker button in the top bar plays a soft two-note tone when an agent starts waiting for you, so you notice with the tab hidden. It is off by default and plays at most once every 5 seconds however many agents start waiting. A reload or reconnect stays silent. Browsers only allow sound after a click, so the button reads "Chime: click" until the first click unlocks audio, and a second click turns it off if audio cannot unlock.
+- An optional attention chime. A speaker button in the top bar plays a soft two-note tone when an agent starts waiting for you, so you notice with the tab hidden. It is off by default and plays at most once every 5 seconds however many agents start waiting. A reload or reconnect stays silent. Browsers only allow sound after a click, so the button reads "Chime: click" until the first click unlocks audio (and again if the browser later suspends audio and it cannot resume), and a second click turns it off if audio cannot unlock.
 - `node e2e/release.ts perf --strict` exits with code 3 when a verdict is INCONCLUSIVE, so a script can tell it from a pass. Without the flag nothing changes.
 
 ### Changed
@@ -23,7 +23,7 @@
 ### Known
 
 - The chime button has not been checked in a real browser or reviewed for design and accessibility yet. The tone and the audio unlock are tested only with a fake audio layer.
-- The perf deadlines are estimates, not measured against a full `perf --ab` run, and a repeat that hits its limit is abandoned rather than stopped, so it can slow later repeats.
+- The perf deadlines are estimates, not measured against a full `perf --ab` run. A repeat that hits its limit now has its browser and server closed and no further repeat starts at that agent count; the total deadline exits through the same shutdown as a signal. Neither path has been exercised against a real hung page.
 
 ## [0.7.1.0] - 2026-10-05
 
