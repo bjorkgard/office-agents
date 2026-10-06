@@ -11,7 +11,7 @@ Run it with `vp dev` and open the page. Every recently active Claude Code sessio
 - **Working:** the character types at the desk, and the screen shows scrolling lines. A waiting agent's screen stays half lit; every other screen is dark.
 - **Subagents:** they walk in, take a sheet of paper from the parent's desk (it fades when the work is done), then sit at an empty desk and work on their own laptop or tablet. When done they hand the paper back and walk out.
 - **Waiting for subagents:** the character stays at the desk and takes short, random drink breaks, to the coffee machine or the water dispenser. The schedule is the same after a reload.
-- **Needs you:** the character waves and a speech bubble appears. A chip in the top bar, a tab title count `(N)` and a dot on the tab icon show who is waiting. By default this is a heuristic (the last message ends with a question mark, or a tool call has no result for a while), so it can wave falsely or miss a request. The optional hooks adapter makes it exact; see "Exact attention signals (optional hooks)" below.
+- **Needs you:** the character waves and a speech bubble appears. A chip in the top bar, a tab title count `(N)` and a dot on the tab icon show who is waiting. By default this is a heuristic (the last message ends with a question mark, or a tool call has no result for a while), so it can wave falsely or miss a request. The optional hooks adapter makes it exact; see "Exact attention signals (optional hooks)" below. The speaker button at the right of the top bar turns on an optional chime (off by default): a soft two-note tone when an agent starts waiting, at most once every 5 seconds, silent for waits that began before the page loaded. Browsers allow sound only after a click, so a stored "on" reads "Chime: click" until the first click unlocks audio.
 - **Done:** a subagent walks out when its result returns. A top-level agent stays at its desk, idle, and walks out after a quiet period.
 
 The room itself is alive too. Four desks per row, in two alternating layouts (tidy and cluttered); a row is added when subagents need desks (up to 24 desks) and goes about a minute after the demand drops, with the whole room easing to its new size. The wall clock shows the real local time. Windows on the back walls show a night, dusk, overcast, rain, snow or late-afternoon view that follows the local hour, with a patch of light on the floor. The left wall also gets a bookshelf (from two rows) and two pictures (from three rows), in a palette that changes with the local date, and the door stands ajar, with a two-tone fan light, while a subagent walks in or out. All of it is decoration: it never changes an agent's state, and with reduced motion it stands still.
@@ -21,11 +21,11 @@ The room itself is alive too. Four desks per row, in two alternating layouts (ti
 - **Connecting...:** the page is waiting for the first data from the feed.
 - **No active Claude Code sessions:** the feed works, but no session has been active recently. The desks stay empty.
 - **Reconnecting...:** the connection dropped. The last scene stays on screen unchanged while the page retries.
-- **Refused: open this page from localhost:** the feed answered 403. It checks every request's Host header and remote address and serves only loopback ones, so a page opened through a LAN address, another hostname, or from another machine is refused. Open the page at `http://localhost:<port>` on the machine that runs `vp dev`.
+- **Refused: open this page from localhost:** the feed answered 403. It checks every request's Host header and remote address and serves only loopback ones, so a page opened through a LAN address, another hostname, or from another machine is refused. A request carrying a `Forwarded`, `X-Forwarded-*` or `X-Real-IP` header (a proxy in front) is refused too. Open the page at `http://localhost:<port>` on the machine that runs `vp dev`.
 - **Feed unavailable, retrying:** the feed is not answering. This shows on a built page (`vp build`) that has no feed, when the feed plugin failed to load (404 on `/__office/events`), or when the feed refuses with 503 (too many clients). The page retries on a timer.
 - **Display error: reload the page:** the scene hit an error while drawing. The top bar stays up. The details are in the browser console. Reload the page.
 
-Where to look: the `vp dev` terminal prints a feed log line, and `GET /__office/status` returns the feed state as JSON. Bad or invalid feed events are skipped and counted, with one dev warning per kind in the browser console.
+Where to look: the `vp dev` terminal prints a feed log line, and `GET /__office/status` returns the feed state as JSON. Bad or invalid feed events are skipped and counted, with one dev warning per kind in the browser console. The feed tracks at most 5000 transcript files at once; past that, new files are ignored while tracked ones keep working.
 
 The feed reads the transcripts Claude Code already writes in `~/.claude/projects`. Those can contain file contents and secrets, so the feed runs inside the Vite dev server and is meant to refuse any request when the dev server is not bound to localhost (for example with `vp dev --host`).
 
@@ -47,9 +47,10 @@ Design and review notes: [docs/designs/office-agents-isometric-office.md](docs/d
 - [x] Office life: wall clock, hour-matched windows and floor light, two desk kinds, working screens, desk paper, subagent laptops and tablets, drink breaks (coffee and water dispenser), door ajar for subagents, bookshelf and pictures, rows that grow to 24 desks, debug hooks
 - [x] End-to-end test with fixture transcripts (Playwright, `vp run e2e`)
 - [x] Release checks: success criteria, frame budget and README picture (`vp run criteria`, `vp run perf`, `vp run hero`)
+- [x] Opt-in attention chime: speaker button in the top bar, off by default (not yet checked in a real browser or design-reviewed; see TODOS.md)
 - [x] Hooks adapter for exact attention signals, optional and installed only on request (BUILD_TODO Phase 7); which Notification types fire is still unverified
 
-The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome (median of six repeats; a median above 16 ms and up to 17.5 ms is reported as INCONCLUSIVE and does not fail the run). `node e2e/release.ts perf --ab` repeats the row-change check with animations switched off and prints the difference; `perf` rejects unknown arguments. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
+The release checks live in `e2e/release.ts`. `vp run criteria` runs the success criteria and prints PASS, FAIL or SKIPPED for each. `vp run perf` measures frame times at 12 and 24 agents and the style cost of a row change in headless Chrome (median of six repeats; a median above 16 ms and up to 17.5 ms is reported as INCONCLUSIVE and does not fail the run). `node e2e/release.ts perf --ab` repeats the row-change check with animations switched off and prints the difference; `node e2e/release.ts perf --strict` exits with code 3 when nothing failed but a verdict is INCONCLUSIVE (without it that is exit 0). Each perf repeat has a 2 minute deadline and the whole run 30 minutes; a hung repeat fails with a line naming the limit. `perf` rejects unknown or repeated arguments. `vp run hero` redraws `docs/hero.png`. `perf` and `hero` use a temporary feed root and never read your real `~/.claude/projects`. Criterion 1 of `criteria` is the exception: its live smoke reads your real `~/.claude/projects` (local only, over loopback), and prints only counts and timings, never transcript text.
 
 ### Roadmap rules
 
@@ -63,10 +64,10 @@ By default the office guesses who is waiting from the transcripts. Claude Code h
 ```sh
 node hooks/install.mjs            # print the hooks snippet, write nothing
 node hooks/install.mjs --apply    # merge into ~/.claude/settings.json (timestamped backup first)
-node hooks/install.mjs --remove   # remove only our entries (backup first)
+node hooks/install.mjs --remove   # remove only this checkout's entries (backup first)
 ```
 
-Add `--settings <path>` to use another settings file and `--dry-run` with `--apply` or `--remove` to preview the result. The installer keeps your other keys and hooks, is safe to run twice, and refuses to touch a file that is not valid JSON.
+Add `--settings <path>` to use another settings file and `--dry-run` with `--apply` or `--remove` to preview the result. The installer keeps your other keys and hooks, is safe to run twice, and refuses to touch a file that is not valid JSON. `--remove` only removes entries that point at this checkout's `office-hook.mjs`, so another checkout's entry stays.
 
 The installed hook command runs `hooks/office-hook.mjs` from this repository checkout (the installer prints the path), so moving or deleting the checkout disables it, and a changed script runs on every hook event.
 
