@@ -41,6 +41,8 @@ export type NormalizerState = {
   >;
   /** SendMessage tool_use id -> the known agent it resumes. */
   resumes: Map<string, string>;
+  /** tool_use ids of tools other than Agent/Task/SendMessage: their task-notifications are not drift. */
+  otherTools: Map<string, true>;
   /** `task-id|tool-use-id` of completions already emitted. */
   completed: Set<string>;
   /** Whether the first batch (first sight, E3) was already consumed. */
@@ -63,6 +65,7 @@ export function createNormalizerState(opts: {
     suppress: false,
     launches: new Map(),
     resumes: new Map(),
+    otherTools: new Map(),
     completed: new Set(),
     batched: false,
   };
@@ -232,6 +235,8 @@ const onAssistant: Handler = (ctx) => {
       ) {
         remember(state.resumes, id, to);
       }
+    } else {
+      remember(state.otherTools, id, true);
     }
   }
   if (toolUses === 0 && message.stop_reason !== "end_turn") {
@@ -343,6 +348,7 @@ const onQueueOperation: Handler = (ctx) => {
   const launch = state.launches.get(toolUseId);
   const resumed = state.resumes.get(toolUseId);
   if (launch === undefined && resumed === undefined) {
+    if (state.otherTools.has(toolUseId)) return []; // a background Bash/Monitor task, not an agent
     bump(state, "orphan_completion");
     return [];
   }

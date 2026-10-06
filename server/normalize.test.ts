@@ -92,6 +92,56 @@ describe("async flow", () => {
   });
 });
 
+describe("task-notification ids", () => {
+  const use = (id: string, name: string, input: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: "2026-10-02T10:00:00Z",
+      message: { content: [{ type: "tool_use", id, name, input }], stop_reason: "tool_use" },
+    });
+  const notify = (toolUseId: string, taskId = "task1") =>
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      sessionId: "s",
+      timestamp: "2026-10-02T10:00:01Z",
+      content: `<task-notification><task-id>${taskId}</task-id><tool-use-id>${toolUseId}</tool-use-id><status>completed</status></task-notification>`,
+    });
+  it("a non-agent tool_use in the same file emits nothing and is not drift", () => {
+    const state = top();
+    normalize(state, use("bg1", "Bash"));
+    expect(normalize(state, notify("bg1"))).toEqual([]);
+    expect(state.drift).toEqual({});
+    expect(state.completed.size).toBe(0);
+  });
+  it("an id with no tool_use in the file is still an orphan", () => {
+    const state = top();
+    expect(normalize(state, notify("ghost"))).toEqual([]);
+    expect(state.drift).toEqual({ orphan_completion: 1 });
+  });
+  it("an Agent launch still hands back", () => {
+    const state = top();
+    normalize(state, use("a1", "Agent", { run_in_background: true }));
+    expect(handoffs(normalize(state, notify("a1")))).toHaveLength(1);
+    expect(state.drift).toEqual({});
+  });
+  it("a SendMessage resume of a known agent still hands back", () => {
+    const state = top();
+    normalize(state, use("a1", "Agent", { run_in_background: true }));
+    state.launches.get("a1")!.agentId = "ag1";
+    normalize(state, use("m1", "SendMessage", { to: "ag1" }));
+    expect(handoffs(normalize(state, notify("m1", "task2")))).toEqual(["ag1:back"]);
+    expect(state.drift).toEqual({});
+  });
+  it("a SendMessage to an unknown agent is not a known tool id and stays an orphan", () => {
+    const state = top();
+    normalize(state, use("m1", "SendMessage", { to: "nobody" }));
+    normalize(state, notify("m1"));
+    expect(state.drift).toEqual({ orphan_completion: 1 });
+  });
+});
+
 describe("sync flow", () => {
   it("sync launch waits on subagents, then a completed result hands back; end_turn x is a plain done", () => {
     const events = run(top(), "sync-flow");
@@ -256,6 +306,24 @@ describe("drift", () => {
     expect(state.launches.size).toBe(2000);
     expect(state.launches.has("t0")).toBe(false);
     expect(state.launches.has("t2000")).toBe(true);
+  });
+  it("evicts the oldest non-agent tool id past MAP_CAP and ignores an over-long one", () => {
+    const state = top();
+    const use = (id: string, name: string) =>
+      JSON.stringify({
+        type: "assistant",
+        sessionId: "s",
+        timestamp: "2026-10-02T10:00:00Z",
+        message: { content: [{ type: "tool_use", id, name, input: {} }], stop_reason: "tool_use" },
+      });
+    for (let i = 0; i < 2001; i++) normalize(state, use(`b${i}`, "Bash"));
+    const long = "x".repeat(MAX_STRING_LENGTH + 1);
+    normalize(state, use(long, "Bash"));
+    expect(state.otherTools.size).toBe(2000);
+    expect(state.otherTools.has(long)).toBe(false);
+    expect(state.otherTools.has("b0")).toBe(false);
+    expect(state.otherTools.has("b1")).toBe(true);
+    expect(state.otherTools.has("b2000")).toBe(true);
   });
   it("an unknown line type returns [] without drift", () => {
     const state = top();
