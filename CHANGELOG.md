@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.2.1] - 2026-10-06
+
+### Changed
+
+- The README is now short: what the app does, how to install and run it, the optional hooks setup, and how to help with development. The hero picture stays.
+- The long behavior notes (banner meanings, debug hooks, release checks, hooks privacy) moved to `docs/reference.md`. The finished roadmap checklist was dropped.
+
 ## [0.9.2.0] - 2026-10-06
 
 ### Added
