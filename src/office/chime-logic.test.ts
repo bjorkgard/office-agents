@@ -48,6 +48,12 @@ describe("chime preference", () => {
     expect(chimeText("blocked")).toBe("Chime: click");
     expect(chimeLabel("blocked")).toContain("click");
   });
+  it("starts the accessible name with the visible text (label in name)", () => {
+    for (const status of ["off", "on", "blocked"] as const) {
+      expect(chimeLabel(status).startsWith(chimeText(status))).toBe(true);
+    }
+    expect(chimeLabel("blocked")).toBe("Chime: click, click to enable sound");
+  });
   it("a click on a blocked control retries once, then turns off after a failed unlock", () => {
     expect(nextEnabled(true, "blocked", false)).toBe(true);
     expect(nextEnabled(true, "blocked", true)).toBe(false);

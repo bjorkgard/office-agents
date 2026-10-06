@@ -22,9 +22,9 @@ export function chimeStatus(enabled: boolean, unlocked: boolean): ChimeStatus {
   return unlocked ? "on" : "blocked";
 }
 
-/** Accessible name; the pressed state carries on/off, the name carries the blocked case. */
+/** Accessible name: starts with the visible text (WCAG 2.5.3), then the blocked-state hint. */
 export function chimeLabel(status: ChimeStatus): string {
-  return status === "blocked" ? "Attention chime (click to enable sound)" : "Attention chime";
+  return status === "blocked" ? `${chimeText(status)}, click to enable sound` : chimeText(status);
 }
 
 /** Short visible state next to the speaker glyph. */
