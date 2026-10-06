@@ -3,7 +3,7 @@
  * Installer for the Office Agents Claude Code hooks. Prints by default and writes nothing.
  *   node hooks/install.mjs                       print the snippet and how to apply it
  *   node hooks/install.mjs --apply               merge into the settings file
- *   node hooks/install.mjs --remove              remove only our entries
+ *   node hooks/install.mjs --remove              remove only this checkout's entries
  *   --settings <path>   settings file (default ~/.claude/settings.json)
  *   --dry-run           with --apply/--remove: print the resulting JSON, write nothing
  */
@@ -15,6 +15,7 @@ import {
   realpathSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -74,12 +75,10 @@ function shellWords(cmd) {
   return words;
 }
 
-/** True when a hook command runs our script (final path segment of an argument is exactly its name). */
-function isOurs(h) {
+/** True when a hook command runs this checkout's script (an argument that is exactly its path). */
+function isOurs(h, scriptPath) {
   if (typeof h?.command !== "string") return false;
-  return shellWords(h.command).some(
-    (w) => w.split(/[\\/]/).pop() === SCRIPT_NAME && w !== SCRIPT_NAME,
-  );
+  return shellWords(h.command).some((w) => w === scriptPath);
 }
 
 /** One line for the user: the installed command points into this checkout, not a copy. */
@@ -115,11 +114,12 @@ export function transform(settings, mode, scriptPath) {
   for (const event of EVENTS) {
     const groups = hooks[event] ?? [];
     // Remove only touches events where one of our hooks is present.
-    if (mode === "remove" && !groups.some((g) => g.hooks.some(isOurs))) continue;
+    if (mode === "remove" && !groups.some((g) => g.hooks.some((h) => isOurs(h, scriptPath))))
+      continue;
     // Strip our hook objects everywhere; drop groups that held only ours.
     const kept = [];
     for (const g of groups) {
-      const rest = g.hooks.filter((h) => !isOurs(h));
+      const rest = g.hooks.filter((h) => !isOurs(h, scriptPath));
       if (rest.length === g.hooks.length) kept.push(g);
       else if (rest.length > 0) kept.push({ ...g, hooks: rest });
     }
@@ -233,6 +233,11 @@ export function run(argv, out = (s) => process.stdout.write(`${s}\n`)) {
   const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
   writeFileSync(tmp, text, { mode: fileMode });
   chmodSync(tmp, fileMode);
+  // Another tool may have written the file since we read it: its update must not be lost.
+  if (before !== null && !readFileSync(target).equals(before)) {
+    unlinkSync(tmp);
+    throw new Refusal(`${settingsPath} changed while installing; nothing replaced, run again`);
+  }
   renameSync(tmp, target);
   out(`${mode === "apply" ? "Installed into" : "Removed from"} ${settingsPath}`);
   if (mode === "apply") out(checkoutNote(scriptPath));

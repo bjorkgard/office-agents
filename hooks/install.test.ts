@@ -247,18 +247,20 @@ describe("install.mjs --remove", () => {
     expect(read()).toEqual({});
   });
 
-  it("keeps look-alike commands and removes ours by exact file name", () => {
+  it("keeps look-alike commands and removes ours by this checkout's exact script path", () => {
+    const script = join(HOOKS_DIR, "office-hook.mjs");
     const lookalikes = [
-      "node /x/office-hook.mjs.orig",
-      "node /x/office-hook.mjsx",
-      "node /x/not-office-hook.mjs",
+      `node ${script}.orig`,
+      `node ${script}x`,
+      `node ${join(HOOKS_DIR, "not-office-hook.mjs")}`,
       "echo office-hook.mjs",
-    ];
-    const mine = [
-      "node '/a b/it'\\''s/office-hook.mjs'",
-      'node "/a b/office-hook.mjs"',
       "node /plain/office-hook.mjs",
       "node C:\\\\x\\\\office-hook.mjs",
+    ];
+    const mine = [
+      `node '${script.replaceAll("'", `'\\''`)}'`,
+      `node "${script}"`,
+      `node ${script}`,
     ];
     const cmds = [...lookalikes, ...mine];
     const settings = {
@@ -277,12 +279,51 @@ describe("install.mjs --remove", () => {
     expect(left).toEqual(lookalikes);
   });
 
+  it("leaves another checkout's entry in place", () => {
+    const copy = join(realpathSync(dir), "other-checkout");
+    mkdirSync(copy);
+    for (const f of ["install.mjs", "office-hook.mjs"]) {
+      writeFileSync(join(copy, f), readFileSync(join(HOOKS_DIR, f)));
+    }
+    const applied = spawnSync(
+      process.execPath,
+      [join(copy, "install.mjs"), "--apply", "--settings", file],
+      { encoding: "utf8" },
+    );
+    expect(applied.status).toBe(0);
+    install("--apply", "--settings", file);
+    expect(ourCount(read())).toBe(8);
+    expect(install("--remove", "--settings", file).code).toBe(0);
+    const left = read();
+    expect(ourCount(left)).toBe(4);
+    for (const groups of Object.values(left.hooks) as Array<
+      Array<{ hooks: Array<{ command: string }> }>
+    >) {
+      expect(groups[0].hooks[0].command).toContain(copy);
+    }
+  });
+
   it("--dry-run changes nothing", () => {
     install("--apply", "--settings", file);
     const applied = readFileSync(file, "utf8");
     const r = install("--remove", "--dry-run", "--settings", file);
     expect(ourCount(JSON.parse(r.stdout))).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(applied);
+  });
+});
+
+describe("install.mjs concurrent writer", () => {
+  it("bails out without renaming when the settings file changes before the swap", async () => {
+    const { run } = await import("./install.mjs");
+    writeFileSync(file, JSON.stringify(other));
+    const theirs = JSON.stringify({ theme: "theirs" });
+    // "Backup:" is printed after the read and before the swap: the other tool writes here.
+    const out = (line: string) => {
+      if (line.startsWith("Backup:")) writeFileSync(file, theirs);
+    };
+    expect(() => run(["--apply", "--settings", file], out)).toThrow(/changed/);
+    expect(readFileSync(file, "utf8")).toBe(theirs);
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 });
 
