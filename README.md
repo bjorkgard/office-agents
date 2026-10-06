@@ -67,7 +67,7 @@ node hooks/install.mjs --apply    # merge into ~/.claude/settings.json (timestam
 node hooks/install.mjs --remove   # remove only this checkout's entries (backup first)
 ```
 
-Add `--settings <path>` to use another settings file and `--dry-run` with `--apply` or `--remove` to preview the result. The installer keeps your other keys and hooks, is safe to run twice, and refuses to touch a file that is not valid JSON. `--remove` only removes entries that point at this checkout's `office-hook.mjs`, so another checkout's entry stays.
+Add `--settings <path>` to use another settings file and `--dry-run` with `--apply` or `--remove` to preview the result. The installer keeps your other keys and hooks, is safe to run twice, and refuses to touch a file that is not valid JSON. `--apply` replaces an `office-hook.mjs` entry installed from another checkout (it names the replaced path) so events do not fire twice, while `--remove` only removes entries that point at this checkout's `office-hook.mjs`, so another checkout's entry stays.
 
 The installed hook command runs `hooks/office-hook.mjs` from this repository checkout (the installer prints the path), so moving or deleting the checkout disables it, and a changed script runs on every hook event.
 
