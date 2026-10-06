@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.0.1] - 2026-10-06
+
+### Changed
+
+- The TODO list is now sorted by priority, then by whether the work can start now, then by size, and every task has a stable number (T01 to T45) so it can be named in a commit, a brief or a chat. Two finished tasks (T16, T19) moved to the archive and keep their numbers.
+
 ## [0.9.0.0] - 2026-10-06
 
 ### Added
