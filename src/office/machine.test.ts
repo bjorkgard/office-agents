@@ -1234,3 +1234,77 @@ describe("a replayed exact needs_attention and the stale window", () => {
     expect(stateOf(tick(s, now))).toBe("attention");
   });
 });
+
+describe("kinds", () => {
+  const out = (from: string | null, to: string, subagentKind?: "explore" | "plan"): AgentEvent => ({
+    ...base,
+    kind: "handoff",
+    agentId: null,
+    ts: LIVE,
+    fromAgentId: from,
+    toAgentId: to,
+    direction: "out",
+    ...(subagentKind ? { subagentKind } : {}),
+  });
+  const kindOf = (s: OfficeState, id: string) => s.kinds[agentKey(S, id)];
+
+  it("stores the kind on an out handoff, and nothing without one", () => {
+    let s = applyEvent(working0(), out(null, "a", "explore"), 10);
+    s = applyEvent(s, out(null, "b"), 10);
+    expect(kindOf(s, "a")).toBe("explore");
+    expect(agentKey(S, "b") in s.kinds).toBe(false);
+  });
+
+  it("does not store the kind of a launch the wait-loop guard ignores", () => {
+    let s = applyEvent(createOffice(), started("A"), 0);
+    s = applyEvent(s, started("B"), 0);
+    s = applyEvent(s, out("A", "B", "plan"), 1);
+    s = applyEvent(s, out("B", "A", "explore"), 2);
+    expect(kindOf(s, "B")).toBe("plan");
+    expect(kindOf(s, "A")).toBeUndefined();
+  });
+
+  it("leaves the kind alone on a back", () => {
+    let s = applyEvent(working0(), out(null, "a", "plan"), 10);
+    s = applyEvent(s, handoff("a", "back"), 20);
+    expect(kindOf(s, "a")).toBe("plan");
+  });
+
+  it("evicts the oldest kind at the cap, and a repeated launch refreshes its place", () => {
+    let s = createOffice();
+    for (let i = 0; i < 2000; i++) s = applyEvent(s, out(null, `c${i}`, "plan"), 0);
+    expect(Object.keys(s.kinds)).toHaveLength(2000);
+    s = applyEvent(s, out(null, "c0", "explore"), 0);
+    s = applyEvent(s, out(null, "c2000", "plan"), 0);
+    const keys = Object.keys(s.kinds);
+    expect(keys).toHaveLength(2000);
+    expect(keys).toContain(agentKey(S, "c0"));
+    expect(keys).not.toContain(agentKey(S, "c1"));
+    expect(kindOf(s, "c0")).toBe("explore");
+  });
+
+  it("removeAgent clears the kind, even when no agent is left", () => {
+    let s = applyEvent(createOffice(), out(null, "c", "plan"), 0);
+    expect(kindOf(s, "c")).toBe("plan");
+    s = removeAgent(s, S, "c");
+    expect(agentKey(S, "c") in s.kinds).toBe(false);
+  });
+
+  it("drops the kind of a child the tick prunes", () => {
+    let s = applyEvent(working0(), out(null, "kid", "plan"), 10);
+    s = applyEvent(s, started("kid"), 10);
+    expect(kindOf(s, "kid")).toBe("plan");
+    s = tick(s, HOUR);
+    expect(get(s, "kid")!.phase).toBe("leaving");
+    s = tick(s, HOUR + TUNING.subagentLeavingMs);
+    expect(get(s, "kid")).toBeUndefined();
+    expect(agentKey(S, "kid") in s.kinds).toBe(false);
+  });
+
+  it("replaying the same events gives the same kinds", () => {
+    const events = [out(null, "a", "explore"), out(null, "b", "plan"), handoff("a", "back")];
+    const live = events.reduce((s, e) => applyEvent(s, e, 10), createOffice());
+    const replay = applyEvents(createOffice(), events, 10, { replay: true });
+    expect(replay.kinds).toEqual(live.kinds);
+  });
+});

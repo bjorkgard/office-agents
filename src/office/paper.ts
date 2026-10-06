@@ -2,6 +2,7 @@
 // Pure and a function of timestamps: the sheet is there from a subagent's arrival until it takes the paper, and
 // from a leaver's handover until the parent has had it a while. Times follow the paths in choreo.ts.
 // Also owns the door ajar's timing from the same spans: doorOpen, doorOpenFor and DOOR_TUNING.
+import type { SubagentKind } from "../../shared/events";
 import {
   FADE_MS,
   HANDOVER_MS,
@@ -30,9 +31,31 @@ export type Paper = {
   since: number | null;
   /** The next instant the answer changes (epoch ms), null when it will not by itself. */
   nextChange: number | null;
+  /** Distinct kinds of the sheets live now (not merely fading), in order of span start. */
+  kinds: readonly SubagentKind[];
 };
 
 type Sub = Pick<Agent, "phase" | "arrivedAt" | "leftAt">;
+/** A subagent as the paper sees it; `key` finds its kind (a missing one reads as "other"). */
+type PaperSub = Sub & { key?: string };
+
+/** What a sheet is labelled with, per kind (a Record, so a new kind fails to compile). */
+export const PAPER_KIND_LABEL: Record<SubagentKind, string> = {
+  explore: "Explore",
+  plan: "Plan",
+  general: "General",
+  other: "Subagent",
+};
+
+/** The label shows at most this many kinds; the rest collapse into ` +N`. */
+export const PAPER_LABEL_MAX = 3;
+
+/** The label for a sheet's kinds: the first PAPER_LABEL_MAX, then ` +N` for the rest; "" for none. */
+export function paperLabel(kinds: readonly SubagentKind[]): string {
+  const shown = kinds.slice(0, PAPER_LABEL_MAX).map((k) => PAPER_KIND_LABEL[k]);
+  const more = kinds.length - PAPER_LABEL_MAX;
+  return more > 0 ? `${shown.join(", ")} +${more}` : shown.join(", ");
+}
 
 const walkMs = (a: { x: number; y: number }, b: { x: number; y: number }) =>
   (Math.hypot(b.x - a.x, b.y - a.y) / WALK_SPEED) * 1000;
@@ -62,21 +85,25 @@ function leavingSpan(a: Sub, ctx: SubagentCtx, waiting: boolean): [number, numbe
 }
 
 type Span = [number, number];
+/** A span with the kind of the child it belongs to. */
+type Item = { span: Span | null; kind: SubagentKind };
 
 /** Folds the spans into the sheet's state at `now`. */
-function fold(spans: readonly (Span | null)[], now: number): Paper {
+function fold(items: readonly Item[], now: number): Paper {
   let since: number | null = null;
+  const live: { start: number; kind: SubagentKind }[] = [];
   let fading = false;
   let next = Infinity;
   const soon = (t: number) => {
     if (t > now) next = Math.min(next, t);
   };
-  for (const span of spans) {
+  for (const { span, kind } of items) {
     if (!span) continue;
     const [start, end] = span;
     if (end <= start) continue;
     soon(start);
     if (now >= start && now < end) {
+      live.push({ start, kind });
       since = since === null ? start : Math.min(since, start);
       soon(end);
     } else if (now >= end && now < end + PAPER_FADE_MS) {
@@ -90,8 +117,12 @@ function fold(spans: readonly (Span | null)[], now: number): Paper {
     fading: !visible && fading,
     since,
     nextChange: Number.isFinite(next) ? next : null,
+    kinds: [...new Set(live.sort((a, b) => a.start - b.start).map((l) => l.kind))],
   };
 }
+
+const kindOf = (kinds: Readonly<Record<string, SubagentKind>>, a: PaperSub): SubagentKind =>
+  (a.key !== undefined && Object.hasOwn(kinds, a.key) ? kinds[a.key] : undefined) ?? "other";
 
 /**
  * The sheet on one parent desk. `subagents` are that session's subagents, `ctxOf` their path
@@ -99,19 +130,23 @@ function fold(spans: readonly (Span | null)[], now: number): Paper {
  * the hold: the sheet stays while the parent waits on subagents (up to PAPER_MAX_MS) and
  * otherwise PAPER_HOLD_MS.
  */
-export function paperOnDesk<S extends Sub>(
+export function paperOnDesk<S extends PaperSub>(
   parent: Pick<Agent, "state">,
   subagents: readonly S[],
   ctxOf: (a: S) => SubagentCtx | null,
   now: number,
+  kinds: Readonly<Record<string, SubagentKind>> = {},
 ): Paper {
   const waiting = parent.state === "waiting-on-subagents";
-  const spans: (Span | null)[] = [];
+  const items: Item[] = [];
   for (const a of subagents) {
     const ctx = ctxOf(a);
-    if (ctx) spans.push(arrivalSpan(a, ctx), leavingSpan(a, ctx, waiting));
+    const kind = kindOf(kinds, a);
+    if (ctx) {
+      items.push({ span: arrivalSpan(a, ctx), kind }, { span: leavingSpan(a, ctx, waiting), kind });
+    }
   }
-  return fold(spans, now);
+  return fold(items, now);
 }
 
 /**
@@ -121,17 +156,21 @@ export function paperOnDesk<S extends Sub>(
  */
 export function stillPaperOnDesk(
   parent: Pick<Agent, "state">,
-  subagents: readonly Sub[],
+  subagents: readonly PaperSub[],
   now: number,
+  kinds: Readonly<Record<string, SubagentKind>> = {},
 ): Paper {
   const waiting = parent.state === "waiting-on-subagents";
-  const spans: Span[] = [];
+  const items: Item[] = [];
   for (const a of subagents) {
+    const kind = kindOf(kinds, a);
     const gone = a.phase === "leaving" ? (a.leftAt ?? a.arrivedAt) : Infinity;
-    spans.push([a.arrivedAt, Math.min(a.arrivedAt + HANDOVER_MS, gone)]);
-    if (a.phase === "leaving") spans.push([gone, gone + (waiting ? PAPER_MAX_MS : PAPER_HOLD_MS)]);
+    items.push({ span: [a.arrivedAt, Math.min(a.arrivedAt + HANDOVER_MS, gone)], kind });
+    if (a.phase === "leaving") {
+      items.push({ span: [gone, gone + (waiting ? PAPER_MAX_MS : PAPER_HOLD_MS)], kind });
+    }
   }
-  return fold(spans, now);
+  return fold(items, now);
 }
 
 /** The sheet on a parent's desk, from the plan the walkers use (`motion`). */
@@ -141,14 +180,15 @@ export function paperOfParent(
   motion: Pick<Motion, "subs" | "workDeskOf" | "plan">,
   reducedMotion: boolean,
   now: number,
+  kinds: Readonly<Record<string, SubagentKind>> = {},
 ): Paper {
   const subs = agents.filter((a) => a.agentId !== null && a.sessionId === parent.sessionId);
   if (reducedMotion) {
     // Only those that appear (at a desk or a slot), as in the scene.
     const placed = subs.filter((a) => motion.workDeskOf.has(a.key) || motion.plan.slot.has(a.key));
-    return stillPaperOnDesk(parent, placed, now);
+    return stillPaperOnDesk(parent, placed, now, kinds);
   }
-  return paperOnDesk(parent, subs, (a) => motion.subs.get(a.key)?.ctx ?? null, now);
+  return paperOnDesk(parent, subs, (a) => motion.subs.get(a.key)?.ctx ?? null, now, kinds);
 }
 
 /** Door ajar: how long it opens for an arrival and ahead of a leaver, and the run cap. */

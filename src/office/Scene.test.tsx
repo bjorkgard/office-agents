@@ -8,7 +8,7 @@ import { roomShell, wallPropRect } from "./room";
 import { DESK_CAP } from "../../shared/tuning";
 import { DeskLayer, SCREEN_BAND_CELLS } from "./DeskLayer";
 import { geometryFor } from "./scene-model";
-import { DESK_KINDS } from "./desk-kinds";
+import { DESK_KINDS, deskKindFor } from "./desk-kinds";
 import { CELL } from "./pixel";
 import { propSize } from "./props";
 import { deviceFor } from "./devices";
@@ -24,6 +24,7 @@ import {
 } from "./decor";
 import { ART, GLASS } from "./palette";
 import { DOOR_TUNING } from "./paper";
+import { agentIdentity, projectLabel } from "./label";
 import { decorVariantFor } from "./decor";
 import sceneSrc from "./Scene.tsx?raw";
 
@@ -71,11 +72,13 @@ function render(
   viewport = { width: 1200, height: 800 },
   clock?: () => number,
   now = 10 * 60_000,
+  kinds: OfficeState["kinds"] = {},
 ) {
   const office: OfficeState = {
     agents: Object.fromEntries(agents.map((a) => [a.key, a])),
     episodeSeq: 0,
     returned: {},
+    kinds,
   };
   return renderToStaticMarkup(
     <Scene
@@ -675,6 +678,143 @@ describe("Scene paper on the desk", () => {
   });
 });
 
+describe("Scene paper hover label", () => {
+  const sub = (id: string, over: Partial<Agent> = {}) =>
+    agent("s1", id, {
+      state: "arriving",
+      phase: "arriving",
+      arrivedAt: 1000,
+      parentAgentId: null,
+      ...over,
+    });
+  const at = (ms: number) => () => ms;
+  const name = agentIdentity("s1", null).name;
+  const project = projectLabel("/work/atlas");
+  const draw = (subs: Agent[], kinds: OfficeState["kinds"], ms = 1010) =>
+    render([agent("s1", null), ...subs], { s1: 0 }, null, undefined, at(ms), 10 * 60_000, kinds);
+  const labelOf = (html: string) => html.match(/<div class="paper-label"[^>]*>([^<]*)</)?.[1];
+
+  it("has a target only on the desk of the parent whose paper lies", () => {
+    const quiet = agent("s1", null);
+    const busy = agent("s2", null);
+    const html = render(
+      [quiet, busy, sub("a1", { sessionId: "s2", key: agentKey("s2", "a1") })],
+      { s1: 0, s2: 1 },
+      null,
+      undefined,
+      at(1010),
+    );
+    const blockOf = (key: string) => html.split('data-agent="').find((b) => b.startsWith(key))!;
+    expect(blockOf(quiet.key)).not.toContain("paper-hit");
+    expect(blockOf(quiet.key)).not.toContain("paper-label");
+    expect(blockOf(busy.key)).toContain("paper-hit");
+    expect(html.match(/class="hit paper-hit"/g)).toHaveLength(1);
+  });
+
+  it("gives a subagent no target of its own, and a parent at most one", () => {
+    // All 24 desks taken: helpers of s0 and s1 stand in slots at their parent's desk, the case where
+    // a subagent's own desk is its parent's.
+    const parents = Array.from({ length: 24 }, (_, i) => agent(`s${i}`, null));
+    const seats = Object.fromEntries(parents.map((p, i) => [p.sessionId, i]));
+    const helpers = ["s0", "s0", "s1"].map((sid, i) =>
+      sub(`h${i}`, { sessionId: sid, key: agentKey(sid, `h${i}`) }),
+    );
+    let withTarget = 0;
+    for (let ms = 1000; ms <= 6000; ms += 100) {
+      const html = render([...parents, ...helpers], seats, null, undefined, at(ms));
+      const blocks = html.split('data-agent="').slice(1);
+      expect(blocks).toHaveLength(parents.length + helpers.length);
+      for (const block of blocks) {
+        const own = (block.match(/class="hit paper-hit"/g) ?? []).length;
+        const isHelper = /^s\d+.h\d/.test(block);
+        expect(own, `${block.slice(0, 8)} at ${ms} ms`).toBeLessThanOrEqual(isHelper ? 0 : 1);
+        withTarget += own;
+      }
+      expect(html.match(/class="paper-label"/g)?.length ?? 0).toBe(
+        html.match(/class="hit paper-hit"/g)?.length ?? 0,
+      );
+    }
+    expect(withTarget).toBeGreaterThan(0);
+  });
+
+  it("places the target on the paper slot centre, clear of the focus ring for the label", () => {
+    const html = draw([sub("a1")], {});
+    const { scale } = layoutOffice(4, { width: 1200, height: 800 });
+    const hit = Math.max(24, 40 * scale);
+    const slot = deskKindFor(0).paperSlot;
+    const d = geometryFor(layoutOffice(4, { width: 1200, height: 800 })).desk(0);
+    const x = d.x + (slot.x + slot.w / 2) * CELL;
+    const y = d.y + (slot.y + slot.h / 2) * CELL;
+    const calcX = `calc(var(--fit-s) * ${x}px + var(--fit-x))`;
+    const calcY = `calc(var(--fit-s) * ${y}px + var(--fit-y))`;
+    const styleOf = (cls: string) =>
+      html.match(new RegExp(`class="${cls}"[^>]*style="([^"]*)"`))?.[1];
+    expect(styleOf("hit paper-hit")).toBe(
+      `left:${calcX};top:${calcY};width:${hit}px;height:${hit}px`,
+    );
+    expect(styleOf("paper-label")).toBe(
+      `left:${calcX};top:calc(var(--fit-s) * ${y}px + var(--fit-y) + ${hit / 2 + 6}px)`,
+    );
+  });
+
+  it("has a target and a label while a paper is visible, named for the parent and kinds", () => {
+    const a = sub("a1");
+    const html = draw([a], { [a.key]: "explore" });
+    expect(html).toContain(`aria-label="${name}, ${project}: paper from Explore"`);
+    expect(labelOf(html)).toBe("Explore");
+    expect(html).toMatch(/<button type="button" class="hit paper-hit"/);
+    expect(html).toMatch(/<div class="paper-label" aria-hidden="true"/);
+  });
+
+  it("joins two kinds in the name and the label", () => {
+    const a = sub("a1");
+    const b = sub("a2");
+    const html = draw([a, b], { [a.key]: "explore", [b.key]: "plan" });
+    expect(html).toContain(`aria-label="${name}, ${project}: paper from Explore, Plan"`);
+    expect(labelOf(html)).toBe("Explore, Plan");
+  });
+
+  it("shows three kinds then +N for a fourth", () => {
+    const subs = ["a1", "a2", "a3", "a4"].map((id) => sub(id));
+    const html = draw(subs, {
+      [subs[0].key]: "explore",
+      [subs[1].key]: "plan",
+      [subs[2].key]: "general",
+      [subs[3].key]: "other",
+    });
+    expect(labelOf(html)).toBe("Explore, Plan, General +1");
+  });
+
+  it("reads Subagent for a kind nobody recorded", () => {
+    expect(labelOf(draw([sub("a1")], {}))).toBe("Subagent");
+  });
+
+  it("is gone while the paper only fades", () => {
+    let ms = 1000;
+    while (!draw([sub("a1")], {}, ms).includes("data-fading")) {
+      ms += 50;
+      if (ms > 20_000) throw new Error("the paper never began to fade within 20 s");
+    }
+    const html = draw([sub("a1")], {}, ms);
+    expect(html).not.toContain("paper-hit");
+    expect(html).not.toContain("paper-label");
+  });
+
+  it("comes after the parent's hit and tag, with the label right after its target", () => {
+    const html = draw([sub("a1")], {});
+    const own = html.slice(html.indexOf(`data-agent="${agentKey("s1", null)}"`));
+    const order = [
+      'class="hit"',
+      'class="tag"',
+      'class="hit paper-hit"',
+      'class="paper-label"',
+    ].map((m) => own.indexOf(m));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect(order).toEqual([...order].sort((x, y) => x - y));
+    expect(own).toMatch(/class="hit paper-hit"[^>]*><\/button><div class="paper-label"/);
+  });
+});
+
 describe("Scene rows on demand", () => {
   const settled = () => 10 * 60_000;
   const parents = (n: number) => Array.from({ length: n }, (_, i) => agent(`s${i}`, null));
@@ -1037,6 +1177,7 @@ describe("Scene windows", () => {
       agents: Object.fromEntries(agents.map((a) => [a.key, a])),
       episodeSeq: 0,
       returned: {},
+      kinds: {},
     };
     return renderToStaticMarkup(
       <Scene

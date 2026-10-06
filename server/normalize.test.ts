@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
-import type { AgentEvent } from "../shared/events.ts";
+import { MAX_STRING_LENGTH, parseAgentEvent, type AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, endsWithQuestion, normalize, normalizeBatch } from "./normalize.ts";
 import { hashId, parseCliArgs, sanitizeFileName, sanitizeTranscript } from "./sanitize-fixtures.ts";
 
@@ -74,6 +74,8 @@ describe("async flow", () => {
   });
 
   it("turn_duration and unknown line types emit nothing and are not drift", () => {
+    // The fixture's two Agent launches carry no subagent_type (the sanitizer strips it); a
+    // missing type is the general-purpose fallback, not drift, so only the orphan counts.
     expect(state.drift).toEqual({ orphan_completion: 1 });
   });
 
@@ -684,5 +686,138 @@ describe("sanitize-fixtures CLI main block", () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe("subagentKind", () => {
+  const T = "2026-10-02T10:00:00Z";
+  const launch = (tool: string, toolId: string, input: Record<string, unknown>) =>
+    JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: T,
+      message: { content: [{ type: "tool_use", id: toolId, name: tool, input }] },
+    });
+  const result = (toolId: string, agentId: string, status: string) =>
+    JSON.stringify({
+      type: "user",
+      sessionId: "s",
+      timestamp: T,
+      message: { content: [{ type: "tool_result", tool_use_id: toolId }] },
+      toolUseResult: { status, agentId },
+    });
+  const outs = (events: AgentEvent[]) =>
+    events.filter((e) => e.kind === "handoff" && e.direction === "out");
+  const kindOf = (tool: string, input: Record<string, unknown>, bg = true) => {
+    const state = top();
+    const events = [
+      launch(tool, "tu1", { ...input, run_in_background: bg }),
+      result("tu1", "c1", bg ? "async_launched" : "completed"),
+    ].flatMap((l) => normalize(state, l));
+    const out = outs(events);
+    expect(out).toHaveLength(1);
+    return { sub: (out[0] as { subagentKind?: string }).subagentKind, state };
+  };
+
+  it.each([
+    ["Explore", "explore"],
+    ["Plan", "plan"],
+    ["general-purpose", "general"],
+  ])("maps %s to %s for Agent and Task", (type, kind) => {
+    expect(kindOf("Agent", { subagent_type: type }).sub).toBe(kind);
+    expect(kindOf("Task", { subagent_type: type }).sub).toBe(kind);
+  });
+
+  it.each([
+    ["number", 7],
+    ["null", null],
+    ["object", { a: 1 }],
+    ["empty", ""],
+    ["too long", "x".repeat(513)],
+    ["exactly MAX_STRING_LENGTH", "x".repeat(MAX_STRING_LENGTH)],
+    ["lowercase explore", "explore"],
+    ["roster name", "code-reviewer"],
+    ["__proto__", "__proto__"],
+    ["constructor", "constructor"],
+    ["toString", "toString"],
+  ])("%s subagent_type maps to other and counts drift", (_n, value) => {
+    const { sub, state } = kindOf("Agent", { subagent_type: value });
+    expect(sub).toBe("other");
+    expect(state.drift.unmapped_subagent_type).toBe(1);
+  });
+
+  it("a missing subagent_type reads general (Claude Code's fallback) and is not drift", () => {
+    const { sub, state } = kindOf("Agent", {});
+    expect(sub).toBe("general");
+    expect(state.drift.unmapped_subagent_type).toBe(undefined);
+  });
+
+  it("a MAX_STRING_LENGTH subagent_type still yields events that pass the guard", () => {
+    const state = top();
+    const events = [
+      launch("Agent", "tu1", {
+        subagent_type: "x".repeat(MAX_STRING_LENGTH),
+        run_in_background: true,
+      }),
+      result("tu1", "c1", "async_launched"),
+    ].flatMap((l) => normalize(state, l));
+    expect(outs(events)).toHaveLength(1);
+    for (const e of events) expect(parseAgentEvent(e)).not.toBeNull();
+  });
+
+  it("a mapped type does not count drift", () => {
+    expect(kindOf("Agent", { subagent_type: "Plan" }).state.drift.unmapped_subagent_type).toBe(
+      undefined,
+    );
+  });
+
+  it("sync launch carries the kind on out and not on back", () => {
+    const state = top();
+    const events = [
+      launch("Agent", "tu1", { subagent_type: "Plan", run_in_background: false }),
+      result("tu1", "c1", "completed"),
+    ].flatMap((l) => normalize(state, l));
+    const hs = events.filter((e) => e.kind === "handoff");
+    expect(hs.map((h) => h.direction)).toEqual(["out", "back"]);
+    expect(hs[0]).toMatchObject({ subagentKind: "plan" });
+    expect(Object.hasOwn(hs[1], "subagentKind")).toBe(false);
+  });
+
+  it("queue-operation back carries no subagentKind and a SendMessage resume emits no second out", () => {
+    const state = top();
+    const notify = (toolId: string) =>
+      JSON.stringify({
+        type: "queue-operation",
+        operation: "enqueue",
+        sessionId: "s",
+        timestamp: T,
+        content: `<task-notification><task-id>c1</task-id><tool-use-id>${toolId}</tool-use-id><status>completed</status></task-notification>`,
+      });
+    const events = [
+      launch("Agent", "tu1", { subagent_type: "Explore", run_in_background: true }),
+      result("tu1", "c1", "async_launched"),
+      launch("SendMessage", "tu2", { to: "c1" }),
+      result("tu2", "c1", "queued"),
+      notify("tu1"),
+      notify("tu2"),
+    ].flatMap((l) => normalize(state, l));
+    expect(outs(events)).toHaveLength(1);
+    const backs = events.filter((e) => e.kind === "handoff" && e.direction === "back");
+    expect(backs).toHaveLength(2);
+    for (const b of backs) expect(Object.hasOwn(b, "subagentKind")).toBe(false);
+  });
+
+  it("never lets the raw subagent_type reach an emitted event", () => {
+    const marker = "LEAKMARKER-7f3a";
+    const state = top();
+    const events = [
+      launch("Agent", "tu1", { subagent_type: marker, run_in_background: true }),
+      result("tu1", "c1", "async_launched"),
+      launch("Agent", "tu2", { subagent_type: `${marker}-sync`, run_in_background: false }),
+      result("tu2", "c2", "completed"),
+    ].flatMap((l) => normalize(state, l));
+    expect(events.length).toBeGreaterThan(0);
+    expect(JSON.stringify(events)).not.toContain(marker);
+    expect(JSON.stringify(state.drift)).not.toContain(marker);
   });
 });

@@ -426,3 +426,11 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Status:** DONE (2026-10-05): bookshelf and two pictures on the left wall past the window, with a date-varied palette; no text.
 
 **Priority:** P4
+
+### Paper hover-text with redaction (DONE in v0.9.0.0 as a closed-enum kind label, no text)
+
+**Status:** DONE in v0.9.0.0 (`shared/events.ts`, `server/normalize.ts`, `src/office/{machine,paper,Scene}.ts(x)`, `scene.css`). Verified in code and with `vp test`, `vp run e2e` and a browser check before moving.
+
+**What was asked:** Hover or click a handoff paper to read the subagent description and a truncated result summary, with redaction.
+
+**What shipped instead:** Free text was rejected in the CEO review (it would reverse DESIGN Principle 4 and redaction cannot be proven complete). The paper now shows a closed-enum kind (Explore, Plan, General, Subagent) derived server-side from `subagent_type`; no description or prompt reaches the browser. Plan and decisions: `docs/designs/paper-hover-text-ceo-review.md`.

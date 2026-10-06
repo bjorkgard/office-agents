@@ -9,7 +9,7 @@ Status: tokens below are the contract and are now in `src/index.css` `:root` (th
 1. The room is the anchor. UI chrome stays quiet so a waving agent is the loudest thing on screen.
 2. Attention is never color alone (8B). Pose, bubble and floor ring carry it; color only reinforces.
 3. Calm by default. No sound unless you turn on the attention chime (off by default), no neon (4C, 3A), and no camera movement except one: when the fit changes (a row is added or removed, or the window is resized) the whole room eases to its new fit over `--dur-base` (240ms) with `--ease`, and not at all under `prefers-reduced-motion: reduce`.
-4. Nothing is read from transcripts into the UI: bubbles say "Asking you" or "Stuck?" plus wait time, never message text (2B).
+4. Nothing is read from transcripts into the UI: bubbles say "Asking you" or "Stuck?" plus wait time, never message text (2B). One closed-enum exception: the paper label may show a subagent kind (Explore, Plan, General, Subagent), because it is a fixed list chosen on the server, never transcript text.
 5. A stable map. Desks, door and coffee station do not move once placed (8A). The decor palette (bookshelf books, pictures) may change once per local day and swaps instantly, like the hour scene, while the map stays stable.
 
 ## Color tokens
@@ -143,6 +143,8 @@ There are no 1 px stroke outlines on the pixel figures (the earlier 1 screen px 
 
 The room shell (floor with a shaded checker, two back walls, baseboards; palette tokens only, no text) is the lowest layer, under every prop and desk. Back to front per desk: floor ring, chair back, character body, desk top and monitor (a raised arm draws above the monitor), desk front edge, mug. Tags and bubbles are in the unscaled overlay on top. Overlapping bubbles: the longer-waiting agent stays on top; the other shifts up in 8px steps, at most 2 shifts, then hides behind its chip. A bubble also never covers another agent's tag or figure (head to feet): it takes the same shifts, then hides. The one exception is the single longest-waiting bubble in the room, which never shifts or hides for an obstacle (it may sit over a neighbour's tag); the obstacle rule applies only to the others. The `?art` sheet (dev only) shows two waving agents side by side.
 
+The paper label ranks below the waving agent, ring and bubble in visual weight and above decor. Stacking inside the isolated overlay: name tag (auto), then paper target (1), hit (2), label (3), bubble (4). The label is above tags and below bubbles; it may cover a figure while shown (hover or focus only) but never a bubble.
+
 ### Reduced motion destinations
 
 Under `prefers-reduced-motion: reduce`, an agent appears instantly at its semantic place (desk, coffee station, or, for a subagent, its empty desk, else, only beyond the 24-desk cap, a slot beside its parent) with a `--dur-slow` (600ms) opacity fade, and fades out on leaving. No walking, typing tap or bobbing. Attention is a static raised hand with ring and bubble. Paper handoff: nobody walks, so the sheet follows state alone, with a `--dur-slow` (600ms) opacity fade and no travel: it lies for one handover time (600ms) from a placed subagent's arrival, and from a leaver's departure for the same hold as above (4 s, longer while the parent waits, never past 30 s); a queued subagent has none; chip pulse is a static `--accent` outline. A new desk appears with no fade or drop, and any fit change (a row change or a window resize) refits the room at once (no ease). Devices are static pixel art and look the same under reduced motion. Windows are static: the clouds stand still, the rain and snow are not drawn (the sky, skyline and floor light stay), and the scene still changes at the hour boundary.
@@ -255,6 +257,12 @@ Left: title "Agent Office" (placeholder name). Middle: status banner, one text l
 
 "Asking you" (final message ended with `?`) or "Stuck?" (tool-call timer), plus wait time (2B). Never any transcript text. 6px radius, `--bubble-fill` background, `--bubble-text` for the label, `--bubble-muted` for the wait time (Art palette). Overlap nudging: see "Layer order and bubbles".
 
+### Paper label
+
+A focusable target on the parent's desk paper and a label revealed by CSS on hover and `:focus-visible`. Label strings: Explore, Plan, General, Subagent. The label lists the distinct kinds of the sheets on the desk in order of arrival, at most 3, then "+N" (example "Explore, Plan, General +1"). Accessible name: "<name>, <project>: paper from <label>". Style: name-tag tokens (`--bar` fill, `--text` 13px 400, `--radius-sm`, `--dur-fast` fade) plus a small upward notch. It sits below the paper; its top clears the focus ring (hit/2 + 6 screen px). `cursor: help`. No click action.
+
+Paper label limits: the label is reachable only while the sheet lies: from an arriving subagent's arrival until it takes the paper (a few seconds), then 4 s after a leaver's handover, or up to 30 s while the parent is still waiting on subagents (it drops back to 4 s once the parent stops waiting); under reduced motion an arriving sheet lies 600 ms. A running sync-launched subagent reads "Subagent" until it returns, because its kind arrives with the handoff at the launch's result. A launch without `subagent_type` reads "General" (Claude Code falls back to general-purpose); custom agent types (roster names) read "Subagent". After a page reload a returned subagent's sheet reads "Subagent", because its `out` leaves the snapshot. A very long session can evict the `out` from the ring.
+
 ### Character
 
 Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, leaving) and `data-shirt`. Focusable; keyboard order is waiting agents first, then by desk. Focus rectangle uses `--accent`.
@@ -268,11 +276,15 @@ Exposes `data-state` (arriving, working, waiting-on-subagents, idle, attention, 
 | Bubble       | n/a                      | n/a                                           | n/a                                                   | "Asking you" or "Stuck?" plus time | time unknown: omit time                    |
 | Tab title    | "Agent Office"           | "Agent Office"                                | "Agent Office"                                        | "(N) Agent Office"                 | n/a                                        |
 | Reconnecting | bar: "Reconnecting"      | keep last scene as is                         | after retries bar shows refused                       | scene resumes                      | n/a                                        |
+| Paper label  | no target                | no target                                     | unknown or missing kind: "Subagent"                   | kinds, e.g. "Explore, Plan"        | more than 3 kinds: first 3 plus "+N"       |
+
+The paper target and label are gone when the sheet starts fading, so they are not hoverable during the 600 ms fade. Under reduced motion the label appears without a fade.
 
 ## Accessibility
 
 - Hidden `aria-live="polite"` region announces once per attention episode, e.g. "Maya, office-agents, asking you". The state machine assigns the episode id so a flapping timer cannot spam announcements.
 - Chips are real buttons; characters are focusable; the focus rectangle uses `--accent` at 2px with a 2px offset around the 24x24 hit area (see "Floor ring, focus rectangle, hit area").
+- The paper target is a tab stop right after its parent's hit button. The paper label is not dismissible with Escape (a known deviation from WCAG 1.4.13, shared with name tags); touch is out of scope.
 - Text contrast 4.5:1 minimum; graphics 3:1.
 - Phone and touch layouts are out of scope (feed refuses non-loopback, R3).
 
@@ -298,6 +310,8 @@ The 12-agent gate sits on the 16 ms line and can flip between runs: three median
 2026-10-05, where the 24-agent cost sits: the worst event is phase `mount` in all 6 repeats of each run, at about +3.9 s after the write, while the row was detected as appeared at +4.15 to 4.2 s. The worst event is therefore the insertion's own style recalc, seen about 270 ms late because of the 20 ms poll plus the round trip. It restyles about 9.6k elements (9,637 to 9,672) at both 12 and 24 agents, against about 3.2k on a fresh page; 24 agents costs more per event (19 to 21 ms against 13 to 15 ms). The earlier reading that 24-agent events fell before the row appeared and were unrelated to the step is superseded by this. What invalidates those ~9.6k elements is not yet known; the next probe is invalidation tracking (see TODOS.md).
 
 2026-10-05, Safari (M10, partial): two Web Inspector Timelines recordings of the page load, `?demo=12` and `?demo=24` (about 3 s each, dev server, the page-load recording, not a row change on a settled page). Style recalculation events: 45 (12 agents) and 46 (24 agents); the worst was 31.9 ms in both, right after load at about 1.0 s, then 29.3 and 26.5 ms (12) or 27.3 ms (24) in the same burst; a second burst at about 2.0 to 2.2 s peaked at 15.6 and 12.0 ms (12) and 15.0 and 11.5 ms (24). Layout peaked at 3.2 ms (12) and 3.6 ms (24); paint at 1.6 ms and 2.3 ms. The export holds no rendering-frame records, so no Safari frame time. Not measured: the settled-page row-change recalc, Safari hit area at 50% scale, and tag, bubble and hit-area alignment during the ease. Static screenshots at 12 agents showed tags and bubbles on the right characters.
+
+2026-10-06, paper label (one `vp run perf` run, quiet machine, 6 repeats per size, same method and budgets as the 2026-10-05 gate; the exit code was 1 because of the 24-agent FAIL): 12 agents PASS, p95 frame 16.8 ms over 301 frames (budget 20 ms), row-change style recalc median worst event 14.71 ms (budget 16 ms; repeats 13.9, 14.5, 21.3, 19.4, 14.8 and 14.6 ms; warm-up repeat 1 kept because it was not above the median of the others; flagged marginal, within 10% of the budget). 24 agents FAIL, p95 frame 16.7 ms over 299 frames (budget 33 ms, PASS), median worst event 20.24 ms (budget 16 ms; repeats 19.5, 20.1, 27.7, 20.4, 18.6 and 21.4 ms; warm-up kept). Compared with the 2026-10-05 gate (12 agents 14.6, 13.5 and 15.1 ms PASS; 24 agents 21.3, 20.6 and 18.9 ms FAIL): the 12-agent median is inside that range and the 24-agent median is inside it too, so no change attributable to the paper label is visible in this one run. The 24-agent miss is the same open item as before. No INCONCLUSIVE result.
 
 ## Open items
 

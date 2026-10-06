@@ -9,7 +9,7 @@
  * | working              | server/normalize.ts                   | machine (R1 tool timer)       | tool id only, never tool input/output |
  * | waiting_on_subagents | server/normalize.ts                   | machine                       | ids only                              |
  * | needs_attention      | exact adapters only (hooks adapter)   | machine                       | ids and timestamps only               |
- * | handoff              | server/normalize.ts                   | machine (handoff animation)   | ids only                              |
+ * | handoff              | server/normalize.ts                   | machine (handoff animation)   | ids and a closed-enum subagentKind    |
  * | done                 | server/normalize.ts                   | machine (R2 question check)   | boolean only, never message text      |
  *
  * No kind may ever carry transcript text (DESIGN principle 4). parseAgentEvent is the
@@ -24,6 +24,9 @@ export type AgentEventBase = {
   /** Epoch milliseconds. */
   ts: number;
 };
+
+export const SUBAGENT_KINDS = ["explore", "plan", "general", "other"] as const;
+export type SubagentKind = (typeof SUBAGENT_KINDS)[number];
 
 export type AgentEvent =
   | (AgentEventBase & {
@@ -46,6 +49,8 @@ export type AgentEvent =
       fromAgentId: string | null;
       toAgentId: string;
       direction: "out" | "back";
+      /** Closed enum, only on "out"; never free text. */
+      subagentKind?: SubagentKind;
     })
   | (AgentEventBase & { kind: "done"; endsWithQuestion: boolean });
 
@@ -54,14 +59,16 @@ export type AgentEventKind = AgentEvent["kind"];
 /** Maximum length of any string field accepted by the guard. */
 export const MAX_STRING_LENGTH = 512;
 
-// `optional` only applies to object fields; enum `values` are not tied to the union
-// at type level, shared/events.test.ts iterates each union literal instead.
-type FieldSpec =
+// `optional` applies to every spec type: parseFields skips an absent optional field.
+// Enum `values` are not tied to the union at type level, shared/events.test.ts
+// iterates each union literal instead.
+type FieldSpec = { optional?: boolean } & (
   | { type: "string"; nullable?: boolean; nonEmpty?: boolean }
   | { type: "timestamp" }
   | { type: "boolean" }
   | { type: "enum"; values: readonly string[] }
-  | { type: "object"; optional?: boolean; fields: Record<string, FieldSpec> };
+  | { type: "object"; fields: Record<string, FieldSpec> }
+);
 
 /** Free-form string (a path); may be empty. */
 const str: FieldSpec = { type: "string" };
@@ -104,6 +111,7 @@ const SPEC: { [K in AgentEventKind]: SpecFor<EventOf<K>> } = {
     fromAgentId: nullableId,
     toAgentId: id,
     direction: { type: "enum", values: ["out", "back"] },
+    subagentKind: { type: "enum", optional: true, values: SUBAGENT_KINDS },
   },
   done: { ...baseFields, endsWithQuestion: bool },
 };
@@ -141,7 +149,7 @@ function parseFields(
   for (const [name, spec] of Object.entries(fields)) {
     const value = Object.hasOwn(record, name) ? record[name] : undefined;
     if (value === undefined) {
-      if (spec.type === "object" && spec.optional) continue;
+      if (spec.optional) continue;
       return INVALID;
     }
     const parsed = parseField(spec, value);
@@ -163,6 +171,8 @@ export function parseAgentEvent(value: unknown): AgentEvent | null {
     if (typeof kind !== "string" || !Object.hasOwn(SPEC, kind)) return null;
     const fields = parseFields(SPEC[kind as AgentEventKind], value);
     if (fields === INVALID) return null;
+    // subagentKind marks a launch; a "back" that carries one is malformed.
+    if (kind === "handoff" && fields.direction === "back" && "subagentKind" in fields) return null;
     return { kind, ...fields } as AgentEvent;
   } catch {
     return null;

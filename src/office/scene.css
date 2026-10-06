@@ -27,6 +27,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
+  isolation: isolate;
   font-family: var(--font);
   font-size: var(--size-tag);
   line-height: var(--line);
@@ -349,6 +350,12 @@
   cursor: pointer;
   transform: translate(-50%, -50%);
   scroll-margin-top: calc(var(--bar-h) + var(--space-4));
+  z-index: 2;
+}
+
+.paper-hit {
+  z-index: 1;
+  cursor: help;
 }
 
 .tag {
@@ -377,6 +384,38 @@
   opacity: 1;
 }
 
+/* The sheet's label: a name tag below the desk edge, a notch up at the paper. Hover and keyboard
+   focus on its target reveal it, like a tag; the layers are paper-hit 1, hit 2, label 3, bubble 4. */
+.paper-label {
+  position: absolute;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bar);
+  color: var(--text);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.paper-label::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  margin-left: -4px;
+  border: 4px solid transparent;
+  border-top-width: 0;
+  border-bottom-color: var(--bar);
+}
+
+.paper-hit:hover + .paper-label,
+.paper-hit:focus-visible + .paper-label {
+  opacity: 1;
+}
+
 /* "+N" for the queued agents past the drawn ones, at the door; a status, not a control. */
 .queue-more {
   position: absolute;
@@ -392,6 +431,7 @@
 
 .bubble {
   position: absolute;
+  z-index: 4;
   box-sizing: border-box;
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
@@ -415,7 +455,8 @@
     transition: none;
   }
 
-  .agent {
+  .agent,
+  .paper-label {
     transition: none;
   }
 

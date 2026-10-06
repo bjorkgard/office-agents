@@ -4,17 +4,43 @@
 
 ## Office
 
-### Paper hover-text with redaction
+### Category label on the subagent's character (2026-10-06)
 
-**What:** Hover or click a handoff paper to read the subagent description and a truncated result summary.
+**What:** Show the paper's closed-enum category (from `subagent_type`) as a small label near the subagent's own tag.
 
-**Why:** Makes the paper carry real data, the main differentiator from existing agent-office visualizers.
+**Why:** Deferred at the paper-hover-text CEO review (D6): makes the label glanceable without hovering a small paper.
 
-**Context:** Deferred from slice 1 (D2). Pros: strongest "whoa" beyond the animation. Cons: privacy surface, needs redaction, truncation and a tooltip layer. Subagent `.meta.json` holds `description`; prompt text is in the first record of `agent-*.jsonl`. Start with description only. Prompts can contain file contents and secrets, so decide redaction before showing anything.
+**Context:** Needs overlap nudging against tags, bubbles and queue marks and a design pass (DESIGN "Visual weight order"). Do it only after the paper label ships and people miss it.
 
-**Effort:** M (human ~1 day / CC ~30min)
+**Effort:** M
+**Priority:** P4
+**Depends on:** None (the paper label shipped in v0.9.0.0)
+
+### Paper label dismiss (2026-10-06)
+
+**What:** The paper label cannot be dismissed with Escape (WCAG 1.4.13); revisit if a keyboard user needs it.
+
+**Why:** Eng review R2 chose a CSS-only reveal like `.hit:hover + .tag` in `scene.css`; design review issue 10 documented the deviation in DESIGN.md instead of fixing it. Touch is out of scope (DESIGN.md Accessibility; design issue 8), so the earlier iOS Safari tap check is dropped.
+
+**Pros:** Closes the one accessibility gap. **Cons:** Needs JS state for a label the name tags do without.
+
+**Context:** Plan: `docs/designs/paper-hover-text-ceo-review.md` (R2, R3, design issue 10). Revisit together with the name tags, not alone.
+
+**Effort:** S (human ~1h / CC ~10min)
+**Priority:** P4
+**Depends on:** None (the paper label shipped in v0.9.0.0)
+
+### Paper label review follow-ups (v0.9.0.0 ship, 2026-10-06)
+
+**What:** Informational findings from the three /ship review passes and the adversarial pass, skipped by the user's choice. Behaviour and robustness: (1) a late or repeated `out` re-stores a kind for a child that already returned or never appeared (`src/office/machine.ts:366` `if (event.subagentKind)`; guard with `key in s.returned`, prune on `unresolved` expiry), and `replay()` leaves `office.kinds` entries for deleted agents (`src/office/feed-client.ts:135`); (2) every launch with an agent type outside Explore, Plan and general-purpose, roster names included, bumps `unmapped_subagent_type`, which `server/feed-plugin.ts:1076` sums into one log line (count known built-ins and roster names separately or not at all); (3) one unknown `subagentKind` value drops the whole `out` handoff in an older browser bundle (`shared/events.ts:112`; coerce to `other` if server and client ever ship apart); (4) `evictOldest` still walks up to the cap per call (`src/office/machine.ts:252`; a Map would make it O(1)); `fold` sorts and allocates per render (`src/office/paper.ts:117`). Code shape: `PaperSub.key` is optional only for old tests (`src/office/paper.ts:40`; builder 09 reported making it required but the file still says `key?: string`); `sheetKinds` in `Scene.tsx:572` holds the label, not the kinds (rename `sheetLabel`); the paper-slot midpoint could be a helper in the desk-kinds module; `KINDS_CAP` is an alias of `RETURNED_CAP` (reviewers disagree whether to keep it). Tests: no e2e that the label hides again on mouse-leave or blur (`e2e/office.spec.ts:528`), the stacking spec starts a second session after the 30 s sheet timer began (`:541`), no e2e for two different kinds or for the target going away when the sheet is taken (`:618`), `Scene.test.tsx:755` and `:733` are coupled to the formula and a sampled time window, no a11y case with a live paper (`Scene.a11y.test.tsx:32`), no test that a kind-less relaunch keeps or clears an earlier kind (`machine.test.ts:1276`), no test for focus recovery when a focused `.paper-hit` unmounts, and the click e2e cannot fail on a handler because `App.tsx:86` passes no `onSelect`.
+
+**Why:** None is a defect in shipped behaviour; each makes the code or its tests a little safer. Items (1) and (2) are the ones worth doing first.
+
+**Context:** Reports and the review log are in the /ship run of 2026-10-06 (branch `feat/paper-hover-text`); the plan is `docs/designs/paper-hover-text-ceo-review.md`. Already documented in DESIGN.md "Paper label limits" and not repeated here: the reload and sync-launch labels read "Subagent", the label is only reachable while the sheet lies.
+
+**Effort:** M
 **Priority:** P3
-**Depends on:** Slice 1 handoff animation
+**Depends on:** None
 
 ### Chime control: design review and DESIGN.md entry (2026-10-06)
 

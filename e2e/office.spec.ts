@@ -28,7 +28,7 @@ const liveRoot = () => join(process.env.OFFICE_E2E_BASE!, "live", "root");
 const wrapper = (page: Page, session: string, agentId: string | null = null): Locator =>
   page.locator(`xpath=//*[@data-agent="${session}\u0000${agentId ?? ""}"]`);
 const hit = (page: Page, session: string, agentId: string | null = null): Locator =>
-  wrapper(page, session, agentId).locator("button.hit");
+  wrapper(page, session, agentId).locator("button.hit:not(.paper-hit)");
 
 const nameOf = async (loc: Locator): Promise<string> =>
   ((await loc.getAttribute("aria-label")) ?? "").split(",")[0]!;
@@ -138,7 +138,7 @@ test(
     // The same fixture is drawn in @core, with the tool call waving and the subagent working.
     await expect(wrapper(page, sessions.live)).toHaveCount(0);
     await expect(page.locator(`[data-agent^="${sessions.syncParent}"]`)).toHaveCount(0);
-    await expect(page.locator("button.hit")).toHaveCount(2);
+    await expect(page.locator("button.hit:not(.paper-hit)")).toHaveCount(2);
     // Both waited since 45 minutes before the anchor, and the label only grows ("45m", "1h 2m").
     const waits = (await page.locator(".top-bar-chip").allTextContents()).map((t) => {
       const m = /in project (?:(\d+)h )?(\d+)m$/.exec(t);
@@ -177,10 +177,9 @@ test("each agent shows its state", { tag: "@core" }, async ({ page }) => {
     await expect(hit(page, s)).toHaveAttribute("aria-label", STATE_RE);
   }
   // The subagent has no parent file in this set, so its wrapper is the only one of its session.
-  await expect(page.locator(`[data-agent^="${sessions.syncParent}"] button.hit`)).toHaveAttribute(
-    "aria-label",
-    /working$/,
-  );
+  await expect(
+    page.locator(`[data-agent^="${sessions.syncParent}"] button.hit:not(.paper-hit)`),
+  ).toHaveAttribute("aria-label", /working$/);
   // Character `data-state` lags the machine by up to 900 ms: only auto-retrying checks.
   await expect(page.locator('.agent[data-state="attention"]')).toHaveCount(3);
   await expect(page.locator('.agent[data-state="working"]')).toHaveCount(1);
@@ -483,6 +482,160 @@ test(
     await expect(page.locator(".agent[data-path]")).toHaveCount(0);
     await expect(mine(page)).toHaveAttribute("data-pose", /^(seated|standing)/);
     expect((await history(page)).sawPath).toBe(false);
+  },
+);
+
+// ---- paper label ---------------------------------------------------------------------------
+
+type Info = { title: string; repeatEachIndex: number; retry: number };
+
+/** A sync launch by `parent` (its result carries `agentId`, once it returns). */
+const launchLine = (parent: string, id: string, subagentType: string): string =>
+  liveLine(parent, {
+    type: "tool_use",
+    id,
+    name: "Agent",
+    input: { run_in_background: false, subagent_type: subagentType },
+    ageMs: 0,
+  });
+
+/**
+ * A sheet that lies for 30 s, with no wall-clock race: the parent has two sync launches open, the
+ * first subagent sits down and returns (its kind arrives with the handoff and it hands the sheet
+ * over), the second never shows up, so the parent keeps waiting and the sheet lies PAPER_MAX_MS.
+ */
+async function paperLies(
+  page: Page,
+  info: Info,
+  subagentType = "Explore",
+): Promise<{ parent: string; paperHit: Locator; label: Locator }> {
+  const parent = sessionFor(info);
+  const child = hashId(`${parent}:child`);
+  const launch = hashId(`${parent}:launch`);
+  await openLive(page);
+  await startWorking(page, parent, hashId(`${parent}:t`), { watch: false });
+  appendLive(liveRoot(), sessionPath(parent), [
+    launchLine(parent, launch, subagentType),
+    launchLine(parent, hashId(`${parent}:launch-open`), "Plan"),
+  ]);
+  await expect(hit(page, parent)).toHaveAttribute("aria-label", /waiting on subagents$/);
+  await watchNewAgent(page);
+  const sub = (l: LiveLine) => liveLine(parent, l, { agentId: child });
+  const toolId = hashId(`${child}:t`);
+  appendLive(liveRoot(), subPath(parent, child), [
+    sub({ type: "user", ageMs: -1000 }),
+    sub({ type: "tool_use", id: toolId, ageMs: -2000 }),
+    sub({ type: "tool_result", id: toolId, ageMs: -3000 }),
+  ]);
+  await expect(mine(page)).toHaveAttribute("data-pose", /^(seated|standing)/);
+  // The first launch returns: its subagent leaves and the parent still waits on the second.
+  appendLive(liveRoot(), sessionPath(parent), [
+    liveLine(parent, {
+      type: "tool_result",
+      id: launch,
+      result: { status: "completed", agentId: child },
+      ageMs: 0,
+    }),
+  ]);
+  await expect(mine(page)).toHaveAttribute("data-state", "leaving");
+  const paperHit = wrapper(page, parent).locator("button.paper-hit");
+  await expect(paperHit).toHaveAttribute("aria-label", new RegExp(`: paper from ${subagentType}$`));
+  return { parent, paperHit, label: wrapper(page, parent).locator(".paper-label") };
+}
+
+test(
+  "hovering the paper shows what kind of subagent it is from",
+  { tag: "@live" },
+  async ({ page }, info) => {
+    const { paperHit, label } = await paperLies(page, info, "Explore");
+    await expect(label).toHaveCSS("opacity", "0");
+    await paperHit.hover();
+    await expect(label).toHaveCSS("opacity", "1");
+    await expect(label).toHaveText("Explore");
+    await expect(paperHit).toHaveCSS("cursor", "help");
+  },
+);
+
+test(
+  "keyboard: the paper follows its parent in the tab order and shows on focus",
+  { tag: "@live" },
+  async ({ page }, info) => {
+    const { parent, paperHit, label } = await paperLies(page, info, "Plan");
+    await hit(page, parent).focus();
+    await expect(label).toHaveCSS("opacity", "0");
+    await page.keyboard.press("Tab");
+    await expect(paperHit).toBeFocused();
+    await expect(label).toHaveCSS("opacity", "1");
+    await expect(label).toHaveText("Plan");
+  },
+);
+
+test(
+  "the parent stays clickable while its paper lies, and the layers stack",
+  { tag: "@live" },
+  async ({ page }, info) => {
+    const { parent, paperHit, label } = await paperLies(page, info);
+    // A second session with a stuck tool call, so there is a bubble to compare against.
+    const other = hashId(`${parent}:other`);
+    await startWorking(page, other, hashId(`${other}:t`), { watch: false });
+    appendLive(liveRoot(), sessionPath(other), [
+      liveLine(other, {
+        type: "tool_use",
+        id: hashId(`${other}:stuck`),
+        name: "Bash",
+        ageMs: 11_000,
+      }),
+    ]);
+    const bubble = wrapper(page, other).locator(".bubble");
+    await expect(bubble).toHaveCount(1);
+    await expect(paperHit).toHaveCount(1);
+
+    const onTop = await hit(page, parent).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el;
+    });
+    expect(onTop).toBe(true);
+
+    const z = (loc: Locator) => loc.evaluate((el) => Number(getComputedStyle(el).zIndex));
+    const zPaper = await z(paperHit);
+    const zHit = await z(hit(page, parent));
+    const zLabel = await z(label);
+    const zBubble = await z(bubble);
+    expect(zPaper).toBeLessThan(zHit);
+    expect(zHit).toBeLessThan(zLabel);
+    expect(zLabel).toBeLessThan(zBubble);
+  },
+);
+
+test(
+  "clicking the paper selects nobody and leaves the room as it was",
+  { tag: "@live" },
+  async ({ page }, info) => {
+    const { parent, paperHit, label } = await paperLies(page, info);
+    const parentHit = hit(page, parent);
+    const before = await parentHit.getAttribute("aria-label");
+    // Nothing selects an agent in the app today (App passes Scene no onSelect), so this guards
+    // what a click on the paper can observably do: nothing. It does not guard a handler the
+    // app would ignore anyway.
+    await paperHit.click();
+    await expect(parentHit).toHaveAttribute("aria-label", before!);
+    await expect(parentHit).not.toBeFocused();
+    await expect(paperHit).toHaveCount(1);
+    await expect(label).toHaveText("Explore");
+  },
+);
+
+test(
+  "reduced motion: the paper label still shows on hover, without a transition",
+  { tag: "@live" },
+  async ({ page }, info) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const { paperHit, label } = await paperLies(page, info, "Explore");
+    await expect(label).toHaveCSS("transition-duration", "0s");
+    await expect(label).toHaveCSS("opacity", "0");
+    await paperHit.hover();
+    await expect(label).toHaveCSS("opacity", "1");
+    await expect(label).toHaveText("Explore");
   },
 );
 
