@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0.0] - 2026-10-06
+
+### Added
+
+- Hover the sheet of paper on a parent's desk, or Tab to it, to see what kind of subagent it came from: "Explore", "Plan", "General" or "Subagent". A sheet carrying several kinds lists up to three and counts the rest ("Explore, Plan, General +1"). The word comes from a fixed list chosen on the server from the launch's agent type, never from a description or prompt, so no transcript text reaches the browser. A launch without an agent type reads "General" (Claude Code falls back to its general-purpose agent); your own custom agent types read "Subagent".
+- The sheet's target sits right after its parent in the keyboard order, shows a help cursor, has a name such as "Maya, office-agents: paper from Explore, Plan", and gets the same focus ring as the agents. The label is a small dark tag with a notch pointing at the sheet, below it so it never hides the focus ring.
+
+### Changed
+
+- The feed's handoff event carries an optional `subagentKind` (one of four values) on the launch event only; the event check rejects it anywhere else and rejects any other value. Launches with an agent type outside the three known names are counted in the feed's drift counter (the count only, never the name).
+- The overlay layers now have a fixed stacking order: the sheet target, the agent target, the label, then speech bubbles. The overlay is isolated, so these numbers cannot reach the top bar.
+- The state machine keeps each launched child's kind in a capped map (2,000 entries, oldest dropped first, shared with the existing returned-children cap) and clears it when the child is removed.
+
+### Known
+
+- The label is only there while the sheet lies: about 4 seconds after a subagent hands in, up to 30 seconds while the parent waits, and 600 milliseconds for an arriving sheet when reduced motion is on. It cannot be dismissed with Escape, and touch is not supported (as before).
+- A blocking subagent that is still running reads "Subagent" until it returns, because its kind only reaches the browser with the return. After a page reload, a subagent that already returned also reads "Subagent". Both are written up in DESIGN.md.
+- The 24-agent row-change recalc still misses its 16 ms budget (median 19.7 ms on this branch, unchanged from before); the 12-agent gate passes (13.87 ms).
+
 ## [0.8.0.0] - 2026-10-06
 
 ### Added
