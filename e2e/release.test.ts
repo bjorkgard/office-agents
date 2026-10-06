@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   AB_PREFIX,
   abArm,
@@ -13,6 +13,7 @@ import {
   budgetVerdict,
   classifyPhase,
   decide,
+  DeadlineError,
   EASE_MS,
   FRAME_BUDGET_MS,
   hero,
@@ -22,9 +23,11 @@ import {
   officeEnv,
   p95,
   parseArgs,
+  perfExitCode,
   perfVerdicts,
   RECALC_BUDGET_MS,
   type RowRepeat,
+  type Verdict,
   ROWS,
   rowChangeVerdict,
   rowVerdict,
@@ -33,6 +36,7 @@ import {
   startOffice,
   tracedWorstMs,
   worstRecalc,
+  withDeadline,
   worstRecalcEvent,
 } from "./release.ts";
 import { agentFixtureSet, removeRoot, twelveAgentFixtureSet } from "./support.ts";
@@ -374,19 +378,70 @@ describe("settleRuns", () => {
 });
 
 describe("parseArgs", () => {
-  it("accepts a bare subcommand, and --ab only for perf", () => {
-    expect(parseArgs(["perf"])).toEqual({ sub: "perf", ab: false });
-    expect(parseArgs(["perf", "--ab"])).toEqual({ sub: "perf", ab: true });
-    expect(parseArgs(["criteria"])).toEqual({ sub: "criteria", ab: false });
-    expect(parseArgs(["hero"])).toEqual({ sub: "hero", ab: false });
+  it("accepts a bare subcommand, and --ab and --strict only for perf", () => {
+    expect(parseArgs(["perf"])).toEqual({ sub: "perf", ab: false, strict: false });
+    expect(parseArgs(["perf", "--ab"])).toEqual({ sub: "perf", ab: true, strict: false });
+    expect(parseArgs(["perf", "--strict"])).toEqual({ sub: "perf", ab: false, strict: true });
+    expect(parseArgs(["perf", "--strict", "--ab"])).toEqual({
+      sub: "perf",
+      ab: true,
+      strict: true,
+    });
+    expect(parseArgs(["criteria"])).toEqual({ sub: "criteria", ab: false, strict: false });
+    expect(parseArgs(["hero"])).toEqual({ sub: "hero", ab: false, strict: false });
   });
 
-  it("rejects --ab on another subcommand, extra or misspelled arguments, and unknown subcommands", () => {
+  it("rejects flags on another subcommand, extra or misspelled arguments, and unknown subcommands", () => {
     expect(parseArgs(["criteria", "--ab"])).toBeNull();
+    expect(parseArgs(["hero", "--strict"])).toBeNull();
     expect(parseArgs(["perf", "--abb"])).toBeNull();
     expect(parseArgs(["perf", "--ab", "--ab"])).toBeNull();
+    expect(parseArgs(["perf", "--strict", "--strict"])).toBeNull();
     expect(parseArgs([])).toBeNull();
     expect(parseArgs(["bogus"])).toBeNull();
+  });
+});
+
+describe("withDeadline", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("rejects with a DeadlineError naming the deadline when the work hangs", async () => {
+    vi.useFakeTimers();
+    const hung = withDeadline(new Promise<never>(() => {}), 5_000, "repeat 1");
+    const settled = expect(hung).rejects.toThrow(DeadlineError);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await settled;
+    await expect(hung).rejects.toThrow("repeat 1 exceeded its 5.0 s deadline");
+  });
+
+  it("passes the result through, and clears its timer, when the work finishes in time", async () => {
+    vi.useFakeTimers();
+    await expect(withDeadline(Promise.resolve(7), 5_000, "repeat 1")).resolves.toBe(7);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("passes the work's own rejection through", async () => {
+    await expect(withDeadline(Promise.reject(new Error("boom")), 5_000, "x")).rejects.toThrow(
+      "boom",
+    );
+  });
+});
+
+describe("perfExitCode", () => {
+  const v = (status: Verdict["status"]): Verdict => ({ status, measured: "m" });
+
+  it("keeps INCONCLUSIVE at exit 0 by default", () => {
+    expect(perfExitCode([v("PASS"), v("INCONCLUSIVE")], false)).toBe(0);
+  });
+
+  it("exits 3 for INCONCLUSIVE in strict mode, 0 when there is none", () => {
+    expect(perfExitCode([v("PASS"), v("INCONCLUSIVE")], true)).toBe(3);
+    expect(perfExitCode([v("PASS"), v("SKIPPED")], true)).toBe(0);
+  });
+
+  it("lets a FAIL win over strict INCONCLUSIVE", () => {
+    expect(perfExitCode([v("FAIL"), v("INCONCLUSIVE")], true)).toBe(1);
+    expect(perfExitCode([v("FAIL")], false)).toBe(1);
   });
 });
 
