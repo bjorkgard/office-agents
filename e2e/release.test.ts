@@ -37,6 +37,8 @@ import {
   tracedWorstMs,
   worstRecalc,
   withDeadline,
+  trackCloser,
+  closeTracked,
   worstRecalcEvent,
 } from "./release.ts";
 import { agentFixtureSet, removeRoot, twelveAgentFixtureSet } from "./support.ts";
@@ -420,10 +422,60 @@ describe("withDeadline", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("runs onTimeout when the deadline fires, and rejects only after it settles", async () => {
+    vi.useFakeTimers();
+    const events: string[] = [];
+    let finish!: () => void;
+    const closing = new Promise<void>((r) => (finish = r));
+    const hung = withDeadline(new Promise<never>(() => {}), 5_000, "repeat 1", async () => {
+      events.push("close");
+      await closing;
+      events.push("closed");
+    });
+    const settled = expect(hung).rejects.toThrow(DeadlineError);
+    hung.catch(() => events.push("rejected"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(events).toEqual(["close"]);
+    finish();
+    await settled;
+    expect(events).toEqual(["close", "closed", "rejected"]);
+  });
+
+  it("does not run onTimeout when the work finishes in time", async () => {
+    const onTimeout = vi.fn();
+    await withDeadline(Promise.resolve(1), 5_000, "repeat 1", onTimeout);
+    expect(onTimeout).not.toHaveBeenCalled();
+  });
+
   it("passes the work's own rejection through", async () => {
     await expect(withDeadline(Promise.reject(new Error("boom")), 5_000, "x")).rejects.toThrow(
       "boom",
     );
+  });
+});
+
+describe("trackCloser", () => {
+  it("closeTracked runs every registered closer once, not an untracked one", async () => {
+    const a = vi.fn(async () => {});
+    const b = vi.fn(async () => {});
+    const untrackA = trackCloser(a);
+    trackCloser(b);
+    untrackA();
+    await closeTracked();
+    expect(a).not.toHaveBeenCalled();
+    expect(b).toHaveBeenCalledTimes(1);
+    await closeTracked();
+    expect(b).toHaveBeenCalledTimes(1);
+  });
+
+  it("closeTracked survives a closer that throws", async () => {
+    const ok = vi.fn(async () => {});
+    trackCloser(async () => {
+      throw new Error("boom");
+    });
+    trackCloser(ok);
+    await closeTracked();
+    expect(ok).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -38,13 +38,21 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
 /** Thrown by withDeadline; the message names the deadline that fired. */
 export class DeadlineError extends Error {}
 
-/** Rejects with a DeadlineError if `work` has not settled after `ms`; the work itself is not cancelled. */
-export function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+/**
+ * Rejects with a DeadlineError if `work` has not settled after `ms`. `onTimeout` runs first and is awaited
+ * (it should stop the work; a throw from it is ignored), so nothing abandoned overlaps what comes next.
+ */
+export function withDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string,
+  onTimeout?: () => Promise<void>,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new DeadlineError(`${what} exceeded its ${seconds(ms)} deadline`)),
-      ms,
-    );
+    const timer = setTimeout(() => {
+      const error = new DeadlineError(`${what} exceeded its ${seconds(ms)} deadline`);
+      void (onTimeout ? onTimeout().catch(() => {}) : Promise.resolve()).then(() => reject(error));
+    }, ms);
     work.then(
       (value) => {
         clearTimeout(timer);
@@ -56,6 +64,23 @@ export function withDeadline<T>(work: Promise<T>, ms: number, what: string): Pro
       },
     );
   });
+}
+
+const closers = new Set<() => Promise<void>>();
+
+/** Register how to stop a piece of running work; the returned function unregisters it. */
+export function trackCloser(close: () => Promise<void>): () => void {
+  closers.add(close);
+  return () => {
+    closers.delete(close);
+  };
+}
+
+/** Stop every tracked piece of work (each once); a closer that throws does not stop the others. */
+export async function closeTracked(): Promise<void> {
+  const all = [...closers];
+  closers.clear();
+  await Promise.all(all.map((close) => close().catch(() => {})));
 }
 
 /** The pure smoke rule (eng E-D2): PASS <= 10 s; FAIL on trouble or a 10-30 s render; else SKIPPED. */
@@ -730,12 +755,24 @@ async function withOfficePage<T>(
   const root = makeRunRoot();
   tempDirs.add(root);
   let office: Office | null = null;
+  let browser: import("@playwright/test").Browser | null = null;
+  let cleaned = false;
+  // Idempotent: the deadline path calls it to stop abandoned work, the finally blocks call it again.
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await browser?.close().catch(() => {});
+    office?.stop();
+    removeRoot(root);
+    tempDirs.delete(root);
+  };
+  const untrack = trackCloser(cleanup);
   try {
     const files = agentFixtureSet(agents + extra);
     writeFixtureSet(root, files.slice(0, agents), { anchorNow: Date.now() });
     office = await startOffice({ root });
     const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({ headless: !headed });
+    browser = await chromium.launch({ headless: !headed });
     try {
       info.chrome = browser.version();
       const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -748,12 +785,11 @@ async function withOfficePage<T>(
       );
       return await fn({ page, cdp, root, files });
     } finally {
-      await browser.close();
+      await browser.close().catch(() => {});
     }
   } finally {
-    office?.stop();
-    removeRoot(root);
-    tempDirs.delete(root);
+    untrack();
+    await cleanup();
   }
 }
 
@@ -902,6 +938,7 @@ async function perfAt(
         frameSample(agents, headed, info),
         PERF_REPEAT_DEADLINE_MS,
         `${agents} agents frame sample`,
+        closeTracked,
       );
     } catch (e) {
       console.log(
@@ -909,20 +946,24 @@ async function perfAt(
       );
     }
   }
+  // Once a repeat has timed out, later repeats at this count are not started.
+  let timedOut = false;
   const runRepeats = async (frozen: boolean): Promise<AbRepeat[]> => {
     const out: AbRepeat[] = [];
     const tag = frozen ? FROZEN_LABEL : "";
     for (let i = 1; i <= REPEATS; i++) {
-      if (shuttingDown) break;
+      if (shuttingDown || timedOut) break;
       try {
         out.push(
           await withDeadline(
             rowRepeat(agents, headed, info, `${tag}repeat ${i}`, ab ? { frozen } : null),
             PERF_REPEAT_DEADLINE_MS,
             `${agents} agents ${tag}repeat ${i}`,
+            closeTracked,
           ),
         );
       } catch (e) {
+        if (e instanceof DeadlineError) timedOut = true;
         const message = oneLine(e instanceof Error ? e.message : String(e));
         console.log(`  ${agents} agents ${tag}repeat ${i}: failed, ${message}`);
         out.push({
@@ -938,7 +979,7 @@ async function perfAt(
   };
   const repeats = await runRepeats(false);
   const verdicts = perfVerdicts(agents, steady, repeats);
-  if (ab && !shuttingDown) {
+  if (ab && !shuttingDown && !timedOut) {
     const frozen = await runRepeats(true);
     verdicts.push(abVerdict({ animated: abArm(repeats), frozen: abArm(frozen) }));
   }
@@ -960,6 +1001,10 @@ async function perf(ab: boolean, strict: boolean): Promise<number> {
         perfAt(agents, headed, info, ab),
         Math.max(0, PERF_TOTAL_DEADLINE_MS - (Date.now() - startedAt)),
         `perf run (total, at ${agents} agents)`,
+        async () => {
+          await closeTracked();
+          await shutdown();
+        },
       );
     } catch (e) {
       if (!(e instanceof DeadlineError)) throw e;
