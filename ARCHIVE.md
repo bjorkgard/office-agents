@@ -434,3 +434,31 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **What was asked:** Hover or click a handoff paper to read the subagent description and a truncated result summary, with redaction.
 
 **What shipped instead:** Free text was rejected in the CEO review (it would reverse DESIGN Principle 4 and redaction cannot be proven complete). The paper now shows a closed-enum kind (Explore, Plan, General, Subagent) derived server-side from `subagent_type`; no description or prompt reaches the browser. Plan and decisions: `docs/designs/paper-hover-text-ceo-review.md`.
+
+### T16 Feed server hardening: truncation detection
+
+**What:** In `server/feed-plugin.ts`: truncation is detected only as `size < offset` (see "Detect file rotation by more than size").
+
+**Why:** A same-size or regrown rewrite of a transcript goes unnoticed.
+
+**Context:** Split from the Phase 4 umbrella item; session identity, Origin check and heartbeat are DONE (the earlier entries in this file).
+
+**Effort:** S (human ~2h / CC ~20min)
+**Priority:** P3
+**Depends on:** None
+
+**Status:** DONE, partial (moved 2026-10-06 as T16). Rotation is now detected by inode and head hash in `replaced()` (`server/feed-plugin.ts:638`); the same-size in-place rewrite gap stays open as T15 item 2 ("Batch B2 leftovers"). Verified by code read only.
+
+### T19 Playwright e2e was not run for the burndown (2026-10-06)
+
+**What:** Run `vp run e2e` once on the burndown branch before merge.
+
+**Why:** The burndown changed `server/feed-plugin.ts` (hook route split), `src/office/TopBar.tsx`, `src/App.tsx` and `e2e/release.ts`; only unit tests (`vp test`, 1546 passed at brief 16) and `vp check` ran.
+
+**Context:** Report: `.claude/scratch/todo-burndown-2/reports/builder-08.md` (SKIPPED).
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+**Status:** DONE (moved 2026-10-06 as T19). `vp run e2e` on main at v0.9.0.0, run in this /ship session on 2026-10-06 (all projects: core, live, twelve, stale, empty, visual): 31 passed (3.0m), exit 0. The original request (run on the burndown branch) is moot since that branch merged.
