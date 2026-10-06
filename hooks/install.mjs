@@ -2,7 +2,7 @@
 /**
  * Installer for the Office Agents Claude Code hooks. Prints by default and writes nothing.
  *   node hooks/install.mjs                       print the snippet and how to apply it
- *   node hooks/install.mjs --apply               merge into the settings file
+ *   node hooks/install.mjs --apply               merge into the settings file (replaces an Office hook from another checkout)
  *   node hooks/install.mjs --remove              remove only this checkout's entries
  *   --settings <path>   settings file (default ~/.claude/settings.json)
  *   --dry-run           with --apply/--remove: print the resulting JSON, write nothing
@@ -81,6 +81,12 @@ function isOurs(h, scriptPath) {
   return shellWords(h.command).some((w) => w === scriptPath);
 }
 
+/** The script path of an Office hook command, whatever checkout it points into, or null. */
+function officeScript(h) {
+  if (typeof h?.command !== "string") return null;
+  return shellWords(h.command).find((w) => basename(w) === SCRIPT_NAME) ?? null;
+}
+
 /** One line for the user: the installed command points into this checkout, not a copy. */
 const checkoutNote = (scriptPath) =>
   `The hook runs ${scriptPath} from this repository checkout: moving or deleting the checkout disables it, and any change to that script runs on every hook event.`;
@@ -105,8 +111,8 @@ function checkShape(settings) {
   }
 }
 
-/** Pure merge: returns a new settings object with our entries added (idempotent) or removed. */
-export function transform(settings, mode, scriptPath) {
+/** Pure merge: returns a new settings object with our entries added (idempotent) or removed; apply also drops other checkouts' Office hooks, listed in `replaced`. */
+export function transform(settings, mode, scriptPath, replaced = []) {
   checkShape(settings);
   const out = { ...settings };
   const hooks = { ...(settings.hooks ?? {}) };
@@ -119,7 +125,14 @@ export function transform(settings, mode, scriptPath) {
     // Strip our hook objects everywhere; drop groups that held only ours.
     const kept = [];
     for (const g of groups) {
-      const rest = g.hooks.filter((h) => !isOurs(h, scriptPath));
+      const rest = g.hooks.filter((h) => {
+        if (isOurs(h, scriptPath)) return false;
+        // Apply replaces an Office hook from another checkout; remove leaves it alone.
+        const foreign = mode === "apply" ? officeScript(h) : null;
+        if (foreign === null) return true;
+        if (!replaced.includes(foreign)) replaced.push(foreign);
+        return false;
+      });
       if (rest.length === g.hooks.length) kept.push(g);
       else if (rest.length > 0) kept.push({ ...g, hooks: rest });
     }
@@ -219,7 +232,8 @@ export function run(argv, out = (s) => process.stdout.write(`${s}\n`)) {
       `settings directory ${dirname(settingsPath)} does not exist; nothing created`,
     );
   }
-  const result = transform(settings, mode, scriptPath);
+  const replaced = [];
+  const result = transform(settings, mode, scriptPath, replaced);
   const text = `${JSON.stringify(result, null, 2)}\n`;
   if (opts.dryRun) {
     out(text.trimEnd());
@@ -240,7 +254,10 @@ export function run(argv, out = (s) => process.stdout.write(`${s}\n`)) {
   }
   renameSync(tmp, target);
   out(`${mode === "apply" ? "Installed into" : "Removed from"} ${settingsPath}`);
-  if (mode === "apply") out(checkoutNote(scriptPath));
+  if (mode === "apply") {
+    for (const p of replaced) out(`Replaced the Office hook entry from another checkout: ${p}`);
+    out(checkoutNote(scriptPath));
+  }
   out("Check /hooks in Claude Code to confirm. Which Notification types fire is UNVERIFIED.");
 }
 

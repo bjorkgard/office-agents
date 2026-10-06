@@ -279,7 +279,7 @@ describe("install.mjs --remove", () => {
     expect(left).toEqual(lookalikes);
   });
 
-  it("leaves another checkout's entry in place", () => {
+  const otherCheckout = () => {
     const copy = join(realpathSync(dir), "other-checkout");
     mkdirSync(copy);
     for (const f of ["install.mjs", "office-hook.mjs"]) {
@@ -291,8 +291,25 @@ describe("install.mjs --remove", () => {
       { encoding: "utf8" },
     );
     expect(applied.status).toBe(0);
-    install("--apply", "--settings", file);
-    expect(ourCount(read())).toBe(8);
+    return copy;
+  };
+
+  it("--apply replaces another checkout's entry instead of adding a second one", () => {
+    const copy = otherCheckout();
+    const r = install("--apply", "--settings", file);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(join(copy, "office-hook.mjs"));
+    const left = read();
+    expect(ourCount(left)).toBe(4);
+    for (const groups of Object.values(left.hooks) as Array<
+      Array<{ hooks: Array<{ command: string }> }>
+    >) {
+      expect(JSON.stringify(groups)).not.toContain(copy);
+    }
+  });
+
+  it("--remove leaves another checkout's entry in place", () => {
+    const copy = otherCheckout();
     expect(install("--remove", "--settings", file).code).toBe(0);
     const left = read();
     expect(ourCount(left)).toBe(4);
