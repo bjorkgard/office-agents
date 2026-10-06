@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.1.0] - 2026-10-06
+
+### Added
+
+- The speaker button now draws an icon for each state (off, on, blocked) instead of an emoji, so it reads as its own control. It keeps its warning colour on hover and no longer overlaps the agent chips.
+- Two browser tabs now agree about the chime: a change in one tab shows up in the other. A chime turned on in another tab shows "Chime: click" until you click once in this one.
+
+### Fixed
+
+- A screen reader no longer hears "pressed" while the chime is silent.
+- An unlock that finishes late, or twice, can no longer play two chimes or undo a newer click.
+- Old Safari (prefixed audio) now works.
+- A chime that is unmounted no longer sounds.
+
+### Known
+
+- After a reload with the chime saved on, the first click turns audio on (with a chime), so muting takes two clicks.
+- Two tabs that are both unlocked each chime.
+- Audio and Safari were not tried in a real browser by any tool: the Playwright suite runs Chromium and checks state, not sound.
+
 ## [0.9.0.1] - 2026-10-06
 
 ### Changed

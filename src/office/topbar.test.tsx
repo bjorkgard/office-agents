@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Connection, FeedState } from "./feed-client";
-import { TopBar } from "./TopBar";
+import { chimeLabel } from "./chime-logic";
+import { ChimeGlyph, TopBar } from "./TopBar";
 import {
   announcementText,
   chipClickTarget,
@@ -230,7 +231,7 @@ describe("chime control", () => {
     runAnnouncer(officeOf(waitingAgent("s1", 100)), {}, a.seen, a.announcement, notify);
     expect(notify).toHaveBeenCalledTimes(1);
   });
-  it("renders a focusable button, off and unpressed by default", () => {
+  it("renders a focusable button, off by default with no aria-pressed", () => {
     const html = renderToStaticMarkup(
       <TopBar
         state={{
@@ -246,9 +247,29 @@ describe("chime control", () => {
         onPulse={() => {}}
       />,
     );
-    expect(html).toMatch(/<button type="button" class="top-bar-chime" aria-pressed="false"/);
+    expect(html).toMatch(/<button type="button" class="top-bar-chime" aria-label="[^"]*"/);
+    expect(html).not.toContain("aria-pressed");
     expect(html).toContain('data-status="off"');
     expect(html).toContain("Chime off");
+  });
+  it("draws a different aria-hidden glyph per status", () => {
+    const paths = {
+      off: "M11 6l4 4M15 6l-4 4",
+      on: "M11 6c1 1 1 3 0 4M13 4c2 2.5 2 5.5 0 8",
+      blocked: "M12.5 5v3.5M12.5 11v.5",
+    } as const;
+    const statuses = ["off", "on", "blocked"] as const;
+    const glyphs = statuses.map((s) => renderToStaticMarkup(<ChimeGlyph status={s} />));
+    expect(new Set(glyphs).size).toBe(3);
+    statuses.forEach((s, i) => {
+      expect(glyphs[i]).toContain('aria-hidden="true"');
+      expect(glyphs[i]).toContain("currentColor");
+      for (const other of statuses) {
+        if (other === s) expect(glyphs[i]).toContain(`d="${paths[other]}"`);
+        else expect(glyphs[i]).not.toContain(`d="${paths[other]}"`);
+      }
+      expect(chimeLabel(s)).not.toBe("");
+    });
   });
 });
 

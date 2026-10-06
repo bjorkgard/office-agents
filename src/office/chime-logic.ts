@@ -56,6 +56,7 @@ export function shouldChime(input: {
   if (!input.enabled) return false;
   if (input.lastChimeAt !== null && input.now - input.lastChimeAt < CHIME_MIN_GAP_MS) return false;
   return input.announced.some((a) => {
+    // A future-dated waitingSince (clock skew) still chimes: only waits older than the load are replays.
     const since = a.episode?.waitingSince;
     return typeof since === "number" && since >= input.loadedAt;
   });

@@ -1,22 +1,8 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T45` are stable handles: a new entry takes the number above the highest ever issued (T45), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T46` are stable handles: a new entry takes the number above the highest ever issued (T46), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
-## P1 available (4)
-
-### T01 Chime control: design review and DESIGN.md entry (2026-10-06)
-
-**Area:** Office
-
-**What:** Review the top-bar chime toggle (speaker glyph, visible state text, blocked state) against the design system and add a DESIGN.md entry for it. A chime stored as "on" before the first click still needs two clicks to turn off (the first click retries the audio unlock).
-
-**Why:** The control shipped in the burndown without a design review; DESIGN.md only has a short descriptive mention (Principle 3 and the Top bar entry), not a reviewed chime entry. Findings from the second /ship pass to fold in: the on state and hover copy the `.top-bar-chip` look so the toggle can read as an agent chip (`index.css:157`); the speaker glyph is a full-colour platform emoji that ignores the token colours and is the same loud-speaker in the blocked state (`TopBar.tsx:107`; use a monochrome SVG with `currentColor` and a distinct blocked glyph); the tone constants are bare literals (`chime-audio.ts:29`); `chime-audio.ts` has no test of its own (every test mocks it) and toggling off while an unlock is pending is untested.
-
-**Context:** Files: `src/office/TopBar.tsx`, `src/index.css` (`.top-bar-chime`), `src/office/chime-logic.ts` (`nextEnabled`), `src/office/useChime.ts`. Audio and the real browser blocked state were never exercised in a browser. Reports: `.claude/scratch/todo-burndown-2/reports/builder-09.md`, `-13.md`, `-15.md`. Deferred at /ship (plan-completion gate, 2026-10-06) with the design-review findings to fold in: `aria-pressed` is true in the blocked state while no sound will play (`TopBar.tsx:101`); `.top-bar-chime:hover` hides the warn cue in the blocked state (`index.css:165`); the button has no `flex-shrink: 0` and the chips list can overlap it at the 800 px minimum with 4 chips (`index.css:143`, estimated, not measured); an unlock still pending when the user toggles off and on again can leave two unlocks running (`useChime.ts:64`, `:84`); no `webkitAudioContext` fallback and no cross-tab sync of the stored preference; `shouldChime` trusts a future-dated `waitingSince` (`chime-logic.ts`); tests missing for the 5 s window inside `createChime.notify` (`useChime.test.ts`) and for a late unlock after turning off. `runAnnouncer` and the `useCallback` wrappers in `useChime.ts:98` are small simplification advisories.
-
-**Effort:** S
-**Priority:** P1
-**Depends on:** None
+## P1 available (3)
 
 ### T02 M10: browser pass for row growth and the eased fit
 
@@ -168,7 +154,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** T03 Verify the normalizer against real transcripts
 
-## P3 available (21)
+## P3 available (22)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -309,6 +295,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Effort:** S (human ~1h / CC ~10min)
 **Priority:** P3
 **Depends on:** None (BUILD_TODO 4.4 is done; decision D8 in `docs/designs/phase-4-ceo-review.md` accepted repeats past 24 agents, so decide whether to archive this as accepted)
+
+### T46 Chime follow-ups from the /ship review of v0.9.1.0 (2026-10-06)
+
+**Area:** Office
+
+**What:** Four chime items the review raised and the user skipped. (1) `playChime` can still sound after the user turned the chime off, when a pending `resume()` lands on their click: `notify` in `useChime.ts` calls `playChime`, which awaits `resume()` and then schedules the oscillators without re-checking the generation in `chime-audio.ts`. (2) Advisories: seven exported `CHIME_*` constants have no consumer outside their module, `ChimeGlyph` is exported only for a test, the glyph test copies the SVG path strings (so it is coupled to the implementation), and `useChime` builds wrapper lambdas only to get a stable identity. (3) A click while an unlock is pending restarts the unlock instead of turning the chime off. (4) An unlock result that arrives after the 1.5 s timeout is discarded.
+
+**Why:** None is reproducible in normal use; (1) is the only one that can make a sound the user just asked to stop.
+
+**Context:** Files: `src/office/useChime.ts`, `src/office/chime-audio.ts`, `src/office/TopBar.tsx` and their tests. For (1), re-check the generation after the `await` before scheduling. Audio and Safari were not tried in a real browser by any tool.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
 
 ### T23 Paper label review follow-ups (v0.9.0.0 ship, 2026-10-06)
 
@@ -458,7 +458,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 
 **Why:** None is a release blocker; each was rated informational by the seven reviewers and the adversarial pass.
 
-**Context:** Reports in `.claude/scratch/todo-burndown-2/reports/`. Chime findings are in T01 (Chime control: design review and DESIGN.md entry).
+**Context:** Reports in `.claude/scratch/todo-burndown-2/reports/`. Chime findings were folded into the archived T01 (Chime control: design review).
 
 **Effort:** M
 **Priority:** P3
