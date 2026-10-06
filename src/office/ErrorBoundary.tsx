@@ -1,7 +1,10 @@
 import { Component, type ReactNode } from "react";
 
-/** D16: a render or machine failure shows "Display error" and leaves the top bar to the parent. */
-export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+/** D16: a render or machine failure shows "Display error" and leaves the top bar to the parent, which `onError` tells (D16). */
+export class ErrorBoundary extends Component<
+  { children: ReactNode; onError?: () => void },
+  { failed: boolean }
+> {
   state = { failed: false };
 
   static getDerivedStateFromError() {
@@ -10,6 +13,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { failed: 
 
   componentDidCatch(error: unknown) {
     console.error("office: display error", error);
+    this.props.onError?.();
   }
 
   render() {

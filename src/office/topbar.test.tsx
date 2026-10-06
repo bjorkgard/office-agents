@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Connection, FeedState } from "./feed-client";
 import { TopBar } from "./TopBar";
@@ -6,8 +6,8 @@ import {
   announcementText,
   chipClickTarget,
   MINUTE_MS,
-  nextAnnouncement,
   MAX_VISIBLE_CHIPS,
+  runAnnouncer,
   stepAnnouncer,
   visibleChips,
   statusLine,
@@ -21,7 +21,6 @@ import {
   findAgentWrapper,
   nextSceneKey,
   TOO_SMALL_NOTICE,
-  viewportOf,
 } from "./app-logic";
 import { agentKey, createOffice, type Agent } from "./machine";
 
@@ -86,12 +85,6 @@ describe("statusLine", () => {
 });
 
 describe("announcements", () => {
-  it("a repeat of the same text still changes the live-region key", () => {
-    const first = nextAnnouncement({ text: "", seq: 0 }, "Maya, atlas, asking you");
-    const second = nextAnnouncement(first, "Maya, atlas, asking you");
-    expect(second.text).toBe(first.text);
-    expect(second.seq).not.toBe(first.seq);
-  });
   it("reads name, project and trigger", () => {
     const a = { ...agent("s1"), attention: { trigger: "question" as const } };
     expect(announcementText([a], { p: "/work/atlas" })).toMatch(/^\w+, atlas, asking you$/);
@@ -110,7 +103,9 @@ describe("TopBar", () => {
     ...over,
   });
   const html = (state: FeedState, displayError = false) =>
-    renderToStaticMarkup(<TopBar state={state} displayError={displayError} onPulse={() => {}} />);
+    renderToStaticMarkup(
+      <TopBar state={state} displayError={displayError} now={0} onPulse={() => {}} />,
+    );
 
   it("shows Display error from state.failure alone", () => {
     expect(html(feed({ failure: new Error("x") }))).toContain("Display error: reload the page");
@@ -125,6 +120,32 @@ describe("TopBar", () => {
   it("marks the status tone", () => {
     expect(html(feed({ connection: "connecting" }))).toContain('data-tone="muted"');
     expect(html(feed({ connection: "refused" }))).toContain('data-tone="warn"');
+  });
+});
+
+describe("TopBar wait clock", () => {
+  const chip = (now: number) =>
+    renderToStaticMarkup(
+      <TopBar
+        state={
+          {
+            office: officeOf(waitingAgent("s1", 1000)),
+            seats: {},
+            projects: {},
+            connection: "live",
+            skipped: { json: 0, frame: 0, event: 0 },
+            failure: null,
+          } as FeedState
+        }
+        displayError={false}
+        now={now}
+        onPulse={() => {}}
+      />,
+    );
+
+  it("labels chips from the now it is given, the same clock the scene bubbles use", () => {
+    expect(chip(1000 + 3 * MINUTE_MS)).toContain(" 3m</button>");
+    expect(chip(1000 + 5 * MINUTE_MS)).toContain(" 5m</button>");
   });
 });
 
@@ -191,6 +212,44 @@ describe("stepAnnouncer", () => {
     expect(again.announcement.seq).toBe(2);
     expect(again.announcement.text).toBe(a.announcement.text);
   });
+  it("reports the newly announced agents for the chime, none on a replay", () => {
+    const a = stepAnnouncer(officeOf(waitingAgent("s1", 100)), {}, new Set(), first);
+    expect(a.announced.map((x) => x.sessionId)).toEqual(["s1"]);
+    const replay = stepAnnouncer(officeOf(waitingAgent("s1", 100)), {}, a.seen, a.announcement);
+    expect(replay.announced).toEqual([]);
+  });
+});
+
+describe("chime control", () => {
+  it("runAnnouncer hands newly announced agents to notify, and nothing on a replay", () => {
+    const notify = vi.fn<(a: Agent[]) => void>();
+    const first = { text: "", seq: 0 };
+    const a = runAnnouncer(officeOf(waitingAgent("s1", 100)), {}, new Set(), first, notify);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0][0].map((x) => x.sessionId)).toEqual(["s1"]);
+    runAnnouncer(officeOf(waitingAgent("s1", 100)), {}, a.seen, a.announcement, notify);
+    expect(notify).toHaveBeenCalledTimes(1);
+  });
+  it("renders a focusable button, off and unpressed by default", () => {
+    const html = renderToStaticMarkup(
+      <TopBar
+        state={{
+          office: createOffice(),
+          seats: {},
+          projects: {},
+          connection: "live",
+          skipped: { json: 0, frame: 0, event: 0 },
+          failure: null,
+        }}
+        displayError={false}
+        now={0}
+        onPulse={() => {}}
+      />,
+    );
+    expect(html).toMatch(/<button type="button" class="top-bar-chime" aria-pressed="false"/);
+    expect(html).toContain('data-status="off"');
+    expect(html).toContain("Chime off");
+  });
 });
 
 describe("narrow window (DR8)", () => {
@@ -201,12 +260,6 @@ describe("narrow window (DR8)", () => {
     expect(isTooSmall({ width: 800, height: 500 })).toBe(false);
   });
   it("words the notice", () => expect(TOO_SMALL_NOTICE).toBe("Make this window larger"));
-  it("reads the viewport without the scrollbar", () => {
-    expect(viewportOf({ clientWidth: 1009, clientHeight: 700 })).toEqual({
-      width: 1009,
-      height: 700,
-    });
-  });
 });
 
 describe("display error flag (D16)", () => {
@@ -260,13 +313,13 @@ describe("waiting chips (DR1, DR11)", () => {
       failure: null,
     } as FeedState;
     const wide = renderToStaticMarkup(
-      <TopBar state={state} displayError={false} onPulse={() => {}} />,
+      <TopBar state={state} displayError={false} now={0} onPulse={() => {}} />,
     );
     expect(wide.match(/top-bar-chip"/g)).toHaveLength(MAX_VISIBLE_CHIPS);
     expect(wide).toContain('aria-label="and 10 more waiting"');
     expect(wide).not.toContain("data-narrow");
     const narrow = renderToStaticMarkup(
-      <TopBar state={state} displayError={false} narrow onPulse={() => {}} />,
+      <TopBar state={state} displayError={false} narrow now={0} onPulse={() => {}} />,
     );
     expect(narrow.match(/top-bar-chip"/g)).toHaveLength(14);
     expect(narrow).not.toContain("top-bar-more");

@@ -140,6 +140,34 @@ body {
   color: var(--bg);
 }
 
+.top-bar-chime {
+  margin-left: auto;
+  white-space: nowrap;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.top-bar-chime[data-status="on"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.top-bar-chime[data-status="blocked"] {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.top-bar-chime:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
 .wider-notice {
   margin: 0;
   padding: var(--space-2) var(--space-4);

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ErrorBoundary } from "./office/ErrorBoundary";
 import type { FeedDeps } from "./office/feed-client";
 import type { Viewport } from "./office/iso";
@@ -7,7 +7,6 @@ import {
   isTooSmall,
   nextSceneKey,
   TOO_SMALL_NOTICE,
-  viewportOf,
   findAgentWrapper,
   pulser,
 } from "./office/app-logic";
@@ -17,23 +16,14 @@ import { TopBar } from "./office/TopBar";
 import { useDocumentChrome } from "./office/useDocumentChrome";
 import { useOffice } from "./office/useOffice";
 
-/** Coarse clock for bubble wait times; minute precision needs no faster tick. */
+/** Coarse clock for every wait label (bubbles and top-bar chips); minute precision needs no faster tick. */
 const NOW_TICK_MS = 15 * 1000;
 const PULSE_MS = 1200;
 
-type BoundaryProps = { children: ReactNode; onError: () => void };
-
-/** Reports a caught render error to the parent so the top bar can say "Display error" (D16). */
-class ReportingBoundary extends ErrorBoundary {
-  declare props: BoundaryProps;
-  componentDidCatch(error: unknown) {
-    super.componentDidCatch(error);
-    this.props.onError();
-  }
-}
-
+/** Viewport excluding any classic scrollbar, so the room never overflows sideways. */
 function readViewport(): Viewport {
-  return viewportOf(document.documentElement);
+  const el = document.documentElement;
+  return { width: el.clientWidth, height: el.clientHeight };
 }
 
 function App({ deps }: { deps?: FeedDeps }) {
@@ -79,14 +69,20 @@ function App({ deps }: { deps?: FeedDeps }) {
 
   return (
     <>
-      <TopBar state={state} displayError={displayError} narrow={tooSmall} onPulse={pulse} />
+      <TopBar
+        state={state}
+        displayError={displayError}
+        narrow={tooSmall}
+        now={now}
+        onPulse={pulse}
+      />
       <main aria-label="Office">
         {tooSmall ? (
           <p className="wider-notice" role="status">
             {TOO_SMALL_NOTICE}
           </p>
         ) : (
-          <ReportingBoundary key={sceneKey.key} onError={onBoundaryError}>
+          <ErrorBoundary key={sceneKey.key} onError={onBoundaryError}>
             <Scene
               office={state.office}
               seats={state.seats}
@@ -95,7 +91,7 @@ function App({ deps }: { deps?: FeedDeps }) {
               now={now}
               failure={state.failure}
             />
-          </ReportingBoundary>
+          </ErrorBoundary>
         )}
       </main>
     </>

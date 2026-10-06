@@ -9,11 +9,6 @@ export function isTooSmall(viewport: Viewport): boolean {
   return viewport.width < MIN_WIDTH || viewport.height < MIN_HEIGHT;
 }
 
-/** Viewport excluding any classic scrollbar, so the room never overflows sideways. */
-export function viewportOf(el: { clientWidth: number; clientHeight: number }): Viewport {
-  return { width: el.clientWidth, height: el.clientHeight };
-}
-
 /**
  * The scene's React key: it changes each time the room comes back from the narrow notice, so
  * the boundary remounts as a new instance. `wasNarrow` and `narrow` are the previous and
