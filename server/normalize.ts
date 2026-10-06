@@ -325,6 +325,9 @@ export function tag(text: string, name: keyof typeof TAG_PATTERNS): string | nul
   return m === null || m[1].length === 0 ? null : m[1];
 }
 
+/** Task-notification statuses that end a launch; each hands the parent back once. */
+export const NOTIFICATION_STATUSES = ["completed", "failed", "killed"] as const;
+
 const onQueueOperation: Handler = (ctx) => {
   const { state, rec } = ctx;
   if (rec.operation !== "enqueue") return []; // remove copies are not counted
@@ -333,7 +336,7 @@ const onQueueOperation: Handler = (ctx) => {
   const toolUseId = tag(rec.content, "tool-use-id");
   const status = tag(rec.content, "status");
   if (taskId === null || toolUseId === null || status === null) return "bad_shape";
-  if (status !== "completed" && status !== "failed") return "bad_shape";
+  if (!(NOTIFICATION_STATUSES as readonly string[]).includes(status)) return "bad_shape";
   if (tooLong(taskId) || tooLong(toolUseId)) return "bad_shape";
   const key = `${taskId}|${toolUseId}`;
   if (state.completed.has(key)) return [];
