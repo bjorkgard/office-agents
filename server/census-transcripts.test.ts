@@ -135,6 +135,34 @@ describe("runCensus", () => {
     expect(c.versions).toEqual({ "1.2.3": 1, other: 2 });
   });
 
+  it("buckets a very long version component as other", async () => {
+    topFile(SESSION, [
+      rec({ type: "assistant", version: `1.2.${"9".repeat(40)}`, message: {} }),
+      rec({ type: "assistant", version: "1234.5678.9012", message: {} }),
+    ]);
+    const c = await runCensus(root);
+    expect(c.versions).toEqual({ "1234.5678.9012": 1, other: 1 });
+  });
+
+  it("checks the charset of ordinary tool_use ids", async () => {
+    const use = (id: string) =>
+      rec({
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id, name: "Read", input: {} }] },
+      });
+    topFile(SESSION, [use("toolu_ok-1")]);
+    expect((await runCensus(root)).idsNonConservativeChars).toBe(0);
+    topFile(SESSION, [use("toolu_ok-1"), use("bad id!")]);
+    expect((await runCensus(root)).idsNonConservativeChars).toBe(1);
+  });
+
+  it("scans a session dir that has no top-level jsonl file", async () => {
+    subFile("sess-orphan", "x", [rec({ type: "assistant", message: {} })]);
+    const c = await runCensus(root);
+    expect(c.files).toBe(0);
+    expect(c.subagentFiles).toBe(1);
+  });
+
   it("does not follow symlinked session or subagents dirs", async () => {
     const outside = mkdtempSync(join(tmpdir(), "office-census-out-"));
     try {
@@ -146,6 +174,8 @@ describe("runCensus", () => {
       for (const sess of ["sess-a", "sess-b"])
         writeFileSync(join(root, PROJECT, `${sess}.jsonl`), "");
       symlinkSync(join(outside, "sess-a"), join(root, PROJECT, "sess-a"));
+      // a symlinked session dir with no top-level file is skipped as well
+      symlinkSync(join(outside, "sess-a"), join(root, PROJECT, "sess-c"));
       mkdirSync(join(root, PROJECT, "sess-b"));
       symlinkSync(join(outside, "subs"), join(root, PROJECT, "sess-b", "subagents"));
       const c = await runCensus(root);

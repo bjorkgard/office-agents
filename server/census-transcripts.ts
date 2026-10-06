@@ -37,7 +37,7 @@ import type { NormalizerState } from "./normalize.ts";
 
 /** A line longer than this is counted and skipped, so one runaway line cannot exhaust memory. */
 const LINE_CAP_BYTES = 8 * 1024 * 1024;
-const SEMVER = /^\d+\.\d+\.\d+$/;
+const SEMVER = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const CONSERVATIVE_ID = /^[A-Za-z0-9_-]+$/;
 
 type Counts = Record<string, number>;
@@ -139,6 +139,17 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
       if (!isObj(rec)) continue;
       if (typeof rec.version === "string") add(c.versions, enumKey(rec.version, null));
       if (typeof rec.sessionId === "string" && rec.sessionId !== kind.sessionId) mismatch = true;
+      if (rec.type === "assistant" && isObj(rec.message) && Array.isArray(rec.message.content)) {
+        for (const b of rec.message.content) {
+          if (
+            isObj(b) &&
+            b.type === "tool_use" &&
+            typeof b.id === "string" &&
+            !CONSERVATIVE_ID.test(b.id)
+          )
+            c.idsNonConservativeChars++;
+        }
+      }
       if (
         rec.type === "queue-operation" &&
         rec.operation === "enqueue" &&
@@ -156,11 +167,9 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
   }
   if (mismatch) c.sessionIdMismatches++;
   c.resumesSeen += state.resumes.size;
-  for (const [toolUseId, launch] of state.launches) {
-    ids.push(toolUseId);
+  for (const launch of state.launches.values()) {
     if (launch.agentId !== null) ids.push(launch.agentId);
   }
-  for (const id of state.resumes.keys()) ids.push(id);
   for (const id of ids) if (!CONSERVATIVE_ID.test(id)) c.idsNonConservativeChars++;
   if (kind.agentId !== null) add(c.agentIdLength, String(kind.agentId.length));
   else
@@ -223,18 +232,20 @@ export async function runCensus(root: string): Promise<Census> {
   };
   for (const project of await tryList(() => subdirs(root))) {
     const projectDir = join(root, project);
+    // lstat, not stat: a symlinked session or subagents dir is skipped, never followed.
+    const isRealDir = (p: string) =>
+      lstat(p).then(
+        (s) => s.isDirectory(),
+        () => false,
+      );
     for (const name of await tryList(() => jsonlFiles(projectDir))) {
       const sessionId = name.slice(0, -".jsonl".length);
       await visit(join(projectDir, name), { sessionId, agentId: null });
-      const sessionDir = join(projectDir, sessionId);
-      const subDir = join(sessionDir, "subagents");
-      // lstat, not stat: a symlinked session or subagents dir is skipped, never followed.
-      const isRealDir = (p: string) =>
-        lstat(p).then(
-          (s) => s.isDirectory(),
-          () => false,
-        );
-      if (!(await isRealDir(sessionDir)) || !(await isRealDir(subDir))) continue;
+    }
+    // Session dirs are found on their own, not through a sibling top-level file.
+    for (const sessionId of await tryList(() => subdirs(projectDir))) {
+      const subDir = join(projectDir, sessionId, "subagents");
+      if (!(await isRealDir(subDir))) continue;
       for (const sf of await tryList(() => jsonlFiles(subDir))) {
         const stem = sf.slice(0, -".jsonl".length);
         const agentId = stem.startsWith("agent-") ? stem.slice("agent-".length) : stem;

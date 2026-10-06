@@ -235,7 +235,7 @@ const onAssistant: Handler = (ctx) => {
       ) {
         remember(state.resumes, id, to);
       }
-    } else {
+    } else if ((BACKGROUND_TOOLS as readonly string[]).includes(name)) {
       remember(state.otherTools, id, true);
     }
   }
@@ -332,6 +332,9 @@ export function tag(text: string, name: keyof typeof TAG_PATTERNS): string | nul
 
 /** Task-notification statuses that end a launch; each hands the parent back once. */
 export const NOTIFICATION_STATUSES = ["completed", "failed", "killed"] as const;
+
+/** Tools that can finish later through a task-notification without being agents; only these are exempt from orphan counting. */
+export const BACKGROUND_TOOLS = ["Bash", "Monitor"] as const;
 
 const onQueueOperation: Handler = (ctx) => {
   const { state, rec } = ctx;

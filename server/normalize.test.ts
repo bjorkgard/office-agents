@@ -115,6 +115,21 @@ describe("task-notification ids", () => {
     expect(state.drift).toEqual({});
     expect(state.completed.size).toBe(0);
   });
+  it("a Monitor tool_use is silent too", () => {
+    const state = top();
+    normalize(state, use("mon1", "Monitor"));
+    expect(normalize(state, notify("mon1"))).toEqual([]);
+    expect(state.drift).toEqual({});
+  });
+  it("a Read tool_use or an unknown launcher name stays an orphan", () => {
+    const state = top();
+    normalize(state, use("r1", "Read"));
+    normalize(state, use("n1", "RenamedLauncher", { run_in_background: true }));
+    expect(state.otherTools.size).toBe(0);
+    normalize(state, notify("r1"));
+    normalize(state, notify("n1", "task2"));
+    expect(state.drift).toEqual({ orphan_completion: 2 });
+  });
   it("an id with no tool_use in the file is still an orphan", () => {
     const state = top();
     expect(normalize(state, notify("ghost"))).toEqual([]);
