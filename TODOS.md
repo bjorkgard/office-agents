@@ -1,6 +1,6 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T46` are stable handles: a new entry takes the number above the highest ever issued (T46), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T47` are stable handles: a new entry takes the number above the highest ever issued (T47), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
 ## P1 available (3)
 
@@ -144,7 +144,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** The user running the probe
 
-## P3 available (22)
+## P3 available (23)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -297,6 +297,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Context:** Files: `src/office/useChime.ts`, `src/office/chime-audio.ts`, `src/office/TopBar.tsx` and their tests. For (1), re-check the generation after the `await` before scheduling. Audio and Safari were not tried in a real browser by any tool.
 
 **Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### T47 Census and normalizer follow-ups from the /ship review of v0.9.2.0 (2026-10-06)
+
+**Area:** Feed hardening
+
+**What:** Skipped review items from the v0.9.2.0 /ship (0 critical, 22 informational), all in `server/census-transcripts.ts`, `server/normalize.ts` and their tests. Normalizer: the `otherTools` map in `normalize.ts` stores every tool id that is not Agent, Task or SendMessage, so a renamed subagent launcher would have its completions dropped with no drift count (use an allowlist of Bash and Monitor, or count a separate reason); it shares MAP_CAP (2000) with every tool call, so a background task that outlives 2000 later tool calls is counted as an orphan again; the eviction test does not assert that effect, and nameless tool_use and notification-before-tool_use have no test. Census: add a top-level catch in `main()` so a crash prints one fixed line, not a stack trace with paths; count skipped symlinks and files that fail mid-read (their mismatch and id checks are dropped, so the T05/T06/T10 numbers are a lower bound); drop or count an unterminated last line when a session is live; bound the `versions` key (`\d{1,4}` per part); check `otherTools` ids in the id check or narrow its key text; rename `maxLineChars` (it holds bytes); move READ_CAP_BYTES out of `feed-plugin.ts`; hoist `isRealDir`; tidy `enumKey`. Census tests missing: no trailing newline, CRLF and blank lines; non-object JSON records; `remove` operation and status-less notifications; a root that is a file (the CLI already exits 2, probed); explicit timeouts on the large-line tests; `process.execPath` instead of bare `node`. Also add a one-line comment on why `otherTools` is a Map.
+
+**Why:** Keeps the drift counter and the census honest after a Claude Code format change, and keeps the census output exactly counts-only on every error path.
+
+**Context:** Findings came from five specialist reviewers, a red-team pass and the native adversarial pass of the v0.9.2.0 ship, which the user chose to skip rather than start another review cycle. The 55 orphans left in the census all have a tool-use id that is not in the same file (0 of 55), so they are probably cross-file or compaction cases (inferred, not checked).
+
+**Effort:** S (human ~3h / CC ~30min)
 **Priority:** P3
 **Depends on:** None
 
