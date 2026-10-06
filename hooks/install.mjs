@@ -10,6 +10,7 @@
 import {
   chmodSync,
   copyFileSync,
+  linkSync,
   lstatSync,
   readFileSync,
   realpathSync,
@@ -246,13 +247,40 @@ export function run(argv, out = (s) => process.stdout.write(`${s}\n`)) {
   }
   const tmp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
   writeFileSync(tmp, text, { mode: fileMode });
-  chmodSync(tmp, fileMode);
-  // Another tool may have written the file since we read it: its update must not be lost.
-  if (before !== null && !readFileSync(target).equals(before)) {
-    unlinkSync(tmp);
-    throw new Refusal(`${settingsPath} changed while installing; nothing replaced, run again`);
+  try {
+    chmodSync(tmp, fileMode);
+    if (before === null) {
+      // Absent when read: create it exclusively, so a file another tool made meanwhile is never replaced.
+      try {
+        linkSync(tmp, target);
+      } catch (e) {
+        if (e && e.code === "EEXIST") {
+          throw new Refusal(
+            `${settingsPath} was created while installing; nothing replaced, run again`,
+          );
+        }
+        throw e;
+      }
+    } else {
+      // Another tool may have written the file since we read it: its update must not be lost.
+      let unchanged = false;
+      try {
+        unchanged = readFileSync(target).equals(before);
+      } catch {
+        // Gone or unreadable counts as changed.
+      }
+      if (!unchanged) {
+        throw new Refusal(`${settingsPath} changed while installing; nothing replaced, run again`);
+      }
+      renameSync(tmp, target);
+    }
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      // renamed away already
+    }
   }
-  renameSync(tmp, target);
   out(`${mode === "apply" ? "Installed into" : "Removed from"} ${settingsPath}`);
   if (mode === "apply") {
     for (const p of replaced) out(`Replaced the Office hook entry from another checkout: ${p}`);

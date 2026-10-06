@@ -16,7 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const HOOKS_DIR = dirname(fileURLToPath(import.meta.url));
 const INSTALL = join(HOOKS_DIR, "install.mjs");
@@ -340,6 +340,39 @@ describe("install.mjs concurrent writer", () => {
     };
     expect(() => run(["--apply", "--settings", file], out)).toThrow(/changed/);
     expect(readFileSync(file, "utf8")).toBe(theirs);
+    expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("refuses without overwriting a settings file created while installing", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const theirs = JSON.stringify({ theme: "theirs" });
+    vi.resetModules();
+    vi.doMock("node:fs", () => ({
+      ...actual,
+      // The other tool creates the file right after our temp file is written.
+      writeFileSync: (p: string, ...rest: unknown[]) => {
+        (actual.writeFileSync as (...a: unknown[]) => void)(p, ...rest);
+        if (String(p).endsWith(".tmp")) actual.writeFileSync(file, theirs);
+      },
+    }));
+    try {
+      const { run } = await import("./install.mjs");
+      expect(() => run(["--apply", "--settings", file], () => {})).toThrow(/created while/);
+      expect(readFileSync(file, "utf8")).toBe(theirs);
+      expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+  });
+
+  it("refuses, and leaves no temp file, when the settings file vanishes before the swap", async () => {
+    const { run } = await import("./install.mjs");
+    writeFileSync(file, JSON.stringify(other));
+    const out = (line: string) => {
+      if (line.startsWith("Backup:")) rmSync(file);
+    };
+    expect(() => run(["--apply", "--settings", file], out)).toThrow(/changed/);
     expect(readdirSync(dir).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 });
