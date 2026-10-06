@@ -641,8 +641,9 @@ function DecorVariants() {
   );
 }
 
-// The room's dispenser and counter each over their contact shadow, as RoomDecor stacks them (shadow
-// first, prop on top, shadow offset by PROP_SHADOW_AT); the dispenser's bubbles sit where the room puts them.
+// The dispenser, the counter and the shelf each drawn over their contact shadow, stacked as RoomDecor does:
+// shadow first, then the prop, with the shadow offset by PROP_SHADOW_AT. The dispenser's bubbles
+// sit where the room puts them.
 function ContactShadows({ scale }: { scale: number }) {
   return (
     <section style={{ marginBottom: 24 }}>

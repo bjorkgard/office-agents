@@ -6,7 +6,7 @@ import appearanceSource from "./appearance.ts?raw";
 import { PixelDesk, PixelProp } from "./CharacterRig";
 import { ART } from "./palette";
 import { CELL, CELLS } from "./pixel";
-import { PROPS, type PropName } from "./props";
+import { PROP_SHADOW_AT, PROPS, SHADOWS, propSize, type PropName } from "./props";
 import props from "./props.ts?raw";
 import { DESK, DESK_DIM, HAIRSTYLES } from "./sprites";
 
@@ -107,6 +107,25 @@ describe("prop sprites", () => {
     expect(DESK.join("")).toMatch(/[c!C]/);
     expect(DESK_DIM.join("")).not.toMatch(/[c!C]/);
   });
+});
+
+describe("contact shadow placement", () => {
+  // Value: protects=PROP_SHADOW_AT puts each shadow under its prop's base, inside its width; fails_when=an offset moves a shadow off the prop or above its base; why_new=the offsets were only checked by eye on the dev sheet; seam=none
+  it.each(Object.keys(SHADOWS) as (keyof typeof SHADOWS)[])(
+    "%s shadow sits on its base",
+    (name) => {
+      const [dx, dy] = PROP_SHADOW_AT[name];
+      const grid = SHADOWS[name];
+      const { width, height } = propSize(name);
+      const cols = grid[0].length;
+      const bottom = (x: number) => grid.reduce((b, r, y) => (r[x] === "_" ? y : b), -1);
+      expect(dx).toBeGreaterThanOrEqual(0);
+      expect(dx + cols).toBeLessThanOrEqual(width / CELL);
+      // The band starts at or above the prop's base row and ends below it.
+      expect(dy).toBeLessThanOrEqual(height / CELL);
+      expect(dy + bottom(cols - 1) + 1).toBeGreaterThan(height / CELL);
+    },
+  );
 });
 
 describe("ambient loops", () => {
