@@ -6,7 +6,7 @@
  * types with a bad shape bump a per-reason drift counter.
  */
 import { MAX_STRING_LENGTH, parseAgentEvent } from "../shared/events.ts";
-import type { AgentEvent } from "../shared/events.ts";
+import type { AgentEvent, SubagentKind } from "../shared/events.ts";
 
 /** The one trailing-`?` predicate (R2). Shared with server/sanitize-fixtures.ts. */
 export function endsWithQuestion(text: string): boolean {
@@ -18,7 +18,8 @@ export type DriftReason =
   | "bad_shape"
   | "bad_timestamp"
   | "bad_event"
-  | "orphan_completion";
+  | "orphan_completion"
+  | "unmapped_subagent_type";
 
 export type NormalizerState = {
   projectId: string;
@@ -34,7 +35,10 @@ export type NormalizerState = {
   /** Discard emitted events while replaying a finished file's tail. */
   suppress: boolean;
   /** Agent/Task tool_use id -> launch facts. */
-  launches: Map<string, { sync: boolean; agentId: string | null; by: string | null }>;
+  launches: Map<
+    string,
+    { sync: boolean; agentId: string | null; by: string | null; kind: SubagentKind }
+  >;
   /** SendMessage tool_use id -> the known agent it resumes. */
   resumes: Map<string, string>;
   /** `task-id|tool-use-id` of completions already emitted. */
@@ -66,6 +70,12 @@ export function createNormalizerState(opts: {
 
 const MAP_CAP = 2000;
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
+/** Exact lookup of `input.subagent_type`; never object indexing, so "__proto__" etc. miss. */
+const SUBAGENT_KIND_MAP = new Map<string, SubagentKind>([
+  ["Explore", "explore"],
+  ["Plan", "plan"],
+  ["general-purpose", "general"],
+]);
 
 export type Json = Record<string, unknown>;
 type Ctx = { state: NormalizerState; rec: Json; ts: number; sessionId: string; cwd: string };
@@ -158,12 +168,18 @@ function parentOfOwn(ctx: Ctx): string | null {
   return own === null || ctx.state.parentOf === null ? null : ctx.state.parentOf(own);
 }
 
-function handoff(ctx: Ctx, toAgentId: string, direction: "out" | "back"): AgentEvent[] {
+function handoff(
+  ctx: Ctx,
+  toAgentId: string,
+  direction: "out" | "back",
+  subagentKind?: SubagentKind,
+): AgentEvent[] {
   return emit(ctx.state, ctx, ownAgentId(ctx), {
     kind: "handoff",
     fromAgentId: ownAgentId(ctx),
     toAgentId,
     direction,
+    ...(direction === "out" && subagentKind !== undefined ? { subagentKind } : {}),
   });
 }
 
@@ -196,7 +212,16 @@ const onAssistant: Handler = (ctx) => {
     const input = isObj(b.input) ? b.input : {};
     if (isSubagent) {
       const sync = input.run_in_background === false;
-      remember(state.launches, id, { sync, agentId: null, by: agentId });
+      const type = input.subagent_type;
+      // No subagent_type: Claude Code falls back to general-purpose, so that is not drift.
+      const mapped =
+        type === undefined
+          ? "general"
+          : typeof type === "string" && !tooLong(type)
+            ? SUBAGENT_KIND_MAP.get(type)
+            : undefined;
+      if (mapped === undefined) bump(state, "unmapped_subagent_type"); // count only, never the value
+      remember(state.launches, id, { sync, agentId: null, by: agentId, kind: mapped ?? "other" });
       if (sync) out.push(...emit(state, ctx, agentId, { kind: "waiting_on_subagents" }));
     } else if (name === "SendMessage") {
       const to = asStr(input.to);
@@ -275,11 +300,11 @@ const onUser: Handler = (ctx) => {
     launch.agentId = launched;
     if (result.status === "async_launched") {
       // D7: background launch emits only the out-handoff; the parent keeps working.
-      out.push(...handoff(ctx, launched, "out"));
+      out.push(...handoff(ctx, launched, "out", launch.kind));
     } else if (result.status === "completed") {
       // D7: the child id is only known now, so a sync launch emits its out-handoff just before the back.
       if (launch.sync && !state.completed.has(`${launched}|${id}`)) {
-        out.push(...handoff(ctx, launched, "out"));
+        out.push(...handoff(ctx, launched, "out", launch.kind));
       }
       out.push(...handoff(ctx, launched, "back"));
       if (!tooLong(id)) markCompleted(state, `${launched}|${id}`);

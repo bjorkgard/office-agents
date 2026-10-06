@@ -62,6 +62,42 @@ describe("isAgentEvent", () => {
     expect(isAgentEvent({ ...valid.handoff, direction: "sideways" })).toBe(false);
   });
 
+  it.each(["explore", "plan", "general", "other"])(
+    "accepts handoff out with subagentKind %s",
+    (k) => {
+      expect(parseAgentEvent({ ...valid.handoff, subagentKind: k })).toMatchObject({
+        subagentKind: k,
+      });
+    },
+  );
+
+  it("rejects handoff with an invalid subagentKind", () => {
+    expect(isAgentEvent({ ...valid.handoff, subagentKind: "Explore" })).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, subagentKind: "secret text" })).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, subagentKind: 3 })).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, subagentKind: null })).toBe(false);
+  });
+
+  it("rejects handoff back that carries subagentKind", () => {
+    expect(isAgentEvent({ ...valid.handoff, direction: "back", subagentKind: "plan" })).toBe(false);
+  });
+
+  it("accepts handoff out and back without subagentKind", () => {
+    const out = parseAgentEvent(valid.handoff) as Record<string, unknown>;
+    expect(out).not.toBeNull();
+    expect(Object.hasOwn(out, "subagentKind")).toBe(false);
+    expect(isAgentEvent({ ...valid.handoff, direction: "back" })).toBe(true);
+  });
+
+  it("still drops a stray subagentKind on other kinds", () => {
+    const parsed = parseAgentEvent({ ...valid.done, subagentKind: "plan" }) as Record<
+      string,
+      unknown
+    >;
+    expect(parsed).not.toBeNull();
+    expect(Object.hasOwn(parsed, "subagentKind")).toBe(false);
+  });
+
   it("rejects working tool with id missing", () => {
     expect(isAgentEvent({ ...valid.working, tool: { phase: "start", isSubagent: false } })).toBe(
       false,
