@@ -82,11 +82,13 @@ export function createChime(now: () => number = Date.now) {
         emit();
       });
     },
-    /** Another tab changed the stored preference: "on" lands blocked (audio needs this tab's own click), anything else off. */
+    /** Another tab changed the stored preference: "on" lands blocked (audio needs this tab's own click), anything else off. An event that matches this tab's own choice is a no-op. */
     onStorage(e: { key: string | null; newValue: string | null }) {
       if (e.key !== null && e.key !== CHIME_KEY) return;
+      const next = e.key === null ? false : parseChimePref(e.newValue);
+      if (next === enabled) return;
       generation++;
-      enabled = e.key === null ? false : parseChimePref(e.newValue);
+      enabled = next;
       unlocked = false;
       unlockFailed = false;
       emit();

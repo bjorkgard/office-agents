@@ -262,21 +262,28 @@ describe("createChime", () => {
       await flush();
       expect(c.status()).toBe("on");
     });
-    it("a remote on resets an unlocked or failed tab to blocked", async () => {
+    it("a remote on is a no-op for a tab that is already on", async () => {
       audio.unlock.mockResolvedValue(true);
       const c = createChime(() => 1000);
       c.toggle();
       await flush();
       expect(c.status()).toBe("on");
+      const seen = vi.fn();
+      c.subscribe(seen);
       c.onStorage({ key: CHIME_KEY, newValue: "on" });
-      expect(c.status()).toBe("blocked");
-      audio.unlock.mockResolvedValue(false);
+      expect(c.status()).toBe("on");
+      expect(seen).not.toHaveBeenCalled();
+    });
+    it("a delayed remote on does not cancel this tab's pending unlock", async () => {
+      const pending = deferred();
+      audio.unlock.mockReturnValue(pending.promise);
+      const c = createChime(() => 1000);
       c.toggle();
+      c.onStorage({ key: CHIME_KEY, newValue: "on" });
+      pending.resolve(true);
       await flush();
-      c.onStorage({ key: CHIME_KEY, newValue: "on" });
-      // unlockFailed was cleared, so a click retries instead of turning off.
-      c.toggle();
-      expect(c.status()).toBe("blocked");
+      expect(c.status()).toBe("on");
+      expect(audio.play).toHaveBeenCalledTimes(1);
     });
     it("a remote off, or a removed key, turns an on chime off", async () => {
       audio.unlock.mockResolvedValue(true);
