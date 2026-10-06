@@ -40,10 +40,12 @@ import {
   type Trip,
 } from "./motion";
 import { DESKS_PER_ROW } from "../../shared/tuning";
+import { deskKindFor } from "./desk-kinds";
+import { CELL } from "./pixel";
 import { activeSceneId, windowScene, type WindowScene } from "./decor";
 import { ART, FLOOR_LIGHT_OPACITY, GLASS } from "./palette";
 import type { AgentState } from "./poses";
-import { armPaperTimer, doorOpen, paperOfParent } from "./paper";
+import { armPaperTimer, doorOpen, paperLabel, paperOfParent } from "./paper";
 import { DoorLight, RoomDecor } from "./RoomDecor";
 import { roomShell, type RoomShell as RoomShellGeometry } from "./room";
 import {
@@ -96,6 +98,8 @@ const STATE_LABEL: Record<AgentState, string> = {
 
 const BUBBLE_W = 112;
 const BUBBLE_H = 32;
+/** Screen px between the paper's hit square and its label, so the focus ring stays visible. */
+const PAPER_LABEL_GAP = 6;
 
 const subscribeMotion = (cb: () => void) => {
   const q = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -318,7 +322,8 @@ export function Scene({
   // The sheet of paper on each parent's desk (nextPaper: the first moment any of them changes).
   const paper = new Map(
     [...occupant].map(
-      ([desk, parent]) => [desk, paperOfParent(parent, agents, motion, reducedMotion, t)] as const,
+      ([desk, parent]) =>
+        [desk, paperOfParent(parent, agents, motion, reducedMotion, t, office.kinds)] as const,
     ),
   );
   const nextPaper = Math.min(...[...paper.values()].map((p) => p.nextChange ?? Infinity));
@@ -562,6 +567,19 @@ export function Scene({
           const name = seenName(a);
           const project = projectOf(a);
           const placedBubble = bubbles.get(a.key);
+          // The label of the sheet on this parent's desk, only while it is live (not while it fades).
+          const desk = placed.get(a.key)?.desk ?? null;
+          const sheet = a.agentId === null && desk !== null ? paper.get(desk) : undefined;
+          const sheetKinds = sheet?.visible ? paperLabel(sheet.kinds) : null;
+          let slotMid: { x: number; y: number } | null = null;
+          if (sheetKinds !== null && desk !== null) {
+            const slot = deskKindFor(desk).paperSlot;
+            const deskAt = g.desk(desk);
+            slotMid = {
+              x: deskAt.x + (slot.x + slot.w / 2) * CELL,
+              y: deskAt.y + (slot.y + slot.h / 2) * CELL,
+            };
+          }
           return (
             <div key={a.key} data-agent={a.key}>
               <button
@@ -605,6 +623,23 @@ export function Scene({
                     {waitLabel(a.episode?.waitingSince ?? null, now) ?? ""}
                   </span>
                 </div>
+              )}
+              {sheetKinds !== null && slotMid !== null && (
+                <>
+                  <button
+                    type="button"
+                    className="hit paper-hit"
+                    aria-label={`${name}, ${project}: paper from ${sheetKinds}`}
+                    style={{ ...roomCalc(slotMid), width: hit, height: hit }}
+                  />
+                  <div
+                    className="paper-label"
+                    aria-hidden="true"
+                    style={roomCalcAt(slotMid, { x: 0, y: hit / 2 + PAPER_LABEL_GAP })}
+                  >
+                    {sheetKinds}
+                  </div>
+                </>
               )}
             </div>
           );

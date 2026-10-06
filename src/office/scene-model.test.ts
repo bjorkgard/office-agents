@@ -221,6 +221,7 @@ describe("deskCountFor", () => {
     agents: Object.fromEntries(as.map((a) => [a.key, a])),
     episodeSeq: 0,
     returned: {},
+    kinds: {},
   });
 
   it("is the highest seat of a present agent plus one, leavers keep their desk", () => {
@@ -364,6 +365,7 @@ describe("deskDemand (desks a room needs, whole rows)", () => {
         agents: Object.fromEntries(agents.map((a) => [a.key, a])),
         episodeSeq: 0,
         returned: {},
+        kinds: {},
       };
       const sessionRows = Math.max(1, rowsOf(deskCountFor(office, seats)));
       let hold: RowHold | null = null;
@@ -389,6 +391,7 @@ function scenePass(all: Agent[], seats: Record<string, number>, mem: Mem, now: n
     agents: Object.fromEntries(all.map((a) => [a.key, a])),
     episodeSeq: 0,
     returned: {},
+    kinds: {},
   };
   const sessionRows = Math.max(1, Math.ceil(deskCountFor(office, seats) / DESKS_PER_ROW));
   const demandRows = Math.ceil(sceneDemand(all, seats, mem.desks) / DESKS_PER_ROW);

@@ -17,6 +17,10 @@ import {
   type PlacedBubble,
 } from "./iso";
 import { roomShell } from "./room";
+import { deskKindFor } from "./desk-kinds";
+import { overlayPoints } from "./motion";
+import { CELL } from "./pixel";
+import { geometryFor } from "./scene-model";
 
 describe("project", () => {
   it("maps grid x,y to the screen diamond and depth to x+y", () => {
@@ -384,4 +388,40 @@ describe("ringStroke", () => {
     expect(ringStroke(0)).toBe(2 / MIN_SCALE);
     expect(ringStroke(Number.NaN)).toBe(2 / MIN_SCALE);
   });
+});
+
+describe("paper target geometry", () => {
+  // The paper target sits at the paper slot centre of each parent's desk; the parent's own hit sits
+  // at its seat. They must stay a hit-size apart so neither covers the other (WCAG 2.5.8).
+  for (let rows = 1; rows <= 6; rows++) {
+    it(`keeps the paper target 24px clear of every character hit at scale 0.5, ${rows} rows`, () => {
+      const layout = layoutOffice(rows * DESKS_PER_ROW, { width: MIN_WIDTH, height: MIN_HEIGHT });
+      // The room is laid out at the smallest viewport; distances are taken at the smallest scale
+      // (the worst case: hit stays 24px while room gaps shrink). The fit offset cancels out.
+      const scale = MIN_SCALE;
+      const fit = { scale, x: 0, y: 0 };
+      const hit = Math.max(HIT_MIN, 40 * scale);
+      expect(hit).toBeGreaterThanOrEqual(HIT_MIN);
+      const g = geometryFor(layout);
+      const chars = Array.from(
+        { length: rows * DESKS_PER_ROW },
+        (_, i) => overlayPoints(g.seat(i), fit, hit).hit,
+      );
+      for (let i = 0; i < chars.length; i++) {
+        const slot = deskKindFor(i).paperSlot;
+        const d = g.desk(i);
+        const paper = {
+          x: (d.x + (slot.x + slot.w / 2) * CELL) * scale + fit.x,
+          y: (d.y + (slot.y + slot.h / 2) * CELL) * scale + fit.y,
+        };
+        chars.forEach((c, j) => {
+          const dist = Math.hypot(paper.x - c.left, paper.y - c.top);
+          expect(
+            dist,
+            `paper target of desk ${i} is ${dist.toFixed(1)}px from the character hit of desk ${j}`,
+          ).toBeGreaterThanOrEqual(HIT_MIN);
+        });
+      }
+    });
+  }
 });

@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../../shared/events";
+import type { AgentEvent, SubagentKind } from "../../shared/events";
 import { ATTENTION_STALE_MS, STALE_MS } from "../../shared/tuning";
 import type { AgentState } from "./poses";
 
@@ -64,29 +64,33 @@ export type OfficeState = {
   episodeSeq: number;
   /** Children already returned by a handoff `back`, agent key to that event's ts. */
   returned: Record<string, number>;
+  /** Kind of each launched child, agent key to the `out` handoff's subagentKind (absent: "other"). */
+  kinds: Record<string, SubagentKind>;
 };
 
 const RETURNED_CAP = 2000;
+const KINDS_CAP = RETURNED_CAP;
 
 export function createOffice(): OfficeState {
-  return { agents: {}, episodeSeq: 0, returned: {} };
+  return { agents: {}, episodeSeq: 0, returned: {}, kinds: {} };
 }
 
 export function agentKey(sessionId: string, agentId: string | null): string {
   return `${sessionId}\u0000${agentId ?? ""}`;
 }
 
-/** Drops one agent and its returned mark (the server says it is gone); `state` itself if absent. */
+/** Drops one agent, its returned mark and its kind (the server says it is gone); `state` itself if absent. */
 export function removeAgent(
   state: OfficeState,
   sessionId: string,
   agentId: string | null,
 ): OfficeState {
   const key = agentKey(sessionId, agentId);
-  if (!(key in state.agents) && !(key in state.returned)) return state;
+  if (!(key in state.agents) && !(key in state.returned) && !(key in state.kinds)) return state;
   const { [key]: _agent, ...agents } = state.agents;
   const { [key]: _returned, ...returned } = state.returned;
-  return { ...state, agents, returned };
+  const { [key]: _kind, ...kinds } = state.kinds;
+  return { ...state, agents, returned, kinds };
 }
 
 /** Sets an own property, so an id like `__proto__` is data and not the prototype setter. */
@@ -244,6 +248,17 @@ function waitsOn(
   return !!a && Object.keys(a.unresolved).some((id) => waitsOn(s, sessionId, id, target, seen));
 }
 
+/** Drops the oldest entry (first key) once `record` holds more than `cap`, without listing every key. */
+function evictOldest(record: Record<string, unknown>, cap: number): void {
+  let count = 0;
+  let oldest: string | undefined;
+  for (const k in record) {
+    if (count === 0) oldest = k;
+    if (++count > cap) break;
+  }
+  if (count > cap && oldest !== undefined) delete record[oldest];
+}
+
 /** Sends a returned child out and remembers it, so its late events cannot resurrect it. */
 function walkOut(
   s: OfficeState,
@@ -254,8 +269,7 @@ function walkOut(
 ): void {
   delete s.returned[key]; // re-insert last so the oldest is the first key
   s.returned[key] = Math.min(ts, now); // a far-future ts must not block the child forever
-  const keys = Object.keys(s.returned);
-  if (keys.length > RETURNED_CAP) delete s.returned[keys[0]];
+  evictOldest(s.returned, RETURNED_CAP);
   // `now`, not the event's ts: the leaving walk-out is timed from when we see it, not a replayed ts.
   if (child && child.phase !== "leaving") leave(child, now);
 }
@@ -349,7 +363,15 @@ function applyOwned(
         // A launch that would close a wait loop could never expire; ignore it.
         const loop =
           event.fromAgentId !== null && waitsOn(s, sessionId, event.toAgentId, event.fromAgentId);
-        if (!loop) setOwn(parent.unresolved, event.toAgentId, clock);
+        if (!loop) {
+          setOwn(parent.unresolved, event.toAgentId, clock);
+          if (event.subagentKind) {
+            const key = agentKey(sessionId, event.toAgentId);
+            delete s.kinds[key]; // re-insert last so the oldest is the first key
+            s.kinds[key] = event.subagentKind;
+            evictOldest(s.kinds, KINDS_CAP);
+          }
+        }
       } else {
         delete parent.unresolved[event.toAgentId];
         walkOut(s, agentKey(sessionId, event.toAgentId), child, event.ts, now);
@@ -413,6 +435,7 @@ function pass(s: OfficeState, now: number): boolean {
       const walkMs = a.agentId === null ? TUNING.leavingMs : TUNING.subagentLeavingMs;
       if (now - (a.leftAt ?? now) >= walkMs) {
         delete s.agents[a.key];
+        delete s.kinds[a.key];
         changed = true;
       }
       continue;

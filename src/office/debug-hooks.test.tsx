@@ -48,6 +48,7 @@ function render(agents: Agent[], seats: Record<string, number>, clock?: () => nu
     agents: Object.fromEntries(agents.map((a) => [a.key, a])),
     episodeSeq: 0,
     returned: {},
+    kinds: {},
   };
   return renderToStaticMarkup(
     <Scene

@@ -22,12 +22,14 @@ import {
 import {
   PAPER_FADE_MS,
   PAPER_HOLD_MS,
+  PAPER_KIND_LABEL,
   PAPER_MAX_MS,
   DOOR_TUNING,
   armPaperTimer,
   doorOpen,
   doorOpenFor,
   paperDelay,
+  paperLabel,
   paperOfParent,
   paperOnDesk,
   stillPaperOnDesk,
@@ -36,6 +38,7 @@ import { PROPS } from "./props";
 import { geometryFor } from "./scene-model";
 import { agentKey } from "./machine";
 import { DESK } from "./sprites";
+import { SUBAGENT_KINDS, type SubagentKind } from "../../shared/events";
 
 const geo = geometryFor(layoutOffice(4, { width: 1200, height: 800 }));
 const ctx = (over: Partial<SubagentCtx> = {}): SubagentCtx => ({
@@ -49,6 +52,7 @@ const sub = (
   phase: Agent["phase"] = "working",
   leftAt: number | null = null,
 ) => ({
+  key: "s/k",
   phase,
   arrivedAt,
   leftAt,
@@ -119,9 +123,21 @@ describe("paperOnDesk", () => {
 
   it("has no paper without a seat or without subagents", () => {
     const none = paperOnDesk(working, [], () => ctx(), 5000);
-    expect(none).toEqual({ visible: false, fading: false, since: null, nextChange: null });
+    expect(none).toEqual({
+      visible: false,
+      fading: false,
+      since: null,
+      nextChange: null,
+      kinds: [],
+    });
     const seatless = paperOnDesk(working, [sub(1000)], () => ctx({ parentDesk: null }), 1500);
-    expect(seatless).toEqual({ visible: false, fading: false, since: null, nextChange: null });
+    expect(seatless).toEqual({
+      visible: false,
+      fading: false,
+      since: null,
+      nextChange: null,
+      kinds: [],
+    });
   });
 
   it("lies nowhere for a resumed subagent: it walks straight on, no arrival sheet", () => {
@@ -131,7 +147,13 @@ describe("paperOnDesk", () => {
       () => ctx({ resume: { at: 1200, point: geo.door, mirror: false, carry: false } }),
       1500,
     );
-    expect(none).toEqual({ visible: false, fading: false, since: null, nextChange: null });
+    expect(none).toEqual({
+      visible: false,
+      fading: false,
+      since: null,
+      nextChange: null,
+      kinds: [],
+    });
   });
 
   it("reports the earliest start of two overlapping sheets", () => {
@@ -361,7 +383,7 @@ describe("paper timer", () => {
   });
 
   it("still shows the right sheet when the timer fires early", () => {
-    const sub = [{ phase: "working", arrivedAt: 1000, leftAt: null } as const];
+    const sub = [{ key: "s/k", phase: "working", arrivedAt: 1000, leftAt: null } as const];
     const target = takeover(1000);
     let clock = 1000;
     let pending: (() => void) | null = null;
@@ -625,5 +647,113 @@ describe("doorOpenFor", () => {
     const motion = { subs: new Map([["s1/a1", { ctx: ctx(), queue: null }]]) };
     expect(doorOpen([a], motion, false, 1000).open).toBe(true);
     expect(doorOpen([a], motion, true, 1000)).toEqual({ open: false, nextChange: null });
+  });
+});
+
+describe("paper kinds and label", () => {
+  const keyed = (
+    key: string,
+    arrivedAt: number,
+    phase: Agent["phase"] = "working",
+    leftAt = null,
+  ) => ({
+    ...sub(arrivedAt, phase, leftAt as number | null),
+    key,
+  });
+  const kinds: Record<string, SubagentKind> = { a: "plan", b: "explore", c: "plan", d: "general" };
+  const kindsAt = (subs: ReturnType<typeof keyed>[], now: number) =>
+    paperOnDesk(working, subs, () => ctx(), now, kinds).kinds;
+
+  it("lists the distinct kinds of live sheets in order of span start", () => {
+    const subs = [keyed("b", 1100), keyed("a", 1000), keyed("c", 1200), keyed("d", 1300)];
+    expect(kindsAt(subs, 1400)).toEqual(["plan", "explore", "general"]);
+  });
+
+  it("reads a missing kind or key as other", () => {
+    expect(kindsAt([keyed("zzz", 1000)], 1000)).toEqual(["other"]);
+    expect(paperOnDesk(working, [sub(1000)], () => ctx(), 1000).kinds).toEqual(["other"]);
+    expect(paperOnDesk(working, [keyed("__proto__", 1000)], () => ctx(), 1000, {}).kinds).toEqual([
+      "other",
+    ]);
+  });
+
+  it("drops a kind once its sheet only fades, and before it appears", () => {
+    const t = takeover(1000);
+    expect(kindsAt([keyed("a", 1000)], 999)).toEqual([]);
+    expect(kindsAt([keyed("a", 1000)], t - 1)).toEqual(["plan"]);
+    const fading = paperOnDesk(working, [keyed("a", 1000)], () => ctx(), t, kinds);
+    expect(fading).toMatchObject({ visible: false, fading: true, kinds: [] });
+  });
+
+  it("keeps the kinds of the sheets still live when another one fades", () => {
+    const t = takeover(1000);
+    const p = paperOnDesk(working, [keyed("a", 1000), keyed("b", t - 100)], () => ctx(), t, kinds);
+    expect(p.kinds).toEqual(["explore"]);
+  });
+
+  it("gives the same kinds under reduced motion", () => {
+    const subs = [keyed("b", 1100), keyed("a", 1000), keyed("c", 1200)];
+    const p = stillPaperOnDesk(working, subs, 1300, kinds);
+    expect(p.kinds).toEqual(["plan", "explore"]);
+    expect(stillPaperOnDesk(working, subs, 1300).kinds).toEqual(["other"]);
+    expect(stillPaperOnDesk(working, subs, 1300 + HANDOVER_MS, kinds).kinds).toEqual([]);
+  });
+
+  it("paperOfParent passes the kinds through", () => {
+    const layout = layoutOffice(4, { width: 1200, height: 800 });
+    const p = agentOf("A", null);
+    const k = agentOf("A", "k1", { arrivedAt: 1000 });
+    const m = planMotion({
+      agents: [p, k],
+      seats: { A: 0 },
+      layout,
+      geo: geometryFor(layout),
+      prevDesks: new Map(),
+      prevTrips: new Map(),
+      reducedMotion: true,
+      now: 1000,
+    });
+    expect(paperOfParent(p, [p, k], m, true, 1000, { [k.key]: "explore" }).kinds).toEqual([
+      "explore",
+    ]);
+  });
+
+  it("paperOfParent passes the kinds through in normal motion", () => {
+    const layout = layoutOffice(4, { width: 1200, height: 800 });
+    const p = agentOf("A", null);
+    const k = agentOf("A", "k1", { arrivedAt: 1000 });
+    const m = planMotion({
+      agents: [p, k],
+      seats: { A: 0 },
+      layout,
+      geo: geometryFor(layout),
+      prevDesks: new Map(),
+      prevTrips: new Map(),
+      reducedMotion: false,
+      now: 1000,
+    });
+    const kinds = { [k.key]: "explore" } as const;
+    // The sheet lies from arrival until the takeover; sample at its start and just before its end.
+    const span = [1000, takeover(1000)];
+    const at = (t: number) => paperOfParent(p, [p, k], m, false, t, kinds).kinds;
+    expect(at(span[0])).toEqual(["explore"]);
+    expect(at(span[1] - 1)).toEqual(["explore"]);
+    expect(at(span[1])).toEqual([]);
+  });
+
+  it("labels every kind", () => {
+    expect(Object.keys(PAPER_KIND_LABEL).sort()).toEqual([...SUBAGENT_KINDS].sort());
+    expect(SUBAGENT_KINDS.map((k) => paperLabel([k]))).toEqual([
+      "Explore",
+      "Plan",
+      "General",
+      "Subagent",
+    ]);
+  });
+
+  it("joins three and counts the rest", () => {
+    expect(paperLabel(["explore", "plan", "general"])).toBe("Explore, Plan, General");
+    expect(paperLabel(["explore", "plan", "general", "other"])).toBe("Explore, Plan, General +1");
+    expect(paperLabel([])).toBe("");
   });
 });
