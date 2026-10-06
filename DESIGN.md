@@ -16,15 +16,15 @@ Status: tokens below are the contract and are now in `src/index.css` `:root` (th
 
 Dark only; there is no light theme (design doc, "NOT in scope").
 
-| Token           | Value     | Use                                          | Contrast                  |
-| --------------- | --------- | -------------------------------------------- | ------------------------- |
-| `--bg`          | `#161a24` | room backdrop, page                          | base                      |
-| `--bar`         | `#1d2230` | pinned top bar                               | base                      |
-| `--text`        | `#e8ebf2` | tags, bar text                               | 14.57 on bg, 13.29 on bar |
-| `--text-muted`  | `#9aa3b8` | wait times, secondary                        | 6.88 on bg, 6.27 on bar   |
-| `--accent`      | `#b388ff` | waving ring, focus rectangle, chip highlight | 6.53 on bg, 5.95 on bar   |
-| `--warn`        | `#ffb454` | "Reconnecting" status text                   | 9.86 on bg                |
-| `--screen-glow` | `#8fd6ff` | monitor glow while working only              | decorative                |
+| Token           | Value     | Use                                                                        | Contrast                  |
+| --------------- | --------- | -------------------------------------------------------------------------- | ------------------------- |
+| `--bg`          | `#161a24` | room backdrop, page                                                        | base                      |
+| `--bar`         | `#1d2230` | pinned top bar                                                             | base                      |
+| `--text`        | `#e8ebf2` | tags, bar text                                                             | 14.57 on bg, 13.29 on bar |
+| `--text-muted`  | `#9aa3b8` | wait times, secondary                                                      | 6.88 on bg, 6.27 on bar   |
+| `--accent`      | `#b388ff` | waving ring, focus rectangle, chip highlight                               | 6.53 on bg, 5.95 on bar   |
+| `--warn`        | `#ffb454` | "Reconnecting" status text, chime blocked state (border, text, hover fill) | 9.86 on bg                |
+| `--screen-glow` | `#8fd6ff` | monitor glow while working only                                            | decorative                |
 
 Rules: text pairs must stay at or above 4.5:1. Graphics (rings, shirts, glow) must stay at or above 3:1 against `--bg`; blue (`#0072b2`) is 3.35 there and about 3.06 on `--bar`, so draw shirts on the room background only. No hard-coded colors outside these tables (color tokens, shirt palette, art palette).
 
@@ -251,7 +251,25 @@ State is readable from the DOM (attributes only, no behavior change). Scene root
 
 ### Top bar (pinned)
 
-Left: title "Agent Office" (placeholder name). Middle: status banner, one text line for refused (HTTP 403), reconnecting, or "No active Claude Code sessions" (R5). Right: waiting chips, longest wait first, each a real `<button>`: first name, project, wait time (omit time if unknown). Click pulses that character. Wait times update once per minute, not per frame. Many chips overflow with a "+N" chip; exact wording is tuned at build. At the far right, after the chips: the opt-in chime toggle (a real `<button>` with `aria-pressed`, speaker glyph and visible state text "Chime off", "Chime on" or "Chime: click" while audio is blocked until the first click; off by default; a soft two-note tone at most once every 5 seconds, silent on reload; its design review is open in TODOS.md).
+Left: title "Agent Office" (placeholder name). Middle: status banner, one text line for refused (HTTP 403), reconnecting, or "No active Claude Code sessions" (R5). Right: waiting chips, longest wait first, each a real `<button>`: first name, project, wait time (omit time if unknown). Click pulses that character. Wait times update once per minute, not per frame. Many chips overflow with a "+N" chip; exact wording is tuned at build. At the far right, after the chips: the opt-in chime toggle (see Chime toggle).
+
+### Chime toggle
+
+An opt-in, off-by-default control at the far right of the top bar (`margin-left: auto`, `flex-shrink: 0`, so chips never overlap it). It is a real `<button>` with a monochrome SVG speaker glyph (`currentColor`, not a platform emoji) and visible state text. It differs from agent chips at rest (a muted border) and shares the chip hover fill.
+
+| State   | Glyph                            | Text           | Colour                               |
+| ------- | -------------------------------- | -------------- | ------------------------------------ |
+| off     | speaker with a slash             | "Chime off"    | `--text-muted` border and text       |
+| on      | speaker with waves               | "Chime on"     | `--text-muted` border, `--text` text |
+| blocked | speaker with an exclamation mark | "Chime: click" | `--warn` border and text             |
+
+- Hover fills with `--accent` (`--warn` in the blocked state, so the warn cue survives hover); text turns `--bg`.
+- No `aria-pressed`: in the blocked state the stored preference is on but no sound will play, so a pressed state would be false. The accessible name carries all three states instead: it starts with the visible text (WCAG 2.5.3) and the blocked name adds ", click to enable sound".
+- Blocked is a stored "on" before a click has unlocked audio (browsers refuse sound until a user gesture). A click in the blocked state enables sound (decision D5): it retries the unlock and, on success, shows "on". So a user who reloads with the chime on and wants it muted clicks twice: once to unlock, once to turn off. If the unlock fails, the state stays blocked and the next click turns the chime off, so the control is never stuck. The unlock gives up after 1.5 s (`UNLOCK_TIMEOUT_MS`).
+- The tone is a soft two-note sine chime (660 Hz then 880 Hz, peak gain 0.08). At most one chime per 5 s window however many agents start waiting (`CHIME_MIN_GAP_MS`). Waits that began before the page loaded are a replay (initial load or reconnect) and stay silent.
+- The preference lives in `localStorage` under `agent-office.chime` and syncs across tabs through the `storage` event. A tab that receives "on" from another tab lands blocked, since its own audio is not unlocked. Two tabs that are both unlocked each chime for the same wait.
+- Audio uses `AudioContext`, falling back to `webkitAudioContext` (older Safari). Supported: current Chrome, Edge, Firefox and Safari; where neither exists the control stays blocked.
+- Never auto-plays: sound starts only after the user has clicked the toggle in that tab.
 
 ### Speech bubble
 

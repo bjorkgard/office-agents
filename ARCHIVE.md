@@ -462,3 +462,19 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Depends on:** None
 
 **Status:** DONE (moved 2026-10-06 as T19). `vp run e2e` on main at v0.9.0.0, run in this /ship session on 2026-10-06 (all projects: core, live, twelve, stale, empty, visual): 31 passed (3.0m), exit 0. The original request (run on the burndown branch) is moot since that branch merged.
+
+### T01 Chime control: design review and DESIGN.md entry (2026-10-06)
+
+**Area:** Office
+
+**What:** Review the top-bar chime toggle (speaker glyph, visible state text, blocked state) against the design system and add a DESIGN.md entry for it. A chime stored as "on" before the first click still needs two clicks to turn off (the first click retries the audio unlock).
+
+**Why:** The control shipped in the burndown without a design review; DESIGN.md only has a short descriptive mention (Principle 3 and the Top bar entry), not a reviewed chime entry. Findings from the second /ship pass to fold in: the on state and hover copy the `.top-bar-chip` look so the toggle can read as an agent chip (`index.css:157`); the speaker glyph is a full-colour platform emoji that ignores the token colours and is the same loud-speaker in the blocked state (`TopBar.tsx:107`; use a monochrome SVG with `currentColor` and a distinct blocked glyph); the tone constants are bare literals (`chime-audio.ts:29`); `chime-audio.ts` has no test of its own (every test mocks it) and toggling off while an unlock is pending is untested.
+
+**Context:** Files: `src/office/TopBar.tsx`, `src/index.css` (`.top-bar-chime`), `src/office/chime-logic.ts` (`nextEnabled`), `src/office/useChime.ts`. Audio and the real browser blocked state were never exercised in a browser. Reports: `.claude/scratch/todo-burndown-2/reports/builder-09.md`, `-13.md`, `-15.md`. Deferred at /ship (plan-completion gate, 2026-10-06) with the design-review findings to fold in: `aria-pressed` is true in the blocked state while no sound will play (`TopBar.tsx:101`); `.top-bar-chime:hover` hides the warn cue in the blocked state (`index.css:165`); the button has no `flex-shrink: 0` and the chips list can overlap it at the 800 px minimum with 4 chips (`index.css:143`, estimated, not measured); an unlock still pending when the user toggles off and on again can leave two unlocks running (`useChime.ts:64`, `:84`); no `webkitAudioContext` fallback and no cross-tab sync of the stored preference; `shouldChime` trusts a future-dated `waitingSince` (`chime-logic.ts`); tests missing for the 5 s window inside `createChime.notify` (`useChime.test.ts`) and for a late unlock after turning off. `runAnnouncer` and the `useCallback` wrappers in `useChime.ts:98` are small simplification advisories.
+
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
+
+**Status:** DONE (moved 2026-10-06 as T01). Reviewed in `docs/designs/t01-chime-control-ceo-review.md` (D1 to D6); the DESIGN.md entry is "Chime toggle" under Components. Code: monochrome SVG glyph, no `aria-pressed`, `webkitAudioContext` fallback, cross-tab `storage` sync, `flex-shrink: 0`. Verification is in the task reports (`.claude/scratch/t01-chime-control/reports/`).
