@@ -124,7 +124,8 @@ body {
   white-space: nowrap;
 }
 
-.top-bar-chip {
+.top-bar-chip,
+.top-bar-chime {
   white-space: nowrap;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--accent);
@@ -142,18 +143,16 @@ body {
 
 .top-bar-chime {
   margin-left: auto;
-  white-space: nowrap;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--text-muted);
-  border-radius: var(--radius-md);
-  background: transparent;
+  flex-shrink: 0;
+  border-color: var(--text-muted);
   color: var(--text-muted);
-  font: inherit;
-  cursor: pointer;
+}
+
+.top-bar-chime svg {
+  vertical-align: -2px;
 }
 
 .top-bar-chime[data-status="on"] {
-  border-color: var(--accent);
   color: var(--text);
 }
 
@@ -165,6 +164,12 @@ body {
 .top-bar-chime:hover {
   background: var(--accent);
   border-color: var(--accent);
+  color: var(--bg);
+}
+
+.top-bar-chime[data-status="blocked"]:hover {
+  background: var(--warn);
+  border-color: var(--warn);
   color: var(--bg);
 }
 

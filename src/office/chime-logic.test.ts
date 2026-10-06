@@ -73,6 +73,9 @@ describe("shouldChime", () => {
   it("stays silent for a replayed wait from before the page loaded", () => {
     expect(shouldChime({ ...base, announced: [waiting("a", 500), waiting("b", 999)] })).toBe(false);
   });
+  it("still chimes for a waitingSince dated after now (clock skew)", () => {
+    expect(shouldChime({ ...base, announced: [waiting("a", base.now + 60_000)] })).toBe(true);
+  });
   it("is silent when nothing was announced", () => {
     expect(shouldChime({ ...base, announced: [] })).toBe(false);
   });
