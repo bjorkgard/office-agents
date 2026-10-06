@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { READ_CAP_BYTES } from "./feed-plugin.ts";
 import { runCensus } from "./census-transcripts.ts";
 
@@ -192,6 +192,78 @@ describe("runCensus", () => {
     expect(c.idsNonConservativeChars).toBe(1);
   });
 
+  // Value: protects=census never reads outside the root via symlinks; fails_when=a symlinked file or project dir is followed; why_new=only session/subagents dir links were covered; seam=none
+  it("does not read a symlinked jsonl file or a symlinked project dir", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "office-census-out-"));
+    try {
+      writeFileSync(join(outside, "linked.jsonl"), "{\n");
+      mkdirSync(join(outside, "proj-out"));
+      writeFileSync(join(outside, "proj-out", "s.jsonl"), "{\n");
+      mkdirSync(join(root, PROJECT), { recursive: true });
+      symlinkSync(join(outside, "linked.jsonl"), join(root, PROJECT, "linked.jsonl"));
+      symlinkSync(join(outside, "proj-out"), join(root, "proj-link"));
+      const c = await runCensus(root);
+      expect(c.files).toBe(0);
+      expect(c.drift).toEqual({});
+      expect(c.readErrors).toBe(0);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  // Value: protects=sub-file sessionId drift is reported; fails_when=a subagent record with a foreign sessionId is not counted; why_new=only the top-level mismatch was tested; seam=none
+  it("counts a subagent file whose sessionId differs from its parent", async () => {
+    topFile(SESSION, [rec({ type: "assistant", sessionId: SESSION, message: {} })]);
+    subFile(SESSION, "agentone", [
+      rec({ type: "assistant", sessionId: "other-sess", message: {} }),
+    ]);
+    const c = await runCensus(root);
+    expect(c.sessionIdMismatches).toBe(1);
+  });
+
+  // Value: protects=a subagent file without the agent- prefix keeps its whole stem as id; fails_when=the prefix is sliced unconditionally; why_new=every fixture used agent- names; seam=none
+  it("uses the whole stem as agent id when a subagent file has no agent- prefix", async () => {
+    topFile(SESSION, []);
+    const d = join(root, PROJECT, SESSION, "subagents");
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "plainid.jsonl"), rec({ type: "assistant", message: {} }) + "\n");
+    const c = await runCensus(root);
+    expect(c.subagentFiles).toBe(1);
+    expect(c.agentIdLength).toEqual({ "7": 1 });
+  });
+
+  // Value: protects=odd launch tool_use ids and resume keys are flagged; fails_when=either id is not checked against the conservative charset; why_new=only agentIds were covered; seam=none
+  it("flags a non-conforming launch tool_use id and resume key", async () => {
+    const launch = (id: string) =>
+      rec({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id, name: "Agent", input: { run_in_background: true } }],
+        },
+      });
+    const result = (id: string) =>
+      rec({
+        type: "user",
+        message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] },
+        toolUseResult: { agentId: "goodagent", status: "async_launched" },
+      });
+    const send = (id: string) =>
+      rec({
+        type: "assistant",
+        message: {
+          content: [{ type: "tool_use", id, name: "SendMessage", input: { to: "goodagent" } }],
+        },
+      });
+    topFile("sess-launch", [launch("toolu!1"), result("toolu!1")]);
+    const a = await runCensus(root);
+    expect(a.idsNonConservativeChars).toBe(1);
+    rmSync(join(root, PROJECT), { recursive: true });
+    topFile("sess-resume", [launch("toolu_ok"), result("toolu_ok"), send("toolu!2")]);
+    const b = await runCensus(root);
+    expect(b.resumesSeen).toBe(1);
+    expect(b.idsNonConservativeChars).toBe(1);
+  });
+
   it("drops a leading BOM so the first line still parses", async () => {
     const p = topFile(SESSION, []);
     writeFileSync(p, "\uFEFF" + rec({ type: "assistant", version: "4.5.6", message: {} }) + "\n");
@@ -306,5 +378,32 @@ describe("census CLI", () => {
     expect(r.stdout).toBe("");
     expect(r.stderr.trim().split("\n")).toHaveLength(1);
     expect(r.stderr).not.toContain(root);
+  });
+});
+
+describe("census with a throwing normalizer", () => {
+  afterEach(() => {
+    vi.doUnmock("./normalize.ts");
+    vi.resetModules();
+  });
+
+  // Value: protects=a normalize exception is counted, not fatal; fails_when=the catch around normalize stops counting readErrors or rethrows; why_new=the normalizer never throws on real input; seam=none
+  it("counts a normalize exception as a read error and keeps going", async () => {
+    vi.resetModules();
+    vi.doMock("./normalize.ts", async (orig) => {
+      const real = await orig<typeof import("./normalize.ts")>();
+      return {
+        ...real,
+        normalize: (state: Parameters<typeof real.normalize>[0], line: string) => {
+          if (line.includes("boom")) throw new Error("boom");
+          return real.normalize(state, line);
+        },
+      };
+    });
+    const { runCensus: run } = await import("./census-transcripts.ts");
+    topFile(SESSION, [rec({ type: "assistant", message: {}, note: "boom" }), "{"]);
+    const c = await run(root);
+    expect(c.readErrors).toBe(1);
+    expect(c.drift.malformed_json).toBe(1);
   });
 });

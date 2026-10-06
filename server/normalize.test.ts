@@ -449,6 +449,16 @@ describe("fixture leak check (ET5)", () => {
     expect(out).toContain('"text":"x?"');
   });
 
+  // Value: protects=killed completions survive fixture sanitizing; fails_when=killed is dropped from the status list or an unknown status passes through; why_new=only async_launched was asserted; seam=none
+  it("the sanitizer keeps a killed status and maps an unknown one away", () => {
+    const line = (status: string) =>
+      JSON.stringify({ type: "user", sessionId: "s", toolUseResult: { status } });
+    expect(JSON.parse(sanitizeTranscript(line("killed"))).toolUseResult.status).toBe("killed");
+    const out = sanitizeTranscript(line("secret-status"));
+    expect(out).not.toContain("secret");
+    expect(JSON.parse(out).toolUseResult.status).toBeUndefined();
+  });
+
   it("re-serializes timestamps so date-parsable text cannot leak", () => {
     const out = sanitizeTranscript(
       JSON.stringify({ type: "user", sessionId: "s", timestamp: "secret 2026-01-01" }),
