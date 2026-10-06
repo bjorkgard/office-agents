@@ -16,17 +16,17 @@
 **Priority:** P3
 **Depends on:** Slice 1 handoff animation
 
-### Opt-in attention chime
+### Chime control: design review and DESIGN.md entry (2026-10-06)
 
-**What:** Soft chime when a new agent starts waiting, toggled by a speaker control in the top bar, off by default.
+**What:** Review the top-bar chime toggle (speaker glyph, visible state text, blocked state) against the design system and add a DESIGN.md entry for it. A chime stored as "on" before the first click still needs two clicks to turn off (the first click retries the audio unlock).
 
-**Why:** Reaches you while the office tab is hidden or you are not looking at the screen.
+**Why:** The control shipped in the burndown without a design review; DESIGN.md only has a short descriptive mention (Principle 3 and the Top bar entry), not a reviewed chime entry. Findings from the second /ship pass to fold in: the on state and hover copy the `.top-bar-chip` look so the toggle can read as an agent chip (`index.css:157`); the speaker glyph is a full-colour platform emoji that ignores the token colours and is the same loud-speaker in the blocked state (`TopBar.tsx:107`; use a monochrome SVG with `currentColor` and a distinct blocked glyph); the status stays "Chime on" after the audio context is suspended later, so chimes are dropped silently (`useChime.ts:76`, `chime-audio.ts:31`); the tone constants are bare literals (`chime-audio.ts:29`); `chime-audio.ts` has no test of its own (every test mocks it) and toggling off while an unlock is pending is untested.
 
-**Context:** Deferred from the design review (D6). Tab-title count `(N) Agent Office` ships first. Pros: audible attention without staring. Cons: adds a control; browsers block audio until one user click. Reuse the aria-live waiting event as the trigger.
+**Context:** Files: `src/office/TopBar.tsx`, `src/index.css` (`.top-bar-chime`), `src/office/chime-logic.ts` (`nextEnabled`), `src/office/useChime.ts`. Audio and the real browser blocked state were never exercised in a browser. Reports: `.claude/scratch/todo-burndown-2/reports/builder-09.md`, `-13.md`, `-15.md`. Deferred at /ship (plan-completion gate, 2026-10-06) with the design-review findings to fold in: `aria-pressed` is true in the blocked state while no sound will play (`TopBar.tsx:101`); `aria-label` replaces the visible text, so the name does not contain the label (`TopBar.tsx:102`, WCAG 2.5.3); `.top-bar-chime:hover` hides the warn cue in the blocked state (`index.css:165`); the button has no `flex-shrink: 0` and the chips list can overlap it at the 800 px minimum with 4 chips (`index.css:143`, estimated, not measured); an unlock still pending when the user toggles off and on again can leave two unlocks running (`useChime.ts:64`, `:84`); `playChime` drops chimes silently if the audio context is later suspended and nothing retries `resume()` (`chime-audio.ts:31`); no `webkitAudioContext` fallback and no cross-tab sync of the stored preference; `shouldChime` trusts a future-dated `waitingSince` (`chime-logic.ts`); tests missing for the 5 s window inside `createChime.notify` (`useChime.test.ts`) and for a late unlock after turning off. `runAnnouncer` and the `useCallback` wrappers in `useChime.ts:98` are small simplification advisories.
 
-**Effort:** S (human ~3h / CC ~20min)
-**Priority:** P4
-**Depends on:** Attention list (top bar) and tab-title count
+**Effort:** S
+**Priority:** P1
+**Depends on:** None
 
 ### Share character drawings via symbols
 
@@ -88,25 +88,13 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P4
 **Depends on:** Row-change style recalc at 24 agents over budget (2026-10-05)
 
-#### Perf runner deadline for `perf --ab`
+#### Perf deadlines are unmeasured (2026-10-06)
 
-**What:** Add a total and per-repeat deadline to the perf runner so a hung page cannot stall `perf --ab`.
+**What:** Measure real `perf --ab` repeat and total durations and set `PERF_REPEAT_DEADLINE_MS` (120 s) and `PERF_TOTAL_DEADLINE_MS` (30 min) from them. A repeat that times out abandons its browser rather than cancelling it, so it lives until process exit.
 
-**Why:** `perf --ab` runs about 24 sequential browser sessions, so a single hang can stall it for 20+ minutes in the worst case.
+**Why:** Both values are estimates, not measurements, and an abandoned browser can distort the runs that follow.
 
-**Context:** Deferred from the 2026-10-05 /ship review.
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** None
-
-#### Strict mode for INCONCLUSIVE perf verdicts
-
-**What:** Add an opt-in strict mode that exits with a distinct code when a perf verdict is INCONCLUSIVE.
-
-**Why:** INCONCLUSIVE exits 0 today (approved gate design), which a CI calling `perf` would read as a pass.
-
-**Context:** Deferred from the 2026-10-05 /ship review. No workflow calls `perf` today, so this only matters once one does.
+**Context:** In `e2e/release.ts` (`withDeadline`). Cancelling the page or browser on a deadline needs a handle passed into the repeat. Report: `.claude/scratch/todo-burndown-2/reports/builder-02.md`.
 
 **Effort:** S
 **Priority:** P3
@@ -254,7 +242,7 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 #### Review polish from the 0.7.0.0 ship (2026-10-05)
 
-**What:** Informational items the /ship reviews raised and the user skipped: stale or opaque comments (`props.ts:373` shadow paragraph, `ArtSheet.tsx:644`, `room.ts:253` "parallelogram", `paper.ts` "decision 2B" and "D3" references and the skip-rule invariant); unused exports (`DISPENSER_SHADOW`, `COFFEE_SHADOW`, `BOOKSHELF_SHADOW`, `PICTURE_LIFT`, `DECOR_VARIANTS` outside tests); `PixelShadow` could reuse `pathOf`; `decorVariantGrid` hardcodes `% 3` and `v * 2` instead of deriving them from `DECOR_VARIANTS`; ArtSheet Legibility row is on `--bar` instead of `--bg`, and DESIGN.md's decor sentence should name the Legibility row; a `PROP_SHADOW_AT` placement test; reset the seed override in `decor.test.ts` `afterEach`; test pins for the `MAX_RUNS` boundary and the `GAP_MS` edge in `paper.test.ts` and a softer "verbatim" oracle comment; random schedules without `ctx.resume` or null ctx.
+**What:** Informational items the /ship reviews raised and the user skipped, still open after the burndown: `DISPENSER_SHADOW`, `COFFEE_SHADOW` and `BOOKSHELF_SHADOW` are exported only for `art.test.ts`; `PixelShadow` could reuse `pathOf`; the ArtSheet Legibility row is on `--bar` instead of `--bg`; random schedules without `ctx.resume` or null ctx.
 
 **Why:** None is a defect; each makes the code or tests a little clearer.
 
@@ -354,7 +342,7 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 ### Batch B2 leftovers (2026-10-04)
 
-**What:** (1) A unix socket swapped in for a transcript is not refused at once: on macOS opening it fails with errno -102, which takes the transient-retry path for up to 5 scans before denial (`server/feed-plugin.ts:329`). (2) A same-size in-place rewrite is not detected as rotation (the head is re-read only when the file grew). (3) No test checks that the read handle is closed on every reject path. (4) `server/sanitize-fixtures.ts`: the CLI rejects an empty salt, so committed unsalted fixtures reproduce only via the library; `--salt` is only recognised as the first argument. (5) `needs_attention` now clears `openTools` and `waiting` in the ring (`feed-plugin.ts:729`), latent until the hooks adapter emits it; and a resumed asker's question `done` leaves the snapshot.
+**What:** (1) A unix socket swapped in for a transcript is not refused at once: on macOS opening it fails with errno -102, which takes the transient-retry path for up to 5 scans before denial (`server/feed-plugin.ts:329`). (2) A same-size in-place rewrite is not detected as rotation (the head is re-read only when the file grew). (3) No test checks that the read handle is closed on every reject path. (4) `needs_attention` now clears `openTools` and `waiting` in the ring (`feed-plugin.ts:729`), latent until the hooks adapter emits it; and a resumed asker's question `done` leaves the snapshot.
 
 **Why:** Informational findings from the round-1 refuter pass; none blocks.
 
@@ -366,11 +354,11 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 ## Phase 4 review follow-ups
 
-### Feed server hardening: truncation detection and tracked-file cap
+### Feed server hardening: truncation detection
 
-**What:** In `server/feed-plugin.ts`: truncation is detected only as `size < offset` (see "Detect file rotation by more than size"), and there is no cap on tracked files. Also refuse `Forwarded:` (RFC 7239) and `X-Real-IP` like X-Forwarded-*.
+**What:** In `server/feed-plugin.ts`: truncation is detected only as `size < offset` (see "Detect file rotation by more than size").
 
-**Why:** A hostile or odd file set can grow memory and scan time without bound.
+**Why:** A same-size or regrown rewrite of a transcript goes unnoticed.
 
 **Context:** Split from the Phase 4 umbrella item; session identity, Origin check and heartbeat are DONE (see ARCHIVE.md).
 
@@ -387,18 +375,6 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Context:** Coalesce frames per animation frame, run a cheap "anything due" check before cloning, cache ref callbacks. Deferred by the user in the Phase 4 /ship review.
 
 **Effort:** M (human ~4h / CC ~30min)
-**Priority:** P3
-**Depends on:** None
-
-### Small simplifications left in Phase 4 files
-
-**What:** `ReportingBoundary` subclass in `src/App.tsx` (give `ErrorBoundary` an `onError` prop instead), `viewportOf` in `app-logic.ts`, `nextAnnouncement` in `topbar-logic.ts`, the repeated render calls in `src/main.tsx`, and two clocks (15 s in App, 60 s in TopBar) that can show different wait times.
-
-**Why:** Less code and one source of truth for the wait label.
-
-**Context:** Advisory items from the Phase 4 /ship review, skipped by the user.
-
-**Effort:** S (human ~2h / CC ~20min)
 **Priority:** P3
 **Depends on:** None
 
@@ -430,6 +406,54 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P2
 **Depends on:** The user running the probe
 
+### Installer `isOurs` exact path and settings re-check (2026-10-06)
+
+**What:** (1) `isOurs` in `hooks/install.mjs` now matches only this checkout's unresolved script path, so `--apply` no longer replaces an entry left by a moved or deleted checkout, and an entry written through a symlinked checkout path is not removed by `--remove`: decide whether to compare resolved paths. (2) The settings re-check before `renameSync` runs only when the file existed at read time; if it was absent then, a file another tool creates meanwhile is overwritten.
+
+**Why:** Both are edge cases of the exact-path change and the concurrent-writer guard from the burndown.
+
+**Context:** Report: `.claude/scratch/todo-burndown-2/reports/builder-06.md`.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### Playwright e2e was not run for the burndown (2026-10-06)
+
+**What:** Run `vp run e2e` once on the burndown branch before merge.
+
+**Why:** The burndown changed `server/feed-plugin.ts` (hook route split), `src/office/TopBar.tsx`, `src/App.tsx` and `e2e/release.ts`; only unit tests (`vp test`, 1546 passed at brief 16) and `vp check` ran.
+
+**Context:** Report: `.claude/scratch/todo-burndown-2/reports/builder-08.md` (SKIPPED).
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### sanitize-fixtures salt claim is unverified (2026-10-06)
+
+**What:** Check that the committed fixtures really are the output of the library default (empty salt), as the `server/sanitize-fixtures.ts` header now states. The CLI still rejects an explicit `--salt ""`, so it cannot regenerate them.
+
+**Why:** The header claim was written from a code read, not from a regeneration run.
+
+**Context:** The new test in `server/normalize.test.ts` ("committed empty-salt = library default") checks the default, not the committed files. Report: `.claude/scratch/todo-burndown-2/reports/builder-01.md`.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
+### TopBar wait clock test is weak (2026-10-06)
+
+**What:** Strengthen the TopBar "wait clock" test: it only proves TopBar renders the `now` it is given, not that `App` and `TopBar` share one clock.
+
+**Why:** The two clocks were merged (15 s in App) but nothing would fail if TopBar grew its own again.
+
+**Context:** `src/office/topbar.test.tsx`; `src/App.tsx` passes `now`. Report: `.claude/scratch/todo-burndown-2/reports/builder-03.md`.
+
+**Effort:** S
+**Priority:** P3
+**Depends on:** None
+
 ### Hooks adapter leftovers
 
 **What:** (1) A hook payload over 256 KB (a huge `PermissionRequest` `tool_input`) is dropped whole, so that attention signal is lost; a reused pid sends the token to whatever listens on that port. (2) Installer: a failed rename leaves a `.<name>.<pid>.tmp` with the full settings; two runs in the same millisecond overwrite each other's backup; rename breaks hard links; apply then remove normalises the user's empty event arrays away; `echo /x/office-hook.mjs` counts as ours. (3) Hook discovery: both dev servers (5173 and 5199) use the default `~/.office-agents` dir, so the last writer wins; after SIGKILL a stale `hook.json` stays (the script checks the pid). (4) The `returnedSeen` ring set is never cleared, so a relaunched child with the same agent id would be dropped. (5) Machine: live and replay can still differ on hold-check versus tick timing and on a repeated `episodeId` after an idle exit; only the latest exact episode id per agent is remembered; the clamp accepts `waitingSince: 1`; an upgrade can reorder the attention list by since-time. (6) Not tested: a Windows host, real hook arrival latency.
@@ -458,7 +482,7 @@ Skipped by the user at ship time; each is informational and has a file reference
 
 ### Feed plugin: split the hook route and tighten small spots
 
-**What:** `server/feed-plugin.ts` is past 1,200 lines: move the hook route (`handleHook`, `readHookBody`, `hookAdmit`, `ingestHook`) into `server/hook-route.ts` like `hooks-adapter.ts` and `hook-discovery.ts`. The `Req.on` type was widened to `(event: string, cb: (arg: Buffer) => void)` (`:849`): use overloads for `close`, `data`, `end`, `error`. `hookSessions` evicts by insertion order, not recency (`:1014`): delete before set. `replaced()` re-opens, reads and hashes the file head on every scan for every grown file (`:556`): skip unless size shrank or the inode changed, or read the head on the same handle. `hookSessionCount` and several `HOOK_*` exports exist only for tests. The SIGINT handler re-raises unconditionally (`:1237`); verified fine for `vp dev` (refuter-21) but would double-run other plain listeners. `hooks/install.mjs:225` writes the settings temp file without `O_EXCL`/`O_NOFOLLOW` (needs write access to `~/.claude`, low impact).
+**What:** `server/feed-plugin.ts` is still past 1,200 lines (the hook route moved to `server/hook-route.ts`). The `Req.on` type was widened to `(event: string, cb: (arg: Buffer) => void)` (`:849`): use overloads for `close`, `data`, `end`, `error`. `hookSessions` evicts by insertion order, not recency (`:1014`): delete before set. `replaced()` re-opens, reads and hashes the file head on every scan for every grown file (`:556`): skip unless size shrank or the inode changed, or read the head on the same handle. `hookSessionCount` and several `HOOK_*` exports exist only for tests. The SIGINT handler re-raises unconditionally (`:1237`); verified fine for `vp dev` (refuter-21) but would double-run other plain listeners. `hooks/install.mjs:225` writes the settings temp file without `O_EXCL`/`O_NOFOLLOW` (needs write access to `~/.claude`, low impact).
 
 **Why:** Maintainability, performance and security informational findings; none is a defect today.
 
@@ -468,33 +492,9 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Priority:** P3
 **Depends on:** None
 
-### sanitize-fixtures CLI usability
-
-**What:** `server/sanitize-fixtures.ts:179`: the default became a random per-run salt, so the committed fixtures can only be reproduced through the library function; an empty `OFFICE_FIXTURE_SALT` exits 2 with only the usage message; `--salt` is only recognised as the first argument. Document which salt regenerates the committed fixtures, treat an empty env var as unset, and parse flags anywhere.
-
-**Why:** api-contract findings from the /ship review.
-
-**Context:** Related to "Batch B2 leftovers" item 4.
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** None
-
-### Review cycle 2 leftovers (2026-10-04)
-
-**What:** (1) `server/feed-plugin.ts:7` header says every SSE frame is a `data:` JSON line; add the `: ping` comment frame and the token-gated `POST /__office/hook` route. (2) `server/feed-plugin.ts:58` the `HOOK_ROUTE` export sits between the body-cap comment and its constants; move it. (3) `hooks/office-hook.mjs:30` `MAX_VALUE = 512` is tied to `MAX_STRING_LENGTH` by a comment only: assert it in `hooks/office-hook.test.ts` (and that `ALLOWED` covers what `server/hooks-adapter.ts` reads). (4) `hooks/office-hook.test.ts:252` the `::1` host test has no skip guard for hosts without IPv6 loopback. (5) `hooks/install.mjs:80` `isOurs` matches any command whose script argument is named `office-hook.mjs` at any path, so `--remove` also removes another checkout's entry; the README says "only our entries": match this checkout's path or say so. (6) `hooks/install.mjs:236` no re-check before `renameSync` if another tool wrote the settings file meanwhile. (7) `server/hook-discovery.ts:86` `removeDiscovery` reads `hook.json` with a blocking `readFileSync` (a planted FIFO would hang SIGINT cleanup); harden like `readInfo` in the script. (8) `server/feed-plugin.ts:1041` events over the 20/s per-session or 100/s total window are dropped, so a burst could lose the one `needs_attention`: exempt it or reserve a budget.
-
-**Why:** Informational findings from the second /ship review pass; none blocks, all were skipped by the user's choice.
-
-**Context:** The first pass's findings are in "Pre-landing review follow-ups" above.
-
-**Effort:** S
-**Priority:** P3
-**Depends on:** None
-
 ### Adversarial review leftovers (2026-10-04)
 
-**What:** (1) `hooks/install.mjs` writes `async: true` and a `node '<path>'` command resolved through PATH: if Claude Code is started from a GUI with a minimal PATH, every hook event exits 127; consider the absolute `process.execPath` (or document it). Whether `async` is honoured is unverified (the probe). (2) `server/hook-discovery.ts` `hookHost` maps a specific non-loopback `--host` to `127.0.0.1`, where nothing listens, with no diagnostic: log one warning at publish time when the bind address is neither loopback nor wildcard; Vite middleware mode (no `httpServer`) also skips publishing silently. (3) `writeDiscovery` `chmodSync(dir, 0o700)` on a pre-existing `OFFICE_HOOK_DIR` changes a shared directory's mode and never checks ownership. (4) The 408 timer in `readHookBody` survives a client abort before `end` (clear it on `close`). (5) `readHookBody`'s `end` handler wraps `ingestHook` in the same try/catch as `JSON.parse`, so a bug in `ring.add` or `send` is logged as an unparseable payload and the ring and SSE clients can diverge: parse in its own try. (6) The per-file normalizer failure log writes `String(e)` (`server/feed-plugin.ts` ~416): log only `e.name`/code or route through `loggable()`. (7) The installer is a read-modify-write on `~/.claude/settings.json` (another writer between read and rename loses its update) and `.bak-<stamp>` backups accumulate unpruned with a full copy of the settings. (8) The 400 ms script deadline covers node cold start, stdin and the round trip; a dropped `needs_attention` leaves no trace on either side: add a server-side counter of received hooks per minute.
+**What:** (1) `hooks/install.mjs` writes `async: true` and a `node '<path>'` command resolved through PATH: if Claude Code is started from a GUI with a minimal PATH, every hook event exits 127; consider the absolute `process.execPath` (or document it). Whether `async` is honoured is unverified (the probe). (7) The installer is a read-modify-write on `~/.claude/settings.json` (another writer between read and rename loses its update) and `.bak-<stamp>` backups accumulate unpruned with a full copy of the settings. (8) The 400 ms script deadline covers node cold start, stdin and the round trip; a dropped `needs_attention` leaves no trace on either side: add a server-side counter of received hooks per minute. Item numbers are from the original list; (2) to (6) are done.
 
 **Why:** Native adversarial review (/ship Step 11). Its top finding (late transcript activity erasing a live exact attention because the guard compares the receipt clock) was refuted: `applyOwned` uses `clock = Math.min(event.ts, now)` in live and replay and `src/office/machine.test.ts` covers needs_attention@10000 followed by a tool start@9900.
 
@@ -513,5 +513,41 @@ Skipped by the user at ship time; each is informational and has a file reference
 **Context:** Items 1, 3 and 6 are red-team or adversarial findings read from code, not reproduced end to end.
 
 **Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+## Review follow-ups from the 0.8.0.0 ship (2026-10-06)
+
+### Hook rate windows break on a backward clock step
+
+**What:** `hookAdmit` in `server/hook-route.ts` (`at - total.start >= HOOK_WINDOW_MS`, `at - w.start >= HOOK_WINDOW_MS`) uses the wall clock. After a backward step (NTP, laptop wake) `at - start` is negative, the windows never reset, and every hook event including `needs_attention` is dropped with a 204 until the clock catches up. Reset a window when `at < start` or use a monotonic clock; do the same in the attention windows and the `hookLogged` throttle.
+
+**Why:** Adversarial finding at the 0.8.0.0 /ship (D4 skipped). The same logic existed in `feed-plugin.ts` before the hook route split, so it predates this release; the new attention budget copies it.
+
+**Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+### Small review findings from the 0.8.0.0 ship
+
+**What:** Informational findings skipped at /ship (D3, D4), each with a file reference. (1) `server/hook-route.ts:88` `sessions` map is shared with the caller and evicts oldest at 1,000, so rotating session ids resets a per-session window (bounded by the overall caps); `:78` `hookAdmit` threads an `attention` flag through four ternaries (extract one limiter and instantiate it twice); `:12` header comment. (2) `server/feed-plugin.ts:71` the re-export block for the `HOOK_*` constants is a compatibility shim for tests only; `:1224` and `:450`, `:1155`, `:1253` still log raw `String(e)` instead of `loggable(e.name)`; the tracked-file cap check runs before the `lstat` and window filter, so slots go to arbitrary files and the warning can overstate drops; no test for the cap warning re-arming. (3) `server/hook-route.ts` accepts an empty `hookToken` as valid (treat `""` as disabled); a non-loopback bind warns but still publishes the token. (4) `server/sanitize-fixtures.ts` `parseCliArgs` treats unknown flags (`--help`, `--slat`) as paths. (5) `hooks/install.mjs`: `--apply` from a second or moved checkout adds a second entry, so every hook event fires twice (strip entries with the `office-hook.mjs` basename on apply and warn); a `.tmp` file can be left if the re-check read throws. (6) `src/office/props.ts:502` `decorVariantGrid` shift is fractional if `DECOR_VARIANTS` does not divide 6: use `Math.floor` or assert; `ErrorBoundary.tsx:3` has a doubled `(D16)`; `chime-logic.ts:3` module comment sits after the import. (7) `e2e/release.ts:901` a repeat that hits its deadline is abandoned, so its browser keeps running and can skew later repeats: close it on the deadline or mark later repeats INCONCLUSIVE. (8) The directory-at-`hook.json` test (`server/hook-discovery.test.ts:115`) would still pass without the `isFile` guard; the FIFO test is what covers that guard.
+
+**Why:** None is a release blocker; each was rated informational by the seven reviewers and the adversarial pass.
+
+**Context:** Reports in `.claude/scratch/todo-burndown-2/reports/`. Chime findings are in "Chime control: design review and DESIGN.md entry".
+
+**Effort:** M
+**Priority:** P3
+**Depends on:** None
+
+### More review findings from the 0.8.0.0 ship (second pass, 2026-10-06)
+
+**What:** Informational findings from the second /ship pass, skipped by the user's choice (D3). (1) `hooks/install.mjs:237`: the new post-write recheck calls `readFileSync(target)` without a try/catch, so a settings file that vanishes or turns unreadable mid-install throws a raw ENOENT/EACCES and leaves the `.tmp` file; when the file was absent at read time (`before === null`) there is no recheck, so a settings file created meanwhile is overwritten (turn any read error into a `Refusal`, unlink in a `finally`, create with an exclusive link or O_EXCL). (2) `hooks/install.mjs:79`: `--apply` from a second or moved checkout leaves the old checkout's `office-hook.mjs` entry, so every hook event runs the script twice; strip entries with the `office-hook.mjs` basename on apply and warn. (3) `hooks/office-hook.mjs` `readInfo` checks `isFile` and size but not the owner of `hook.json`, so a `hook.json` in an attacker-owned `~/.office-agents` is still read: add a `uid` check and a test (the owner check today is only on the feed's write side). (4) `server/hook-discovery.ts` `removeDiscovery`: the read and the `rmSync` are separate, so a newer dev server's file written in between can be removed by an older server's cleanup; `O_NONBLOCK` is a no-op on Windows. (5) `e2e/release.ts`: after the total deadline `perf()` ends in `process.exit(code)` without the `shutdown()` the signal handler uses, so an abandoned Chrome or vite child may be left. (6) `server/feed-plugin.ts:1216` hard-codes the reachable bind addresses that `hookHost()` in `hook-discovery.ts` also encodes: export one predicate. `src/office/props.ts:388` contact-shadow comment omits the shelf. (7) `useChime.ts` reads the stored preference once and has no `storage` listener, so two tabs disagree until reload.
+
+**Why:** None is a defect in released behaviour; items 1 to 3 are the most worth doing first.
+
+**Context:** Simplification advisories also raised: remove the `HOOK_*` re-export block in `server/feed-plugin.ts:73` by importing from `hook-route.ts` in the tests, and one limiter helper instead of the attention ternaries in `hookAdmit`.
+
+**Effort:** S
 **Priority:** P3
 **Depends on:** None
