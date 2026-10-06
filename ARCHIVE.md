@@ -296,6 +296,20 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 
 **Completed:** todo-burndown step 6 (2026-10-04). Server: `server/hooks-adapter.ts`, `server/hook-discovery.ts`, `POST /__office/hook` in `server/feed-plugin.ts`. Claude side: `hooks/office-hook.mjs`, `hooks/install.mjs` (print-only by default, nothing writes `~/.claude/settings.json` unless the user runs `--apply`). Machine: exact `needs_attention` in `src/office/machine.ts`. Remaining work is in the new items "Make the hooks attention mapping exact" and "Hooks adapter leftovers".
 
+### T03 Verify the normalizer against real transcripts (DONE 2026-10-06: census script and first real-data numbers; resume only partly verified)
+
+**Status:** DONE. Census script `server/census-transcripts.ts` (run `vp run census`, counts only). The `killed` task-notification status was fixed through the shared constant (77411df). Orphan counter noise from non-agent background completions was fixed (a95a62c). Agent-message hand-backs were classified redundant (0 of 1199 uncovered, D3 unchanged). Real-root run (one machine, Claude Code 2.1.128 to 2.1.288): 182 files, 1284 subagent files, 0 session id mismatches, 2719 agent ids all 17 characters, 0 outside the conservative character set, longest line 890298 bytes against the 4194304 byte read cap with 0 lines over, notification statuses completed 588 / failed 45 / killed 2 (enqueue only), 1203 agent-message enqueues, drift bad_shape 1 / orphan_completion 55 / unmapped_subagent_type 533. Only 3 SendMessage resumes were seen, so resume is only partly verified. T05, T10 and T06 depended on this and now carry the evidence in TODOS.md.
+
+**What:** Run server/sanitize-fixtures.ts on a few real Claude Code transcripts (sync, async, resume) and check the output events against the committed fixtures.
+
+**Why:** The fixtures are hand-built from a described shape; a real-file drift would go unseen until a user hits it.
+
+**Context:** Found in the Phase 2-3 /ship review. Keep the leak check green on every new fixture.
+
+**Effort:** S (human ~1h / CC ~15min)
+**Priority:** P1
+**Depends on:** None
+
 ## Completed in v0.3.0.0
 
 ### V1: Windows with a random outside world

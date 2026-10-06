@@ -18,17 +18,19 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P1
 **Depends on:** None
 
-### T03 Verify the normalizer against real transcripts
+### T05 Key sessions by filename, not record sessionId, for resumed sessions
 
 **Area:** Feed hardening
 
-**What:** Run server/sanitize-fixtures.ts on a few real Claude Code transcripts (sync, async, resume) and check the output events against the committed fixtures.
+**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
 
-**Why:** The fixtures are hand-built from a described shape; a real-file drift would go unseen until a user hits it.
+**Why:** Two files could collapse into one agent, or one agent split across two.
 
-**Context:** Found in the Phase 2-3 /ship review. Keep the leak check green on every new fixture.
+**Context:** Verify against real transcripts first (see T03).
 
-**Effort:** S (human ~1h / CC ~15min)
+**Evidence (2026-10-06, T03 census of the real transcript root):** `sessionId` differs from the file name in 0 of 182 files, so the resume premise was not reproduced locally (3 resumes seen, so resume is only partly verified). The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P1
 **Depends on:** None
 
@@ -50,23 +52,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P1
 **Depends on:** None
 
-## P1 blocked (1)
-
-### T05 Key sessions by filename, not record sessionId, for resumed sessions
-
-**Area:** Feed hardening
-
-**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
-
-**Why:** Two files could collapse into one agent, or one agent split across two.
-
-**Context:** Verify against real transcripts first (see T03).
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P1
-**Depends on:** T03 Verify the normalizer against real transcripts
-
-## P2 available (3)
+## P2 available (5)
 
 ### T07 Hook rate windows break on a backward clock step
 
@@ -77,6 +63,38 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Why:** Adversarial finding at the 0.8.0.0 /ship (D4 skipped). The same logic existed in `feed-plugin.ts` before the hook route split, so it predates this release; the new attention budget copies it.
 
 **Effort:** S
+**Priority:** P2
+**Depends on:** None
+
+### T10 Compensate for a dropped oversized tool_result line
+
+**Area:** Feed hardening
+
+**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
+
+**Why:** The agent keeps showing a running tool or an open handoff.
+
+**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** the longest line is 890298 bytes against the 4 MiB read cap (4194304 bytes), and 0 lines are over the cap. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+### T06 Validate id format in parseAgentEvent
+
+**Area:** Feed hardening
+
+**What:** Reject ids that do not match a conservative pattern (length and character set).
+
+**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
+
+**Context:** Add after the id formats of real transcripts are confirmed (see T03).
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** all 2719 ids seen are 17 characters of `[A-Za-z0-9_-]`, with 0 outside that set. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P2
 **Depends on:** None
 
@@ -110,21 +128,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** None
 
-## P2 blocked (3)
-
-### T10 Compensate for a dropped oversized tool_result line
-
-**Area:** Feed hardening
-
-**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
-
-**Why:** The agent keeps showing a running tool or an open handoff.
-
-**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** T03 Verify the normalizer against real transcripts
+## P2 blocked (1)
 
 ### T11 Make the hooks attention mapping exact, then retire the heuristics
 
@@ -139,20 +143,6 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Effort:** S (human ~30min / CC ~20min)
 **Priority:** P2
 **Depends on:** The user running the probe
-
-### T06 Validate id format in parseAgentEvent
-
-**Area:** Feed hardening
-
-**What:** Reject ids that do not match a conservative pattern (length and character set).
-
-**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
-
-**Context:** Add after the id formats of real transcripts are confirmed (see T03).
-
-**Effort:** S (human ~2h / CC ~15min)
-**Priority:** P2
-**Depends on:** T03 Verify the normalizer against real transcripts
 
 ## P3 available (22)
 
