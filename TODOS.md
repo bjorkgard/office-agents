@@ -112,6 +112,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 
 ## P3 available (26)
 
+### T11b Exact attention end from hooks (2026-10-07)
+
+**Area:** Hooks adapter follow-ups (2026-10-04)
+
+**What:** Clear a wait on PostToolUse / UserPromptSubmit / Stop instead of inferring its end from the transcript.
+
+**Why:** The wait start is exact; its end lags until the next transcript line.
+
+**Context:** Deferred from the T11 /plan-ceo-review (D4). Design after the interactive probe confirms which events fire. Files: `server/hooks-adapter.ts`, `hooks/install.mjs` (EVENTS), `src/office/machine.ts`.
+
+**Effort:** M (human ~1 day / CC ~30min)
+**Priority:** P3
+**Depends on:** T11
+
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
 **Area:** Office life (make the room feel alive) / Office life follow-ups from the 0.3.0.0 /ship review (2026-10-03)
