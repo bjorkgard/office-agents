@@ -6,7 +6,7 @@
  * field through parseAgentEvent, never by spreading the payload.
  */
 import { createHash } from "node:crypto";
-import { MAX_STRING_LENGTH, parseAgentEvent } from "../shared/events.ts";
+import { ID_PATTERN, MAX_STRING_LENGTH, parseAgentEvent } from "../shared/events.ts";
 import type { AgentEvent } from "../shared/events.ts";
 
 type Rule = "attention" | "attention_by_type" | "subagent_start" | "subagent_stop";
@@ -32,9 +32,25 @@ export const ATTENTION_NOTIFICATIONS: ReadonlySet<string> = new Set([
   "agent_needs_input",
 ]);
 
-export type HookContext = { now: number };
+export type HookContext = {
+  now: number;
+  /** Called with a fixed reason (never an id value) when a payload is dropped for a bad id. */
+  onReject?: (reason: string) => void;
+};
 
-/** A non-empty string within the guard's length cap, else null. Own properties only. */
+/** The fixed reasons reported through `onReject`; they never carry an id value. */
+export const REJECT_SESSION_ID = "rejected a payload with an invalid session id";
+export const REJECT_AGENT_ID = "rejected a payload with an invalid agent id";
+
+/** True when the payload carries `key` as a non-empty string the guard would refuse as an id.
+ * An empty string counts as absent, as it did before the guard. */
+function badIdOf(payload: Record<string, unknown>, key: string): boolean {
+  const v = Object.hasOwn(payload, key) ? payload[key] : undefined;
+  return typeof v === "string" && v.length > 0 && !ID_PATTERN.test(v);
+}
+
+/** A non-empty string within MAX_STRING_LENGTH, else null. Own properties only. It does not
+ * check the id charset or the 128 limit: badIdOf and the event guard enforce those. */
 function idOf(payload: Record<string, unknown>, key: string): string | null {
   const v = Object.hasOwn(payload, key) ? payload[key] : undefined;
   return typeof v === "string" && v.length > 0 && v.length <= MAX_STRING_LENGTH ? v : null;
@@ -65,6 +81,14 @@ export function hookToEvents(payload: unknown, ctx: HookContext): AgentEvent[] {
     const name = idOf(p, "hook_event_name");
     if (name === null || !Object.hasOwn(HOOK_EVENTS, name)) return [];
     const rule = HOOK_EVENTS[name];
+    if (badIdOf(p, "session_id")) {
+      ctx.onReject?.(REJECT_SESSION_ID);
+      return [];
+    }
+    if (badIdOf(p, "agent_id")) {
+      ctx.onReject?.(REJECT_AGENT_ID);
+      return [];
+    }
     const sessionId = idOf(p, "session_id");
     if (sessionId === null) return [];
     const ts = Number.isFinite(ctx.now) ? Math.max(0, Math.floor(ctx.now)) : 0;

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_STRING_LENGTH } from "../shared/events.ts";
-import { ATTENTION_NOTIFICATIONS, HOOK_EVENTS, hookToEvents } from "./hooks-adapter.ts";
+import {
+  ATTENTION_NOTIFICATIONS,
+  HOOK_EVENTS,
+  REJECT_AGENT_ID,
+  REJECT_SESSION_ID,
+  hookToEvents,
+} from "./hooks-adapter.ts";
 
 const NOW = 1_800_000_000_000;
 const base = {
@@ -165,6 +171,53 @@ describe("hookToEvents", () => {
       expect(run(payload)).toEqual([]);
     },
   );
+
+  it.each([
+    ["session_id", REJECT_SESSION_ID, { hook_event_name: "PermissionRequest" }],
+    ["agent_id", REJECT_AGENT_ID, { hook_event_name: "SubagentStart" }],
+    ["agent_id", REJECT_AGENT_ID, { hook_event_name: "PermissionRequest" }],
+  ])("a bad %s returns [] and reports the reason without the value", (key, reason, over) => {
+    for (const value of ["../x", "a b", "caf\u00e9", ".", "x".repeat(129)]) {
+      const reasons: string[] = [];
+      const out = hookToEvents(
+        { ...base, agent_id: "ag1", ...over, [key]: value },
+        { now: NOW, onReject: (r) => reasons.push(r) },
+      );
+      expect(out).toEqual([]);
+      expect(reasons).toHaveLength(1);
+      expect(reasons[0]).toBe(reason);
+      expect(reasons[0]).not.toContain(value);
+    }
+  });
+
+  it("treats an empty agent_id as absent: main-session event, nothing reported", () => {
+    const reasons: string[] = [];
+    const out = hookToEvents(
+      { ...base, hook_event_name: "PermissionRequest", agent_id: "" },
+      { now: NOW, onReject: (r) => reasons.push(r) },
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: "needs_attention", agentId: null });
+    expect(reasons).toEqual([]);
+  });
+
+  it("treats an empty session_id as absent: no events, nothing reported", () => {
+    const reasons: string[] = [];
+    const out = hookToEvents(
+      { ...base, hook_event_name: "PermissionRequest", session_id: "" },
+      { now: NOW, onReject: (r) => reasons.push(r) },
+    );
+    expect(out).toEqual([]);
+    expect(reasons).toEqual([]);
+  });
+
+  it("does not report an ignored hook or a good payload", () => {
+    const reasons: string[] = [];
+    const ctx = { now: NOW, onReject: (r: string) => reasons.push(r) };
+    hookToEvents({ ...base, hook_event_name: "Stop", session_id: "../x" }, ctx);
+    hookToEvents({ ...base, hook_event_name: "SubagentStart", agent_id: "ag1" }, ctx);
+    expect(reasons).toEqual([]);
+  });
 
   it("does not throw on hostile objects", () => {
     const evil = new Proxy(

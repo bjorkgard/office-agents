@@ -21,6 +21,7 @@ import {
   officeFeed,
 } from "./feed-plugin.ts";
 import { HOOK_FILE } from "./hook-discovery.ts";
+import { REJECT_AGENT_ID, REJECT_SESSION_ID } from "./hooks-adapter.ts";
 
 const TOKEN = "t".repeat(64);
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -215,6 +216,31 @@ describe("POST /__office/hook", () => {
       ...(type ? { headers: { "content-type": type } } : {}),
     });
     expect(r.status).toBe(415);
+  });
+
+  it("logs a bad session or agent id once per window, never the value", async () => {
+    let t = 5_000_000;
+    const { feed, logs } = newFeed({ now: () => t });
+    const l = listen(feed);
+    const post3 = async () => {
+      for (let i = 0; i < 3; i++) {
+        expect((await post(feed, { body: hook({ session_id: "../SECRET-x" }) })).status).toBe(204);
+        expect((await post(feed, { body: hook({ agent_id: "SECRET y" }) })).status).toBe(204);
+      }
+    };
+    const count = (reason: string) => logs.filter((x) => x.includes(reason)).length;
+    await post3();
+    expect(l.frames().filter((f) => f.type === "event")).toEqual([]);
+    expect(count(REJECT_SESSION_ID)).toBe(1);
+    expect(count(REJECT_AGENT_ID)).toBe(1);
+    t += 10_000; // past the log window: each reason logs again, independently
+    await post(feed, { body: hook({ session_id: "../SECRET-x" }) });
+    expect(count(REJECT_SESSION_ID)).toBe(2);
+    expect(count(REJECT_AGENT_ID)).toBe(1);
+    await post3();
+    expect(count(REJECT_SESSION_ID)).toBe(2);
+    expect(count(REJECT_AGENT_ID)).toBe(2);
+    expect(logs.join("\n")).not.toContain("SECRET");
   });
 
   it("accepts application/json with a charset", async () => {
