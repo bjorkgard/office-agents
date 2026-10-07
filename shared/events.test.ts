@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { isAgentEvent, parseAgentEvent } from "./events.ts";
+import { ID_PATTERN, isAgentEvent, parseAgentEvent } from "./events.ts";
 import type { AgentEvent, AgentEventKind } from "./events.ts";
 
 const base = { sessionId: "s1", agentId: null, projectId: "p1", ts: 1700000000000 };
@@ -125,9 +125,9 @@ describe("isAgentEvent", () => {
     expect(isAgentEvent({ ...valid.done, ts })).toBe(false);
   });
 
-  it("rejects a 513-char sessionId and accepts 512", () => {
+  it("rejects a 513-char sessionId and accepts 128", () => {
     expect(isAgentEvent({ ...valid.done, sessionId: "x".repeat(513) })).toBe(false);
-    expect(isAgentEvent({ ...valid.done, sessionId: "x".repeat(512) })).toBe(true);
+    expect(isAgentEvent({ ...valid.done, sessionId: "x".repeat(128) })).toBe(true);
   });
 
   it("rejects an unknown kind", () => {
@@ -334,5 +334,81 @@ describe("parseAgentEvent", () => {
     const parsed = parseAgentEvent({ ...base, kind: "working" });
     expect(parsed).not.toBeNull();
     expect(Object.hasOwn(parsed as object, "tool")).toBe(false);
+  });
+});
+
+// Every id field in every kind, built so a single field is replaced and nothing else changes.
+const idFields: Array<[string, AgentEventKind, (id: string) => Record<string, unknown>]> = [
+  ["sessionId", "done", (id) => ({ ...valid.done, sessionId: id })],
+  ["sessionId", "working", (id) => ({ ...valid.working, sessionId: id })],
+  ["sessionId", "waiting_on_subagents", (id) => ({ ...valid.waiting_on_subagents, sessionId: id })],
+  ["sessionId", "needs_attention", (id) => ({ ...valid.needs_attention, sessionId: id })],
+  ["sessionId", "handoff", (id) => ({ ...valid.handoff, sessionId: id })],
+  ["sessionId", "agent_started", (id) => ({ ...valid.agent_started, sessionId: id })],
+  ["agentId", "done", (id) => ({ ...valid.done, agentId: id })],
+  ["agentId", "working", (id) => ({ ...valid.working, agentId: id })],
+  ["agentId", "waiting_on_subagents", (id) => ({ ...valid.waiting_on_subagents, agentId: id })],
+  ["agentId", "needs_attention", (id) => ({ ...valid.needs_attention, agentId: id })],
+  ["agentId", "handoff", (id) => ({ ...valid.handoff, agentId: id })],
+  ["agentId", "agent_started", (id) => ({ ...valid.agent_started, agentId: id })],
+  ["parentAgentId", "agent_started", (id) => ({ ...valid.agent_started, parentAgentId: id })],
+  ["fromAgentId", "handoff", (id) => ({ ...valid.handoff, fromAgentId: id })],
+  ["toAgentId", "handoff", (id) => ({ ...valid.handoff, toAgentId: id })],
+  [
+    "tool.id",
+    "working",
+    (id) => ({ ...valid.working, tool: { phase: "start", id, isSubagent: false } }),
+  ],
+  ["episodeId", "needs_attention", (id) => ({ ...valid.needs_attention, episodeId: id })],
+];
+
+describe("id pattern (T06)", () => {
+  const bad = [".", " ", "../x", "caf\u00e9", "\u65e5\u672c", "a b", "a/b", "", "x".repeat(129)];
+  const good = [
+    "x".repeat(128),
+    "a1b2c3d4e5f6a7b8c",
+    "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    "toolu_01A09q90qw90lq917835lq9",
+    "0123456789abcdef0123456789abcdef",
+  ];
+
+  for (const [field, kind, build] of idFields) {
+    it.each(bad)(`rejects ${field} of ${kind} = %j`, (id) => {
+      expect(isAgentEvent(build(id))).toBe(false);
+    });
+    it.each(good)(`accepts ${field} of ${kind} = %j`, (id) => {
+      expect(isAgentEvent(build(id))).toBe(true);
+    });
+  }
+
+  it("covers every id field of the spec", () => {
+    expect(new Set(idFields.map(([f]) => f))).toEqual(
+      new Set([
+        "sessionId",
+        "agentId",
+        "parentAgentId",
+        "fromAgentId",
+        "toAgentId",
+        "tool.id",
+        "episodeId",
+      ]),
+    );
+    expect(new Set(idFields.map(([, k]) => k))).toEqual(new Set(Object.keys(valid)));
+  });
+
+  it("caps projectId at MAX_STRING_LENGTH: 512 accepted, 513 rejected", () => {
+    expect(isAgentEvent({ ...valid.done, projectId: "p".repeat(512) })).toBe(true);
+    expect(isAgentEvent({ ...valid.done, projectId: "p".repeat(513) })).toBe(false);
+  });
+
+  it("keeps projectId lax: any non-empty string within the length cap", () => {
+    expect(isAgentEvent({ ...valid.done, projectId: "-Users-x.y z" })).toBe(true);
+    expect(isAgentEvent({ ...valid.done, projectId: "" })).toBe(false);
+  });
+
+  it("exports the pattern the guard uses", () => {
+    expect(ID_PATTERN.test("a".repeat(128))).toBe(true);
+    expect(ID_PATTERN.test("a".repeat(129))).toBe(false);
+    expect(ID_PATTERN.test("a.b")).toBe(false);
   });
 });

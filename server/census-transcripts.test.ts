@@ -17,7 +17,8 @@ const ALLOWED = [
   "eventKinds",
   "sessionIdMismatches",
   "agentIdLength",
-  "idsNonConservativeChars",
+  "idsFailingIdPattern",
+  "idMaxLength",
   "maxLineChars",
   "readCapBytes",
   "linesOverCap",
@@ -38,6 +39,12 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
+
+const use = (id: string) =>
+  rec({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id, name: "Read", input: {} }] },
+  });
 
 const topFile = (name: string, body: string[]): string => {
   mkdirSync(join(root, PROJECT), { recursive: true });
@@ -90,7 +97,7 @@ describe("runCensus", () => {
     expect(c.agentMessageEnqueues).toBe(1);
     expect(c.sessionIdMismatches).toBe(1);
     expect(c.agentIdLength).toEqual({ "7": 1, "8": 1 });
-    expect(c.idsNonConservativeChars).toBe(1);
+    expect(c.idsFailingIdPattern).toBe(1);
     expect(c.versions).toEqual({ "9.9.9": 3 });
     expect(c.readCapBytes).toBe(READ_CAP_BYTES);
     expect(c.eventKinds.agent_started).toBeGreaterThan(0);
@@ -145,15 +152,29 @@ describe("runCensus", () => {
   });
 
   it("checks the charset of ordinary tool_use ids", async () => {
-    const use = (id: string) =>
-      rec({
-        type: "assistant",
-        message: { content: [{ type: "tool_use", id, name: "Read", input: {} }] },
-      });
     topFile(SESSION, [use("toolu_ok-1")]);
-    expect((await runCensus(root)).idsNonConservativeChars).toBe(0);
+    expect((await runCensus(root)).idsFailingIdPattern).toBe(0);
     topFile(SESSION, [use("toolu_ok-1"), use("bad id!")]);
-    expect((await runCensus(root)).idsNonConservativeChars).toBe(1);
+    expect((await runCensus(root)).idsFailingIdPattern).toBe(1);
+  });
+
+  it("reports the longest agent, session and tool id as numbers only", async () => {
+    topFile(SESSION, [use("toolu_12345"), use("t")]);
+    subFile(SESSION, "agent-long-id", [rec({ type: "assistant", message: {} })]);
+    const c = await runCensus(root);
+    expect(c.idMaxLength).toEqual({
+      agent: "agent-long-id".length,
+      session: SESSION.length,
+      tool: "toolu_12345".length,
+    });
+    expect(JSON.stringify(c)).not.toContain("toolu_12345");
+  });
+
+  it("uses the guard's ID_PATTERN, so an id over 128 chars is non-conservative", async () => {
+    topFile(SESSION, [use("a".repeat(128))]);
+    expect((await runCensus(root)).idsFailingIdPattern).toBe(0);
+    topFile(SESSION, [use("a".repeat(129))]);
+    expect((await runCensus(root)).idsFailingIdPattern).toBe(1);
   });
 
   it("scans a session dir that has no top-level jsonl file", async () => {
@@ -219,7 +240,7 @@ describe("runCensus", () => {
     const c = await runCensus(root);
     expect(c.resumesSeen).toBe(1);
     expect(c.agentIdLength).toEqual({ "7": 1 });
-    expect(c.idsNonConservativeChars).toBe(1);
+    expect(c.idsFailingIdPattern).toBe(1);
   });
 
   // Value: protects=census never reads outside the root via symlinks; fails_when=a symlinked file or project dir is followed; why_new=only session/subagents dir links were covered; seam=none
@@ -306,12 +327,12 @@ describe("runCensus", () => {
       });
     topFile("sess-launch", [launch("toolu!1"), result("toolu!1")]);
     const a = await runCensus(root);
-    expect(a.idsNonConservativeChars).toBe(1);
+    expect(a.idsFailingIdPattern).toBe(1);
     rmSync(join(root, PROJECT), { recursive: true });
     topFile("sess-resume", [launch("toolu_ok"), result("toolu_ok"), send("toolu!2")]);
     const b = await runCensus(root);
     expect(b.resumesSeen).toBe(1);
-    expect(b.idsNonConservativeChars).toBe(1);
+    expect(b.idsFailingIdPattern).toBe(1);
   });
 
   it("drops a leading BOM so the first line still parses", async () => {

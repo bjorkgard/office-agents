@@ -63,18 +63,27 @@ export const MAX_STRING_LENGTH = 512;
 // Enum `values` are not tied to the union at type level, shared/events.test.ts
 // iterates each union literal instead.
 type FieldSpec = { optional?: boolean } & (
-  | { type: "string"; nullable?: boolean; nonEmpty?: boolean }
+  | { type: "string"; nullable?: boolean; nonEmpty?: boolean; pattern?: RegExp }
   | { type: "timestamp" }
   | { type: "boolean" }
   | { type: "enum"; values: readonly string[] }
   | { type: "object"; fields: Record<string, FieldSpec> }
 );
 
+/** What an agent, session, tool or episode id may look like: 1 to 128 of [A-Za-z0-9_-]. */
+export const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
 /** Free-form string (a path); may be empty. */
 const str: FieldSpec = { type: "string" };
-/** Identifier: never empty. */
-const id: FieldSpec = { type: "string", nonEmpty: true };
-const nullableId: FieldSpec = { type: "string", nullable: true, nonEmpty: true };
+/** Identifier: matches ID_PATTERN. */
+const id: FieldSpec = { type: "string", pattern: ID_PATTERN };
+const nullableId: FieldSpec = {
+  type: "string",
+  nullable: true,
+  pattern: ID_PATTERN,
+};
+/** A project directory name: any non-empty string (its character set is not measured yet). */
+const projectId: FieldSpec = { type: "string", nonEmpty: true };
 /** Epoch milliseconds: a non-negative safe integer. */
 const ts: FieldSpec = { type: "timestamp" };
 const bool: FieldSpec = { type: "boolean" };
@@ -86,7 +95,7 @@ type EventOf<K extends AgentEventKind> = Extract<AgentEvent, { kind: K }>;
 const baseFields: SpecFor<AgentEventBase> = {
   sessionId: id,
   agentId: nullableId,
-  projectId: id,
+  projectId,
   ts,
 };
 
@@ -124,7 +133,8 @@ function parseField(spec: FieldSpec, value: unknown): unknown {
     case "string":
       if (value === null) return spec.nullable === true ? null : INVALID;
       if (typeof value !== "string" || value.length > MAX_STRING_LENGTH) return INVALID;
-      return spec.nonEmpty && value.length === 0 ? INVALID : value;
+      if (spec.nonEmpty && value.length === 0) return INVALID;
+      return spec.pattern !== undefined && !spec.pattern.test(value) ? INVALID : value;
     case "timestamp":
       return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
         ? value

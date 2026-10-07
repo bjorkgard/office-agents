@@ -159,6 +159,32 @@ describe("tailer", () => {
     expect(t.status().filesTracked).toBe(2);
   });
 
+  describe("ids the guard would refuse", () => {
+    it("skips a transcript with a bad session id, logging once and never the id", async () => {
+      putTop("p1", "top-live", undefined, "bad.id SECRET");
+      putTop("p1", "top-live", undefined, "good-session");
+      let skew = 0;
+      const { t, logs } = tailer({ now: () => Date.now() + skew });
+      await t.scanOnce();
+      skew += 10_000; // past the tree-walk throttle
+      await t.scanOnce();
+      expect(t.status().filesTracked).toBe(1);
+      expect(logs.filter((l) => l.includes("invalid session id"))).toHaveLength(1);
+      expect(logs.join("\n")).not.toContain("SECRET");
+    });
+
+    it("skips a subagent transcript with a bad agent id", async () => {
+      const dir = join(root, "p1", "good-session", "subagents");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "agent-bad.id SECRET.jsonl"), fixtureLines("sub-live")[0] + "\n");
+      const { t, logs } = tailer();
+      await t.scanOnce();
+      expect(t.status().filesTracked).toBe(0);
+      expect(logs.filter((l) => l.includes("invalid agent id"))).toHaveLength(1);
+      expect(logs.join("\n")).not.toContain("SECRET");
+    });
+  });
+
   describe("tracked-file cap", () => {
     const CAP = 3;
     const fill = (n: number) => {

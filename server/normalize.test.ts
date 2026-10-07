@@ -302,6 +302,36 @@ describe("drift", () => {
     expect(normalize(state, line)).toEqual([]);
     expect(state.drift.bad_event).toBeGreaterThan(0);
   });
+  it("a sync launch with a non-conforming tool id is still remembered, so its result hands back", () => {
+    const state = top();
+    const ts = "2026-10-02T10:00:00Z";
+    const launch = JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: ts,
+      message: {
+        content: [
+          { type: "tool_use", id: "bad id!", name: "Agent", input: { run_in_background: false } },
+        ],
+        stop_reason: "tool_use",
+      },
+    });
+    const result = JSON.stringify({
+      type: "user",
+      sessionId: "s",
+      timestamp: ts,
+      message: { content: [{ type: "tool_result", tool_use_id: "bad id!", content: "x" }] },
+      toolUseResult: { status: "completed", agentId: "agent-ok" },
+    });
+    // the tool's own working event is refused, but the launch is stored and the wait begins
+    const first = normalize(state, launch);
+    expect(first.map((e) => e.kind)).toEqual(["agent_started", "waiting_on_subagents"]);
+    expect(state.drift.bad_event).toBeGreaterThan(0);
+    expect(state.launches.size).toBe(1);
+    const events = normalize(state, result);
+    // the "back" handoff is what clears waiting_on_subagents
+    expect(handoffs(events)).toEqual(["agent-ok:out", "agent-ok:back"]);
+  });
   it("evicts the oldest launch past MAP_CAP", () => {
     const state = top();
     for (let i = 0; i < 2001; i++) {

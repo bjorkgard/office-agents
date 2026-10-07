@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.4.0] - 2026-10-07
+
+### Added
+
+- Session, agent, tool and episode ids must now be 1 to 128 letters, digits, `_` or `-`. An event with any other id is dropped before it reaches the office, so a future change in Claude Code's id format cannot slip odd characters into keys, logs or the page. Project folder names stay unrestricted.
+- A hook payload with a bad `session_id` or `agent_id`, including a number or object, is now logged (one line per kind per window, never the id) instead of vanishing silently. A transcript file whose name gives a bad session or agent id is skipped with one log line the same way.
+- `vp run census` now prints `idMaxLength`: the longest agent, session and tool id it saw, as numbers only. On the real transcripts that is 17, 36 and 30, far under the 128 cap.
+
+### Changed
+
+- The census key `idsNonConservativeChars` is now `idsFailingIdPattern`. It counts ids that fail the shared id rule, so ids longer than 128 characters now count too; older census numbers are not directly comparable.
+- A hook with an empty `agent_id` still counts as the main agent, as before.
+
 ## [0.9.3.1] - 2026-10-07
 
 ### Changed

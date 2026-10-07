@@ -99,7 +99,7 @@ export function createHookRoute(deps: HookRouteDeps) {
   }
 
   function ingestHook(payload: unknown): void {
-    for (const event of hookToEvents(payload, { now: now() })) {
+    for (const event of hookToEvents(payload, { now: now(), onReject: hookLog })) {
       // The tailer announces the same subagent from its transcript, with its real parent; a hook
       // start for a known agent would overwrite that, and a stop for an unknown one would make a
       // ghost entry. Both are dropped; the hook only fills in what the tailer has not seen yet.

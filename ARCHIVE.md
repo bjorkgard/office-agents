@@ -524,3 +524,21 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Depends on:** None
 
 **Status:** DONE (closed 2026-10-07 as T10, no production code change). The T03 census on the maintainer's transcript root on 2026-10-06 found 0 lines over the 4 MiB cap (longest 890298 bytes); this is one host, not a guarantee for other users or Claude Code versions. If a result line were dropped, the stuck state is limited but visible: the tool stays in `openTools` until the next top-level `done` (`src/office/machine.ts:393-394`), and the 10 s tool timer (`machine.ts:470-483`) moves the agent to "attention", a false permission-wait signal, which `attentionStaleMs` (4 h) ends if no `done` ever arrives. An unresolved handoff with no child agent expires after `staleMs` (`machine.ts:420-430`); with a live child it waits for that child to leave, and a dropped sync Task result can hold the parent through `waitingOn` (`machine.ts:459`) until `done`. The no-result open tool (with the attention state) and the no-child handoff expiry are pinned by tests in `src/office/machine.test.ts` ("dropped tool_result (T10): bounded-stuck outcome"); the live-child handoff and `waitingOn` cases are not tested. The `oversize_line` drift counter stays the signal if a real line ever exceeds the cap. Verified by code read and a refuter mutation run.
+
+### T06 Validate id format in parseAgentEvent
+
+**Area:** Feed hardening
+
+**What:** Reject ids that do not match a conservative pattern (length and character set).
+
+**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
+
+**Context:** Add after the id formats of real transcripts are confirmed (see T03).
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** all 2719 ids seen are 17 characters of `[A-Za-z0-9_-]`, with 0 outside that set. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Status:** DONE (closed 2026-10-07 as T06, v0.9.4.0). `shared/events.ts` exports `ID_PATTERN` (`/^[A-Za-z0-9_-]{1,128}$/`) and applies it to `sessionId`, `agentId`, `parentAgentId`, `fromAgentId`, `toAgentId`, `tool.id` and `episodeId`; `projectId` stays any non-empty string up to 512 characters (a directory name, never censused). The hooks adapter logs a payload dropped for a bad `session_id` or `agent_id` (reason only, never the id), the tailer skips and logs a transcript whose file name gives a bad id, and the census prints `idMaxLength` and counts `idsFailingIdPattern` with the same pattern. Real-root census on 2026-10-07: longest agent 17, session 36, tool 30, 0 failing ids, drift unchanged against main. Reviewed in `docs/designs/t06-validate-agent-event-id-ceo-review.md`; follow-ups are T50 and T51.
