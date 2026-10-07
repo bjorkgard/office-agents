@@ -1,8 +1,8 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T47` are stable handles: a new entry takes the number above the highest ever issued (T47), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T48` are stable handles: a new entry takes the number above the highest ever issued (T48), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
-## P1 available (3)
+## P1 available (2)
 
 ### T02 M10: browser pass for row growth and the eased fit
 
@@ -15,22 +15,6 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Context:** Overlay positions use registered `--fit-*` custom properties, transitioned in `scene.css` (`.scene-overlay`). Also check the 5 s test timeouts under load, and the D4 style-sheet passes (24-agent room, grayscale, shadows-off) in `?art`.
 
 **Effort:** S (human ~1h)
-**Priority:** P1
-**Depends on:** None
-
-### T05 Key sessions by filename, not record sessionId, for resumed sessions
-
-**Area:** Feed hardening
-
-**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
-
-**Why:** Two files could collapse into one agent, or one agent split across two.
-
-**Context:** Verify against real transcripts first (see T03).
-
-**Evidence (2026-10-06, T03 census of the real transcript root):** `sessionId` differs from the file name in 0 of 182 files, so the resume premise was not reproduced locally (3 resumes seen, so resume is only partly verified). The owner may close this.
-
-**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P1
 **Depends on:** None
 
@@ -144,7 +128,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** The user running the probe
 
-## P3 available (23)
+## P3 available (24)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -311,6 +295,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Context:** Findings came from five specialist reviewers, a red-team pass and the native adversarial pass of the v0.9.2.0 ship, which the user chose to skip rather than start another review cycle. The 55 orphans left in the census all have a tool-use id that is not in the same file (0 of 55), so they are probably cross-file or compaction cases (inferred, not checked).
 
 **Effort:** S (human ~3h / CC ~30min)
+**Priority:** P3
+**Depends on:** None
+
+### T48 Review follow-ups for the session_id_mismatch counter (T05 ship, 2026-10-07)
+
+**Area:** Feed hardening
+
+**What:** Skipped review items from the T05 /ship. (1) `buildCtx` in `server/normalize.ts` has a `countMismatch` flag used by one caller (`normalizeBatch`); two reviewers suggest moving the bump into `normalizeLine` and dropping the flag (confidence 6). (2) `server/feed-plugin.test.ts` (~line 140) expects drift `{ session_id_mismatch: 2 }`, tied to the fixture's record count; derive it or use a small inline fixture (confidence 5). (3) Two untested edges in `server/normalize.test.ts`: a subagent record with a differing sessionId and no agentId (counts both mismatch and bad_shape), a `normalizeBatch` whose last line has a bad timestamp, and a record with an unknown type and a differing sessionId (the TODOS note on T05 says it is not counted; confidence 5, second pass). Adversarial pass (low, skipped): (4) the counter has blind spots by design: no comparison when the state has no path id, and a mismatching record with a bad timestamp counts only as bad_timestamp; (5) the census drops the live counter through one hard-coded constant and prints no hint that mismatches are excluded from its drift total; (6) investigate after merge: on resumed sessions the live counter counts per record, so a long resumed file could add drift-log noise; compare the census sessionIdMismatches (files) with records per mismatching file. Also skipped (third review pass and second adversarial pass): (7) the census skip constant `LIVE_ONLY_DRIFT` in `server/census-transcripts.ts` is kept in sync with `DriftReason` by hand; export it from `server/normalize.ts`; (8) the test helper `rec` in `server/normalize.test.ts` (~line 1070) duplicates the record envelope that two later tests rebuild inline; (9) the census counts an empty-string `sessionId` as a mismatch (`server/census-transcripts.ts` ~line 143) but the live counter does not (`asStr`, `server/normalize.ts` ~line 123), while the census comment says they agree; use one predicate; (10) a mismatching record that then fails `bad_shape` bumps both counters, and a finished-file replay bumps once per historical record on first sight.
+
+**Why:** None is a defect; each makes the code or its tests a little safer.
+
+**Context:** Found in the T05 /ship review (branch `fix/t05-key-sessions-by-filename`).
+
+**Effort:** S (human ~1h / CC ~10min)
 **Priority:** P3
 **Depends on:** None
 
