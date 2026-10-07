@@ -13,19 +13,23 @@ type Rule = "attention" | "attention_by_type" | "subagent_start" | "subagent_sto
 
 /**
  * hook_event_name -> what it means. CONFIRMED by probe: PermissionRequest fires for an
- * AskUserQuestion (no tool_use_id, no Notification). UNVERIFIED: Bash permission prompts and
- * which Notification types fire when; unknown names and types are ignored, so a wrong row costs
+ * AskUserQuestion and a Bash permission prompt (no tool_use_id). UNVERIFIED: which other
+ * Notification types fire when; unknown names and types are ignored, so a wrong row costs
  * nothing but a missed signal. SubagentStart/SubagentStop are CONFIRMED by the probe.
  */
 export const HOOK_EVENTS: Readonly<Record<string, Rule>> = {
-  PermissionRequest: "attention", // CONFIRMED for AskUserQuestion; Bash prompts UNVERIFIED
+  PermissionRequest: "attention", // CONFIRMED for AskUserQuestion and Bash
   Notification: "attention_by_type", // UNVERIFIED which types fire when
   SubagentStart: "subagent_start", // CONFIRMED
   SubagentStop: "subagent_stop", // CONFIRMED
 };
 
-/** notification_type values that mean "a human is needed". idle_prompt and agent_completed are
- * left out until probed. UNVERIFIED. */
+/** notification_type values that mean "a human is needed". permission_prompt is the only signal
+ * for a sandbox network prompt (no PermissionRequest); for a Bash prompt it fires ~12s after the
+ * PermissionRequest with no shared key (CONFIRMED by probe 2), so events from here carry
+ * `fallback: true` and the machine drops them while an exact episode is open.
+ * idle_prompt is CONFIRMED to fire ~60s after Stop and is intentionally ignored, as is
+ * agent_completed. elicitation_dialog and agent_needs_input are UNVERIFIED. */
 export const ATTENTION_NOTIFICATIONS: ReadonlySet<string> = new Set([
   "permission_prompt",
   "elicitation_dialog",
@@ -112,6 +116,7 @@ export function hookToEvents(payload: unknown, ctx: HookContext): AgentEvent[] {
           agentId,
           waitingSince: ts,
           episodeId: episodeIdOf([name, sessionId, agentId ?? "", idOf(p, "tool_use_id") ?? ts]),
+          ...(rule === "attention_by_type" ? { fallback: true } : {}),
         };
         break;
       }

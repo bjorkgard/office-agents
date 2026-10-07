@@ -352,6 +352,15 @@ function applyOwned(
       // A repeat of the open or just-ended episode is old news: no touch, so it cannot
       // refresh the agent's silence clock or re-trigger the wave.
       if (known && known.phase !== "leaving" && known.episode?.exactId === event.episodeId) break;
+      // A Notification-derived backup for a prompt PermissionRequest already announced: no touch.
+      if (
+        event.fallback === true &&
+        known &&
+        known.phase !== "leaving" &&
+        known.attention?.trigger === "exact"
+      ) {
+        break;
+      }
       const a = touch(s, sessionId, event.agentId, projectId, clock);
       enterExact(s, a, event.episodeId, event.waitingSince, clock);
       break;

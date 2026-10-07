@@ -851,6 +851,45 @@ describe("exact needs_attention (hooks adapter)", () => {
     expect(get(s)!.episode!.waitingSince).toBe(7_000);
   });
 
+  describe("fallback (Notification-derived) events", () => {
+    const fallback = (episodeId: string, waitingSince: number, agentId: string | null = null) =>
+      ({ ...exact(episodeId, waitingSince, agentId), fallback: true }) as AgentEvent;
+
+    it("is ignored while an exact episode is open: one episode, one wave", () => {
+      let s = applyEvent(working0(), exact("e1", 500), 10_000);
+      const first = structuredClone(get(s)!.episode);
+      const seq = s.episodeSeq;
+      s = applyEvent(s, fallback("n1", 12_500), 22_000);
+      expect(get(s)!.episode).toEqual(first);
+      expect(get(s)!.episode!.waitingSince).toBe(500);
+      expect(s.episodeSeq).toBe(seq);
+      expect(get(s)!.lastEventAt).toBe(10_000);
+    });
+
+    it("alone (sandbox prompt) opens an exact attention", () => {
+      const s = applyEvent(working0(), fallback("n1", 500), 10_000);
+      expect(stateOf(s)).toBe("attention");
+      expect(get(s)!.attention!.trigger).toBe("exact");
+      expect(get(s)!.episode!.waitingSince).toBe(500);
+    });
+
+    it("after the exact episode was cleared opens a new wave", () => {
+      let s = applyEvent(working0(), exact("e1", 500), 10_000);
+      s = applyEvent(s, working(), 11_000);
+      expect(stateOf(s)).toBe("working");
+      s = applyEvent(s, fallback("n1", 11_500), 12_000);
+      expect(stateOf(s)).toBe("attention");
+      expect(get(s)!.episode!.waitingSince).toBe(11_500);
+    });
+
+    it("upgrades a heuristic attention as a plain exact event does", () => {
+      const heuristic = (): OfficeState => applyEvent(working0(), done(true), 10_000);
+      const viaPlain = applyEvent(heuristic(), exact("n1", 500), 11_000);
+      const viaFallback = applyEvent(heuristic(), fallback("n1", 500), 11_000);
+      expect(get(viaFallback)).toEqual(get(viaPlain));
+    });
+  });
+
   it("each activity kind ends an exact episode", () => {
     const ends: [string, AgentEvent][] = [
       ["working", working()],
