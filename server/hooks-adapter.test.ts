@@ -190,6 +190,36 @@ describe("hookToEvents", () => {
     }
   });
 
+  it.each([
+    ["session_id", REJECT_SESSION_ID, { hook_event_name: "PermissionRequest" }],
+    ["agent_id", REJECT_AGENT_ID, { hook_event_name: "SubagentStart" }],
+    ["agent_id", REJECT_AGENT_ID, { hook_event_name: "PermissionRequest" }],
+  ])("a present non-string %s returns [] and reports exactly one reason", (key, reason, over) => {
+    for (const value of [123, true, {}, [], ["x"]]) {
+      const reasons: string[] = [];
+      const out = hookToEvents(
+        { ...base, agent_id: "ag1", ...over, [key]: value },
+        { now: NOW, onReject: (r) => reasons.push(r) },
+      );
+      expect(out).toEqual([]);
+      expect(reasons).toEqual([reason]);
+    }
+  });
+
+  it.each([null, "", undefined, "absent"])(
+    "treats agent_id %j as the main agent on PermissionRequest, nothing reported",
+    (value) => {
+      const reasons: string[] = [];
+      const payload: Record<string, unknown> = { ...base, hook_event_name: "PermissionRequest" };
+      delete payload.agent_id;
+      if (value !== "absent") payload.agent_id = value;
+      const out = hookToEvents(payload, { now: NOW, onReject: (r) => reasons.push(r) });
+      expect(out).toHaveLength(1);
+      expect(out[0]).toMatchObject({ kind: "needs_attention", agentId: null });
+      expect(reasons).toEqual([]);
+    },
+  );
+
   it("treats an empty agent_id as absent: main-session event, nothing reported", () => {
     const reasons: string[] = [];
     const out = hookToEvents(

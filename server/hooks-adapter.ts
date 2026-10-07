@@ -42,11 +42,13 @@ export type HookContext = {
 export const REJECT_SESSION_ID = "rejected a payload with an invalid session id";
 export const REJECT_AGENT_ID = "rejected a payload with an invalid agent id";
 
-/** True when the payload carries `key` as a non-empty string the guard would refuse as an id.
- * An empty string counts as absent, as it did before the guard. */
+/** True when the payload carries `key` as anything but a valid id: a string the guard would
+ * refuse, or a non-string value (number, boolean, object, array). Absent, undefined, null and an
+ * empty string count as absent, as they did before the guard. */
 function badIdOf(payload: Record<string, unknown>, key: string): boolean {
   const v = Object.hasOwn(payload, key) ? payload[key] : undefined;
-  return typeof v === "string" && v.length > 0 && !ID_PATTERN.test(v);
+  if (v === undefined || v === null || v === "") return false;
+  return typeof v !== "string" || !ID_PATTERN.test(v);
 }
 
 /** A non-empty string within MAX_STRING_LENGTH, else null. Own properties only. It does not
