@@ -1,6 +1,6 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T49` are stable handles: a new entry takes the number above the highest ever issued (T49), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T51` are stable handles: a new entry takes the number above the highest ever issued (T51), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
 ## P1 available (2)
 
@@ -50,19 +50,17 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** None
 
-### T06 Validate id format in parseAgentEvent
+### T50 Pin and probe the id-guard edges left by T06 (2026-10-07)
 
 **Area:** Feed hardening
 
-**What:** Reject ids that do not match a conservative pattern (length and character set).
+**What:** Skipped items from the T06 /ship that touch behavior. (1) `server/normalize.ts:317`: a launch result whose child `agentId` fails the id pattern is stored in `launch.agentId`, its handoffs are then rejected as `bad_event`, and a sync launch leaves the parent in `waiting_on_subagents`; add a test that pins this bounded-stuck outcome, as T10 did for a dropped tool_result. (2) Hook payload ids were never measured (only transcripts were censused, see D20): probe real `session_id` / `agent_id` shapes, and add a drift counter for hook rejects so a format change is visible beyond one throttled log line (`server/hook-route.ts` `hookLog`). (3) `badIdOf` in `server/hooks-adapter.ts` only rejects string ids, so a numeric or object `agent_id` still becomes a main-agent `needs_attention` (already so on main, `idOf` returns null); reject any present non-null non-string id. (4) `server/feed-plugin.ts` ~574: a bad `by` id clears `parentPending` and drops the parent link with no drift bump. (5) `shared/events.ts:75`: tool ids share the strict pattern, so an MCP or proxied id with `.` or `:` loses its `working` events; relax if a real id ever needs it.
 
-**Why:** Ids flow into keys, logs and the DOM later; today any non-empty string passes.
+**Why:** The strict id rule trades visibility for safety; these are the places where a non-conforming id can still hide an agent or an attention bubble without a trace.
 
-**Context:** Add after the id formats of real transcripts are confirmed (see T03).
+**Context:** Found by the specialists, the red-team pass and the two native adversarial passes of the T06 /ship (branch `t06-validate-agent-event-id`); the user chose to skip rather than use the last review cycle. Real transcripts show none of these ids (census: longest agent 17, session 36, tool 30, 0 failing). Items (1), (3) and (4) come from code reading, nothing was run.
 
-**Evidence (2026-10-06, T03 census of the real transcript root):** all 2719 ids seen are 17 characters of `[A-Za-z0-9_-]`, with 0 outside that set. The owner may close this.
-
-**Effort:** S (human ~2h / CC ~15min)
+**Effort:** S (human ~3h / CC ~30min)
 **Priority:** P2
 **Depends on:** None
 
@@ -112,7 +110,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** The user running the probe
 
-## P3 available (25)
+## P3 available (26)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -277,6 +275,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Why:** Keeps the drift counter and the census honest after a Claude Code format change, and keeps the census output exactly counts-only on every error path.
 
 **Context:** Findings came from five specialist reviewers, a red-team pass and the native adversarial pass of the v0.9.2.0 ship, which the user chose to skip rather than start another review cycle. The 55 orphans left in the census all have a tool-use id that is not in the same file (0 of 55), so they are probably cross-file or compaction cases (inferred, not checked).
+
+**Effort:** S (human ~3h / CC ~30min)
+**Priority:** P3
+**Depends on:** None
+
+### T51 Review polish from the T06 /ship (2026-10-07)
+
+**Area:** Feed hardening
+
+**What:** Skipped informational items from the T06 /ship (0 critical). Tailer: `badIdLogged` in `server/feed-plugin.ts` reuses `MAX_DENIED` as its bound, has no eviction test, and re-logs every 5 s walk once more than 1000 odd-named transcripts exist; add a dedicated constant and a test, or log one aggregate; `idsUsable` checks file names only (a record `agentId` or `by` that fails the pattern still passes), and a subagent under a bad session directory has no test row. Hooks adapter: `badIdOf` and `idOf` repeat the own-property read and the "128" is described in comments as well as `ID_PATTERN` (export an `ID_MAX_LENGTH`); a missing `session_id` returns silently; no test rows for SubagentStop, the Notification rule or a trailing newline in an id. Census: `idsFailingIdPattern` counts per occurrence (a session id once per file, tool ids once per record) and covers only some id kinds; `idMaxLength.agent` from launch ids has no test; the census derives an agent id from a file name differently from the tailer (`agent-` prefix); the key was renamed from `idsNonConservativeChars`, so old numbers are not comparable. Tests: the normalize test for a bad tool id asserts internal maps and has no red-at-HEAD note; `normalize.ts` call sites for `tool_result`, `SendMessage` and notification ids are not tested for a bad id. Simplification: both reject blocks in `hookToEvents` could be one loop.
+
+**Why:** None is a defect in shipped behavior; each makes the code or its tests a little safer and keeps the census honest as the T06 evidence tool.
+
+**Context:** Found in the T06 /ship review (specialists, red team, native adversarial passes) across three review cycles; the user chose to skip these. `docs/reference.md` does not yet describe the id contract (1 to 128 of `[A-Za-z0-9_-]`, project folder names unrestricted); add two lines when touching it.
 
 **Effort:** S (human ~3h / CC ~30min)
 **Priority:** P3
