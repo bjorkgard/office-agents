@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3.1] - 2026-10-07
+
+### Changed
+
+- Two tests now pin what the office shows when a long tool result never reaches the feed: the tool stays open until the turn ends, the agent flips to "needs attention" after the 10 s tool timer, and an unresolved handoff with no child expires after the stale window.
+- The old TODO about compensating for a dropped oversized tool result is closed. A census of real transcripts found no line near the 4 MiB cap, and the `oversize_line` drift counter still reports it if one ever appears.
+
 ## [0.9.3.0] - 2026-10-07
 
 ### Added

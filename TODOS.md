@@ -1,6 +1,6 @@
 # TODOS
 
-Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T48` are stable handles: a new entry takes the number above the highest ever issued (T48), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
+Sorted by priority (P1 first), then availability (unblocked first), then effort (S before M). IDs `T01`..`T49` are stable handles: a new entry takes the number above the highest ever issued (T49), never a gap left by an archived entry, and nothing is renumbered. `V#` ids and M9 in Depends-on lines name items shipped earlier (V1 to V9 in v0.3.0.0); see ARCHIVE.md. M10 is still open as T02. Ids are not in numeric order inside a section because the sort rule decides placement. Archived entries keep their T-id in the heading.
 
 ## P1 available (2)
 
@@ -112,7 +112,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P2
 **Depends on:** The user running the probe
 
-## P3 available (24)
+## P3 available (25)
 
 ### T12 Perf deadlines are unmeasured (2026-10-06)
 
@@ -279,6 +279,20 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Context:** Findings came from five specialist reviewers, a red-team pass and the native adversarial pass of the v0.9.2.0 ship, which the user chose to skip rather than start another review cycle. The 55 orphans left in the census all have a tool-use id that is not in the same file (0 of 55), so they are probably cross-file or compaction cases (inferred, not checked).
 
 **Effort:** S (human ~3h / CC ~30min)
+**Priority:** P3
+**Depends on:** None
+
+### T49 Review follow-ups for the closed T10 tests and archive entry (2026-10-07)
+
+**Area:** Feed hardening
+
+**What:** Skipped informational items from the T10 /ship (0 critical). (1) `ARCHIVE.md` T10 says a dropped sync Task result holds the parent through `waitingOn` "until `done`"; `machine.ts:459` only blocks while another agent in the session is active, so the hold is bounded by other agents' silence. (2) The false "attention" re-arms: `machine.ts:328` resets `startedAt` on later tool events and the next quiet 10 s fires again; check whether `shouldChime` or `enterAttention` dedupes repeats. (3) The `oversize_line` counter bumps only when the unterminated remainder passes READ_CAP_BYTES (`server/feed-plugin.ts:616-630`), so `pending` plus one read can parse a line up to about 8 MiB without counting; probe with a 5 MiB line. (4) The archive entry should carry T47's note that the census numbers are a lower bound. (5) Untested: a handoff whose child is alive (the realistic dropped-result case), the `attentionStaleMs` (4 h) end of a stuck tool, and test 1's trigger type "tool". Test 1 pins current behaviour (false attention), so a future compensating event will need to update it; a comment saying so would help.
+
+**Why:** Keeps the closed T10 entry honest and the pinned behaviour from being read as a contract.
+
+**Context:** Found in the T10 /ship review by the Testing specialist and the native adversarial pass; the user chose to skip rather than start a third review cycle. Evidence for (1), (2) and (3) is from code reading only, nothing was run.
+
+**Effort:** S (human ~2h / CC ~20min)
 **Priority:** P3
 **Depends on:** None
 
