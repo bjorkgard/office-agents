@@ -1314,8 +1314,10 @@ describe("dropped tool_result (T10): bounded-stuck outcome", () => {
     let s = applyEvent(working0(), working(null, { phase: "start", id: "t1" }), 0);
     s = tick(s, TUNING.toolTimerMs + 1000);
     expect(Object.keys(get(s)!.openTools)).toEqual(["t1"]);
+    expect(get(s)!.state).toBe("attention");
     s = applyEvent(s, done(false), TUNING.toolTimerMs + 2000);
     expect(get(s)!.openTools).toEqual({});
+    expect(get(s)!.state).toBe("idle");
   });
 
   it("an unresolved handoff with no child is removed by tick once staleMs elapses", () => {
