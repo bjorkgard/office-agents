@@ -506,3 +506,21 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Depends on:** None
 
 **Status:** DONE (moved 2026-10-06 as T01). Reviewed in `docs/designs/t01-chime-control-ceo-review.md` (D1 to D6); the DESIGN.md entry is "Chime toggle" under Components. Code: monochrome SVG glyph, no `aria-pressed`, `webkitAudioContext` fallback, cross-tab `storage` sync, `flex-shrink: 0`. Verification is in the task reports (`.claude/scratch/t01-chime-control/reports/`).
+
+### T10 Compensate for a dropped oversized tool_result line
+
+**Area:** Feed hardening
+
+**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
+
+**Why:** The agent keeps showing a running tool or an open handoff.
+
+**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** the longest line is 890298 bytes against the 4 MiB read cap (4194304 bytes), and 0 lines are over the cap. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Status:** DONE (closed 2026-10-07 as T10, no code change). The T03 census found 0 lines over the 4 MiB cap (longest 890298 bytes), so the case does not occur in real transcripts. The stuck state is bounded: an unresolved handoff expires after `staleMs` (`src/office/machine.ts:420-430`) and open tools clear on the next top-level `done` (`machine.ts:393-394`). Both are pinned by tests in `src/office/machine.test.ts` ("dropped tool_result (T10): bounded-stuck outcome"). The `oversize_line` drift counter stays the signal if a real line ever exceeds the cap. Verified by code read and a refuter mutation run.

@@ -36,7 +36,7 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Priority:** P1
 **Depends on:** None
 
-## P2 available (5)
+## P2 available (4)
 
 ### T07 Hook rate windows break on a backward clock step
 
@@ -47,22 +47,6 @@ Sorted by priority (P1 first), then availability (unblocked first), then effort 
 **Why:** Adversarial finding at the 0.8.0.0 /ship (D4 skipped). The same logic existed in `feed-plugin.ts` before the hook route split, so it predates this release; the new attention budget copies it.
 
 **Effort:** S
-**Priority:** P2
-**Depends on:** None
-
-### T10 Compensate for a dropped oversized tool_result line
-
-**Area:** Feed hardening
-
-**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
-
-**Why:** The agent keeps showing a running tool or an open handoff.
-
-**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
-
-**Evidence (2026-10-06, T03 census of the real transcript root):** the longest line is 890298 bytes against the 4 MiB read cap (4194304 bytes), and 0 lines are over the cap. The owner may close this.
-
-**Effort:** S (human ~2h / CC ~15min)
 **Priority:** P2
 **Depends on:** None
 
