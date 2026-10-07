@@ -36,6 +36,49 @@ describe("hookToEvents", () => {
     expect(e.kind === "needs_attention" && e.episodeId).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  describe("AskUserQuestion (real probe payload shape: PermissionRequest, no tool_use_id)", () => {
+    const SECRET = "s3cret-question-text";
+    const ask = {
+      ...base,
+      hook_event_name: "PermissionRequest",
+      tool_name: "AskUserQuestion",
+      tool_input: { questions: [{ question: SECRET }] },
+      effort: "high",
+      permission_mode: "default",
+      prompt_id: "p1",
+      scratchpad_dir: "/tmp/scratch",
+    };
+
+    it("yields exactly one needs_attention and leaks nothing from tool_input", () => {
+      const events = run(ask);
+      expect(events).toHaveLength(1);
+      const [e] = events;
+      expect(e).toMatchObject({
+        kind: "needs_attention",
+        sessionId: "sess1",
+        agentId: null,
+        waitingSince: NOW,
+      });
+      expect(e.kind === "needs_attention" && e.episodeId).toMatch(/^[0-9a-f]{32}$/);
+      expect(JSON.stringify(e)).not.toContain(SECRET);
+    });
+
+    it("falls back to the receipt time: the same payload at two times is two episodes", () => {
+      const a = run(ask, NOW)[0];
+      const b = run(ask, NOW + 1000)[0];
+      expect(a.kind === "needs_attention" && b.kind === "needs_attention").toBe(true);
+      expect(a.kind === "needs_attention" && a.episodeId).not.toBe(
+        b.kind === "needs_attention" && b.episodeId,
+      );
+    });
+
+    it("the PostToolUse that follows yields no events", () => {
+      expect(
+        run({ ...base, hook_event_name: "PostToolUse", tool_name: "AskUserQuestion" }),
+      ).toEqual([]);
+    });
+  });
+
   it("keeps the agent id when the permission request came from a subagent", () => {
     expect(
       run({ ...base, hook_event_name: "PermissionRequest", agent_id: "ag1" })[0],

@@ -12,13 +12,13 @@ import type { AgentEvent } from "../shared/events.ts";
 type Rule = "attention" | "attention_by_type" | "subagent_start" | "subagent_stop";
 
 /**
- * hook_event_name -> what it means. UNVERIFIED (no interactive probe yet, D20): which of these
- * fire for a permission prompt or an agent's question. PermissionRequest and the Notification
- * types below are the researched guesses; unknown names and types are ignored, so a wrong row
- * costs nothing but a missed signal. SubagentStart/SubagentStop are CONFIRMED by the probe.
+ * hook_event_name -> what it means. CONFIRMED by probe: PermissionRequest fires for an
+ * AskUserQuestion (no tool_use_id, no Notification). UNVERIFIED: Bash permission prompts and
+ * which Notification types fire when; unknown names and types are ignored, so a wrong row costs
+ * nothing but a missed signal. SubagentStart/SubagentStop are CONFIRMED by the probe.
  */
 export const HOOK_EVENTS: Readonly<Record<string, Rule>> = {
-  PermissionRequest: "attention", // UNVERIFIED
+  PermissionRequest: "attention", // CONFIRMED for AskUserQuestion; Bash prompts UNVERIFIED
   Notification: "attention_by_type", // UNVERIFIED which types fire when
   SubagentStart: "subagent_start", // CONFIRMED
   SubagentStop: "subagent_stop", // CONFIRMED
