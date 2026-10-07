@@ -23,7 +23,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Plugin } from "vite-plus";
 import { ATTENTION_STALE_MS, DESK_CAP, DESKS_PER_ROW } from "../shared/tuning.ts";
-import { parseAgentEvent } from "../shared/events.ts";
+import { ID_PATTERN, parseAgentEvent } from "../shared/events.ts";
 import type { AgentEvent } from "../shared/events.ts";
 import { createNormalizerState, normalizeBatch } from "./normalize.ts";
 import type { NormalizerState } from "./normalize.ts";
@@ -391,6 +391,27 @@ export function createTailer(opts: TailerOptions) {
     }
   }
 
+  /** Paths already reported for an id the event guard would refuse; once per path. */
+  const badIdLogged = new Set<string>();
+
+  /** A transcript whose session or agent id fails ID_PATTERN could never emit a valid event. */
+  function idsUsable(c: Candidate): boolean {
+    if (ID_PATTERN.test(c.sessionId) && (c.agentId === null || ID_PATTERN.test(c.agentId))) {
+      return true;
+    }
+    if (!badIdLogged.has(c.path)) {
+      if (badIdLogged.size >= MAX_DENIED)
+        badIdLogged.delete(badIdLogged.values().next().value as string);
+      badIdLogged.add(c.path);
+      log(
+        ID_PATTERN.test(c.sessionId)
+          ? "skipped a transcript with an invalid agent id"
+          : "skipped a transcript with an invalid session id",
+      );
+    }
+    return false;
+  }
+
   async function candidates(): Promise<Array<Candidate>> {
     const out: Array<Candidate> = [];
     let projects: DirEntry[];
@@ -698,7 +719,7 @@ export function createTailer(opts: TailerOptions) {
       lastWalk = now();
       for (const c of await candidates()) {
         if (stopped) return;
-        if (tracked.has(c.path) || isDenied(c.path)) continue;
+        if (tracked.has(c.path) || isDenied(c.path) || !idsUsable(c)) continue;
         if (tracked.size >= maxTracked) {
           if (!capWarned) {
             capWarned = true;
