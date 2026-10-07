@@ -11,7 +11,8 @@
  *   drift                  normalizer drift per reason; "sub:" prefix for subagent files
  *   sessionIdMismatches    T05: files whose records carry a sessionId other than the file's
  *   agentIdLength          T06: histogram of agent id lengths (length -> count)
- *   idsNonConservativeChars T06: agent/session/tool ids outside [A-Za-z0-9_-]
+ *   idsFailingIdPattern    T06: agent/session/tool ids that fail the guard's ID_PATTERN
+ *   idMaxLength            T06: longest agent, session and tool id seen (lengths only, never values)
  *   maxLineChars, linesOverCap, readCapBytes
  *                          T10: longest line seen (in BYTES, as the feed plugin counts; the key name is
  *                          kept) against the feed plugin's read cap
@@ -25,6 +26,7 @@ import { lstat, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ID_PATTERN } from "../shared/events.ts";
 import { READ_CAP_BYTES } from "./feed-plugin.ts";
 import {
   NOTIFICATION_STATUSES,
@@ -40,7 +42,6 @@ const LINE_CAP_BYTES = 8 * 1024 * 1024;
 /** Live-only drift reason; the census reports it as sessionIdMismatches instead. */
 const LIVE_ONLY_DRIFT: DriftReason = "session_id_mismatch";
 const SEMVER = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
-const CONSERVATIVE_ID = /^[A-Za-z0-9_-]+$/;
 
 type Counts = Record<string, number>;
 
@@ -53,7 +54,8 @@ export type Census = {
   eventKinds: Counts;
   sessionIdMismatches: number;
   agentIdLength: Counts;
-  idsNonConservativeChars: number;
+  idsFailingIdPattern: number;
+  idMaxLength: { agent: number; session: number; tool: number };
   maxLineChars: number;
   readCapBytes: number;
   linesOverCap: number;
@@ -113,6 +115,10 @@ async function* readLines(path: string): AsyncGenerator<{ line: string | null; c
 
 type FileKind = { sessionId: string; agentId: string | null };
 
+function longest(c: Census, k: keyof Census["idMaxLength"], id: string): void {
+  c.idMaxLength[k] = Math.max(c.idMaxLength[k], id.length);
+}
+
 async function censusFile(path: string, kind: FileKind, c: Census): Promise<void> {
   const sub = kind.agentId !== null;
   const state: NormalizerState = createNormalizerState({
@@ -124,6 +130,8 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
   let mismatch = false;
   const ids: string[] = [kind.sessionId];
   if (kind.agentId !== null) ids.push(kind.agentId);
+  longest(c, "session", kind.sessionId);
+  if (kind.agentId !== null) longest(c, "agent", kind.agentId);
   for await (const { line, chars } of readLines(path)) {
     c.maxLineChars = Math.max(c.maxLineChars, chars);
     if (chars > READ_CAP_BYTES) c.linesOverCap++;
@@ -143,13 +151,10 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
       if (typeof rec.sessionId === "string" && rec.sessionId !== kind.sessionId) mismatch = true;
       if (rec.type === "assistant" && isObj(rec.message) && Array.isArray(rec.message.content)) {
         for (const b of rec.message.content) {
-          if (
-            isObj(b) &&
-            b.type === "tool_use" &&
-            typeof b.id === "string" &&
-            !CONSERVATIVE_ID.test(b.id)
-          )
-            c.idsNonConservativeChars++;
+          if (isObj(b) && b.type === "tool_use" && typeof b.id === "string") {
+            longest(c, "tool", b.id);
+            if (!ID_PATTERN.test(b.id)) c.idsFailingIdPattern++;
+          }
         }
       }
       if (
@@ -170,9 +175,12 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
   if (mismatch) c.sessionIdMismatches++;
   c.resumesSeen += state.resumes.size;
   for (const launch of state.launches.values()) {
-    if (launch.agentId !== null) ids.push(launch.agentId);
+    if (launch.agentId !== null) {
+      ids.push(launch.agentId);
+      longest(c, "agent", launch.agentId);
+    }
   }
-  for (const id of ids) if (!CONSERVATIVE_ID.test(id)) c.idsNonConservativeChars++;
+  for (const id of ids) if (!ID_PATTERN.test(id)) c.idsFailingIdPattern++;
   if (kind.agentId !== null) add(c.agentIdLength, String(kind.agentId.length));
   else
     for (const launch of state.launches.values())
@@ -208,7 +216,8 @@ export async function runCensus(root: string): Promise<Census> {
     eventKinds: {},
     sessionIdMismatches: 0,
     agentIdLength: {},
-    idsNonConservativeChars: 0,
+    idsFailingIdPattern: 0,
+    idMaxLength: { agent: 0, session: 0, tool: 0 },
     maxLineChars: 0,
     readCapBytes: READ_CAP_BYTES,
     linesOverCap: 0,
