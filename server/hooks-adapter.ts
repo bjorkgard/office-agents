@@ -24,12 +24,14 @@ export const HOOK_EVENTS: Readonly<Record<string, Rule>> = {
   SubagentStop: "subagent_stop", // CONFIRMED
 };
 
-/** notification_type values that mean "a human is needed". permission_prompt is left out on
- * purpose: it fires ~12s after the PermissionRequest for the same prompt with no shared key, so
- * PermissionRequest is the exact start and this would double-fire (CONFIRMED by probe 2).
+/** notification_type values that mean "a human is needed". permission_prompt is the only signal
+ * for a sandbox network prompt (no PermissionRequest); for a Bash prompt it fires ~12s after the
+ * PermissionRequest with no shared key (CONFIRMED by probe 2), so events from here carry
+ * `fallback: true` and the machine drops them while an exact episode is open.
  * idle_prompt is CONFIRMED to fire ~60s after Stop and is intentionally ignored, as is
  * agent_completed. elicitation_dialog and agent_needs_input are UNVERIFIED. */
 export const ATTENTION_NOTIFICATIONS: ReadonlySet<string> = new Set([
+  "permission_prompt",
   "elicitation_dialog",
   "agent_needs_input",
 ]);
@@ -114,6 +116,7 @@ export function hookToEvents(payload: unknown, ctx: HookContext): AgentEvent[] {
           agentId,
           waitingSince: ts,
           episodeId: episodeIdOf([name, sessionId, agentId ?? "", idOf(p, "tool_use_id") ?? ts]),
+          ...(rule === "attention_by_type" ? { fallback: true } : {}),
         };
         break;
       }

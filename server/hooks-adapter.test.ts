@@ -94,19 +94,27 @@ describe("hookToEvents", () => {
     );
   });
 
-  it("Notification permission_prompt is redundant: PermissionRequest is the exact start", () => {
-    expect(
-      run({ ...base, hook_event_name: "Notification", notification_type: "permission_prompt" }),
-    ).toEqual([]);
+  it("Notification permission_prompt -> one needs_attention flagged fallback", () => {
+    const out = run({
+      ...base,
+      hook_event_name: "Notification",
+      notification_type: "permission_prompt",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ kind: "needs_attention", fallback: true });
   });
 
-  it("a Bash PermissionRequest then its permission_prompt Notification 12s later is one event", () => {
-    const request = run({ ...base, hook_event_name: "PermissionRequest", tool_name: "Bash" }, NOW);
-    const notification = run(
-      { ...base, hook_event_name: "Notification", notification_type: "permission_prompt" },
-      NOW + 12_000,
-    );
-    expect([...request, ...notification]).toHaveLength(1);
+  it("every Notification-derived needs_attention is flagged fallback", () => {
+    for (const type of ATTENTION_NOTIFICATIONS) {
+      const [e] = run({ ...base, hook_event_name: "Notification", notification_type: type });
+      expect(e).toMatchObject({ kind: "needs_attention", fallback: true });
+    }
+  });
+
+  it("a PermissionRequest event is not a fallback", () => {
+    const [e] = run({ ...base, hook_event_name: "PermissionRequest", tool_name: "Bash" });
+    expect(e.kind).toBe("needs_attention");
+    expect((e as { fallback?: boolean }).fallback).not.toBe(true);
   });
 
   it.each(["elicitation_dialog", "agent_needs_input"])(

@@ -275,6 +275,14 @@ describe("stricter guard (T1)", () => {
     expect(isAgentEvent({ ...valid.done, agentId: null })).toBe(true);
   });
 
+  it("accepts a boolean fallback on needs_attention and rejects a non-boolean one", () => {
+    expect(isAgentEvent({ ...valid.needs_attention, fallback: true })).toBe(true);
+    expect(isAgentEvent({ ...valid.needs_attention, fallback: false })).toBe(true);
+    for (const bad of ["true", 1, null, {}]) {
+      expect(isAgentEvent({ ...valid.needs_attention, fallback: bad })).toBe(false);
+    }
+  });
+
   it("rejects negative ts and waitingSince", () => {
     expect(isAgentEvent({ ...valid.done, ts: -5 })).toBe(false);
     expect(isAgentEvent({ ...valid.needs_attention, waitingSince: -1 })).toBe(false);

@@ -34,6 +34,7 @@ import {
 } from "./feed-plugin.ts";
 import type { TailerIo } from "./feed-plugin.ts";
 import type { AgentEvent } from "../shared/events.ts";
+import { applyEvent, applyEvents, createOffice, tick } from "../src/office/machine.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const fixtureLines = (name: string): string[] =>
@@ -1793,6 +1794,86 @@ describe("feed", () => {
         });
         ring.add(start(10_001));
         expect(survives(ring)).toBe(false);
+      });
+
+      describe("fallback vs exact", () => {
+        const needs = (ts: number, episodeId: string, fb?: true): AgentEvent => ({
+          ...at,
+          agentId: null,
+          ts,
+          kind: "needs_attention",
+          waitingSince: ts,
+          episodeId,
+          ...(fb ? { fallback: true } : {}),
+        });
+        const exact = needs(10_000, "exact-1");
+        const fallback = needs(22_000, "fb-1", true);
+        const standing = (ring: ReturnType<typeof createSnapshotRing>) =>
+          ring.events().filter((e) => e.kind === "needs_attention");
+        const live = (events: AgentEvent[]) => {
+          let s = createOffice();
+          for (const e of events) s = applyEvent(s, e, e.ts);
+          return tick(s, 30_000);
+        };
+        const agentOf = (s: ReturnType<typeof createOffice>) => Object.values(s.agents)[0];
+
+        it("keeps the exact event when a fallback arrives for the same slot", () => {
+          const ring = createSnapshotRing();
+          ring.add(started(null));
+          ring.add(exact);
+          ring.add(fallback);
+          expect(standing(ring)).toEqual([exact]);
+        });
+
+        it("stores a fallback when the slot is empty", () => {
+          const ring = createSnapshotRing();
+          ring.add(started(null));
+          ring.add(fallback);
+          expect(standing(ring)).toEqual([fallback]);
+        });
+
+        it("lets an exact event replace a stored fallback", () => {
+          const ring = createSnapshotRing();
+          ring.add(started(null));
+          ring.add(fallback);
+          ring.add(exact);
+          expect(standing(ring)).toEqual([exact]);
+        });
+
+        it("keeps the first of two fallbacks, replaying to the same episode as live", () => {
+          const ring = createSnapshotRing();
+          const fb1 = needs(3_000, "fb1", true);
+          const fb2 = needs(20_000, "fb2", true);
+          const feed = [started(null), fb1, fb2];
+          for (const e of feed) ring.add(e);
+          expect(standing(ring)).toEqual([fb1]);
+          const replayed = tick(
+            applyEvents(createOffice(), ring.events(), 30_000, { replay: true }),
+            30_000,
+          );
+          const a = agentOf(live(feed));
+          const b = agentOf(replayed);
+          expect(a.episode?.exactId).toBe("fb1");
+          expect(b.episode?.exactId).toBe("fb1");
+          expect(b.episode?.waitingSince).toBe(3_000);
+          expect(b.attention).toEqual(a.attention);
+        });
+
+        it("replays to the same episode as live", () => {
+          const ring = createSnapshotRing();
+          const feed = [started(null), exact, fallback];
+          for (const e of feed) ring.add(e);
+          const replayed = tick(
+            applyEvents(createOffice(), ring.events(), 30_000, { replay: true }),
+            30_000,
+          );
+          const a = agentOf(live(feed));
+          const b = agentOf(replayed);
+          expect(a.episode?.exactId).toBe("exact-1");
+          expect(b.episode?.exactId).toBe(a.episode?.exactId);
+          expect(b.episode?.waitingSince).toBe(a.episode?.waitingSince);
+          expect(b.attention).toEqual(a.attention);
+        });
       });
     });
 

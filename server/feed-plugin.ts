@@ -868,8 +868,13 @@ export function createSnapshotRing() {
     // An exact needs_attention outlives activity no newer than its waitingSince (machine.ts clearAttention).
     const outlived = r.question?.kind === "needs_attention" && event.ts <= r.question.waitingSince;
     if (!asking && event.kind !== "handoff" && !outlived) r.question = null;
+    // A Notification-derived backup must not replace an open episode: live clients ignore it.
+    const shadowed =
+      event.kind === "needs_attention" &&
+      event.fallback === true &&
+      r.question?.kind === "needs_attention";
     if (asking) {
-      r.question = event;
+      if (!shadowed) r.question = event;
       r.openTools.clear();
       r.waiting = null;
     } else if (event.kind === "agent_started") {

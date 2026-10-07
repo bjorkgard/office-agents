@@ -43,6 +43,9 @@ export type AgentEvent =
       kind: "needs_attention";
       waitingSince: number;
       episodeId: string;
+      /** Set on a Notification-derived event: a backup the machine drops while an exact episode
+       * is open. Absent means false. */
+      fallback?: boolean;
     })
   | (AgentEventBase & {
       kind: "handoff";
@@ -114,7 +117,12 @@ const SPEC: { [K in AgentEventKind]: SpecFor<EventOf<K>> } = {
     },
   },
   waiting_on_subagents: { ...baseFields },
-  needs_attention: { ...baseFields, waitingSince: ts, episodeId: id },
+  needs_attention: {
+    ...baseFields,
+    waitingSince: ts,
+    episodeId: id,
+    fallback: { type: "boolean", optional: true },
+  },
   handoff: {
     ...baseFields,
     fromAgentId: nullableId,
