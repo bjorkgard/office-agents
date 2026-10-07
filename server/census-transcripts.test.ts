@@ -251,6 +251,26 @@ describe("runCensus", () => {
     expect(c.sessionIdMismatches).toBe(1);
   });
 
+  // Value: protects=the live session_id_mismatch counter does not leak into census drift; fails_when=the census drift copy stops filtering it; why_new=the normalizer counter is new; seam=none
+  it("counts a mismatched record id in sessionIdMismatches, not as a drift key", async () => {
+    topFile(SESSION, [rec({ type: "assistant", sessionId: "other-sess", message: {} })]);
+    const c = await runCensus(root);
+    expect(c.sessionIdMismatches).toBe(1);
+    expect(c.drift).not.toHaveProperty("session_id_mismatch");
+  });
+
+  // Value: protects=the mismatch counter does not leak into census drift from subagent files; fails_when=the drift filter is skipped for sub: keys; why_new=only the top-level file's drift was checked; seam=none
+  it("keeps session_id_mismatch out of drift for a subagent file", async () => {
+    topFile(SESSION, [rec({ type: "assistant", sessionId: SESSION, message: {} })]);
+    subFile(SESSION, "agentone", [
+      rec({ type: "assistant", sessionId: "other-sess", agentId: "agentone", message: {} }),
+    ]);
+    const c = await runCensus(root);
+    expect(c.sessionIdMismatches).toBe(1);
+    expect(c.drift).not.toHaveProperty("session_id_mismatch");
+    expect(c.drift).not.toHaveProperty("sub:session_id_mismatch");
+  });
+
   // Value: protects=a subagent file without the agent- prefix keeps its whole stem as id; fails_when=the prefix is sliced unconditionally; why_new=every fixture used agent- names; seam=none
   it("uses the whole stem as agent id when a subagent file has no agent- prefix", async () => {
     topFile(SESSION, []);

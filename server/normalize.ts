@@ -19,13 +19,15 @@ export type DriftReason =
   | "bad_timestamp"
   | "bad_event"
   | "orphan_completion"
-  | "unmapped_subagent_type";
+  | "unmapped_subagent_type"
+  | "session_id_mismatch";
 
 export type NormalizerState = {
   projectId: string;
   /** True for `<session>/subagents/agent-<id>.jsonl`. */
   subagent: boolean;
-  /** The session the file belongs to (from its path); a record's own sessionId never overrides it. */
+  /** The session the file belongs to (from its path); a record's own sessionId never overrides it
+   * (a differing one is counted as `session_id_mismatch`). */
   sessionId: string | null;
   /** Which agent launched `agentId`, when the owner of the launch is known; null otherwise. */
   parentOf: ((agentId: string) => string | null) | null;
@@ -111,10 +113,22 @@ const asStr = (v: unknown): string | null => (typeof v === "string" && v.length 
 
 /** Validates a record's envelope; the drift reason when it has none. Order matters:
  * a bad timestamp is reported ahead of a bad shape. */
-function buildCtx(state: NormalizerState, rec: Json): Ctx | "bad_timestamp" | "bad_shape" {
+function buildCtx(
+  state: NormalizerState,
+  rec: Json,
+  countMismatch = true,
+): Ctx | "bad_timestamp" | "bad_shape" {
   const ts = typeof rec.timestamp === "string" ? Date.parse(rec.timestamp) : NaN;
   if (Number.isNaN(ts)) return "bad_timestamp";
-  const sessionId = state.sessionId ?? asStr(rec.sessionId);
+  const recordId = asStr(rec.sessionId);
+  if (
+    countMismatch &&
+    state.sessionId !== null &&
+    recordId !== null &&
+    recordId !== state.sessionId
+  )
+    bump(state, "session_id_mismatch");
+  const sessionId = state.sessionId ?? recordId;
   if (sessionId === null || (state.subagent && asStr(rec.agentId) === null)) return "bad_shape";
   return { state, rec, ts, sessionId, cwd: typeof rec.cwd === "string" ? rec.cwd : "" };
 }
@@ -450,7 +464,7 @@ export function normalizeBatch(
 
   const blocks = contentBlocks(last as Json) ?? [];
   if (!endsWithQuestion(lastText(blocks))) return [];
-  const ctx = buildCtx(state, last as Json);
+  const ctx = buildCtx(state, last as Json, false); // normalizeLine already counted it
   if (typeof ctx === "string") {
     bump(state, ctx);
     return [];

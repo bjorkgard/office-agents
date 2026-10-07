@@ -1049,3 +1049,94 @@ describe("killed notifications", () => {
     expect(out).toContain('"content":"x"');
   });
 });
+
+describe("session id keying", () => {
+  const rec = (sessionId: unknown): string =>
+    JSON.stringify({
+      type: "user",
+      sessionId,
+      cwd: "/fixture/project",
+      timestamp: "2026-10-02T10:00:24.000Z",
+      message: { role: "user", content: "x" },
+    });
+  const keyed = (id: string | undefined) =>
+    createNormalizerState({ projectId: "p1", subagent: false, sessionId: id });
+
+  it("path id wins over a different record id in every emitted event", () => {
+    const state = keyed("A");
+    const events = normalize(state, rec("B"));
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.sessionId === "A")).toBe(true);
+  });
+
+  it("two path ids over records sharing one record id stay separate", () => {
+    const a = keyed("A");
+    const b = keyed("B");
+    expect(new Set(normalize(a, rec("shared")).map((e) => e.sessionId))).toEqual(new Set(["A"]));
+    expect(new Set(normalize(b, rec("shared")).map((e) => e.sessionId))).toEqual(new Set(["B"]));
+  });
+
+  it("counts session_id_mismatch once per differing record", () => {
+    const state = keyed("A");
+    normalize(state, rec("B"));
+    normalize(state, rec("B"));
+    normalize(state, rec("C"));
+    expect(state.drift.session_id_mismatch).toBe(3);
+  });
+
+  it.each([
+    ["equal", "A"],
+    ["absent", undefined],
+    ["empty", ""],
+    ["a number", 7],
+    ["null", null],
+  ])("does not count a record id that is %s", (_name, id) => {
+    const state = keyed("A");
+    normalize(state, rec(id));
+    expect(state.drift.session_id_mismatch).toBeUndefined();
+  });
+
+  it("counts each record once through normalizeBatch, including a finished question's last line", () => {
+    const state = keyed("A");
+    const lines = [
+      rec("B"),
+      JSON.stringify({
+        type: "assistant",
+        sessionId: "B",
+        cwd: "/fixture/project",
+        timestamp: "2026-10-02T10:00:25.000Z",
+        message: {
+          role: "assistant",
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "Shall I go on?" }],
+        },
+      }),
+    ];
+    normalizeBatch(state, lines);
+    expect(state.drift.session_id_mismatch).toBe(2);
+  });
+
+  // Value: protects=a bad-timestamp record is counted only as bad_timestamp; fails_when=the mismatch guard runs before the timestamp check; why_new=only well-formed records were tested for mismatch; seam=none
+  it("a bad timestamp with a differing record id counts bad_timestamp, not session_id_mismatch", () => {
+    const state = keyed("A");
+    normalize(
+      state,
+      JSON.stringify({
+        type: "user",
+        sessionId: "B",
+        cwd: "/fixture/project",
+        timestamp: "not-a-date",
+        message: { role: "user", content: "x" },
+      }),
+    );
+    expect(state.drift.session_id_mismatch).toBeUndefined();
+    expect(state.drift.bad_timestamp).toBe(1);
+  });
+
+  it("does not count when the path id is null", () => {
+    const state = keyed(undefined);
+    const events = normalize(state, rec("B"));
+    expect(new Set(events.map((e) => e.sessionId))).toEqual(new Set(["B"]));
+    expect(state.drift.session_id_mismatch).toBeUndefined();
+  });
+});
