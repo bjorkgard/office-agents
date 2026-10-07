@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.3.0] - 2026-10-07
+
+### Added
+
+- The drift counter at `/__office/status` now has a `session_id_mismatch` count. It goes up when a transcript line names a different session than the file it sits in, so a change in how Claude Code writes resumed sessions shows up instead of passing unnoticed.
+
+### Changed
+
+- Sessions are still keyed by file name, and tests now pin that: a differing session id inside a file never merges or splits agents. `vp run census` output is unchanged.
+
 ## [0.9.2.1] - 2026-10-06
 
 ### Changed

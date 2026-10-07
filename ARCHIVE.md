@@ -310,6 +310,20 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Priority:** P1
 **Depends on:** None
 
+### T05 Key sessions by filename, not record sessionId, for resumed sessions (DONE 2026-10-07: file-name keying verified, regression tests and a mismatch counter added)
+
+**Status:** DONE. File-name keying was already in place: the session id comes from the file path (`server/feed-plugin.ts`, `server/normalize.ts` `buildCtx`). The T03 census of the real transcript root (2026-10-06) found `sessionId` differing from the file name in 0 of 182 files; only 3 resumes were seen, so resume is only partly verified. Added regression tests (a differing `sessionId` inside a file never merges or splits agents) and a `session_id_mismatch` drift counter, bumped once per record that passes the timestamp check and whose own `sessionId` differs from the path id; records with a bad timestamp or no handler are not counted. The census output is unchanged. Review follow-ups are in T48.
+
+**What:** Resumed sessions may carry a different `sessionId` in their records than the file name.
+
+**Why:** Two files could collapse into one agent, or one agent split across two.
+
+**Context:** Verify against real transcripts first (see T03).
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P1
+**Depends on:** None
+
 ## Completed in v0.3.0.0
 
 ### V1: Windows with a random outside world

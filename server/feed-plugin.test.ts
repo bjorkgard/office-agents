@@ -125,6 +125,20 @@ describe("tailer", () => {
     expect(t.status().drift).toEqual({});
   });
 
+  it("keys by file name when a file's records carry another file's session id", async () => {
+    const asB = readFileSync(join(fixtures, "top-live.jsonl"), "utf8").replaceAll(
+      sessionOf("top-live"),
+      "B",
+    );
+    putTop("p1", "top-live", asB, "A");
+    putTop("p1", "top-live", asB, "B");
+    const { t, events } = tailer();
+    await t.scanOnce();
+    expect(new Set(events.map((e) => e.sessionId))).toEqual(new Set(["A", "B"]));
+    expect(t.status().filesTracked).toBe(2);
+    expect(t.status().drift).toEqual({ session_id_mismatch: 2 });
+  });
+
   it("reports a deleted file as the agent leaving (ENOENT)", async () => {
     const file = putTop("p1", "top-live");
     const { t, gone } = tailer();

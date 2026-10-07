@@ -33,10 +33,12 @@ import {
   normalize,
   tag,
 } from "./normalize.ts";
-import type { NormalizerState } from "./normalize.ts";
+import type { DriftReason, NormalizerState } from "./normalize.ts";
 
 /** A line longer than this is counted and skipped, so one runaway line cannot exhaust memory. */
 const LINE_CAP_BYTES = 8 * 1024 * 1024;
+/** Live-only drift reason; the census reports it as sessionIdMismatches instead. */
+const LIVE_ONLY_DRIFT: DriftReason = "session_id_mismatch";
 const SEMVER = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const CONSERVATIVE_ID = /^[A-Za-z0-9_-]+$/;
 
@@ -176,6 +178,8 @@ async function censusFile(path: string, kind: FileKind, c: Census): Promise<void
     for (const launch of state.launches.values())
       if (launch.agentId !== null) add(c.agentIdLength, String(launch.agentId.length));
   for (const [reason, n] of Object.entries(state.drift)) {
+    // the census already reports sessionIdMismatches; the live counter would double count
+    if (reason === LIVE_ONLY_DRIFT) continue;
     add(c.drift, sub ? `sub:${reason}` : reason, n);
   }
 }
