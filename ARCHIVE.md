@@ -506,3 +506,21 @@ _Open remainder moved back to TODOS.md: "Waiting agent past QUEUE_VISIBLE is unr
 **Depends on:** None
 
 **Status:** DONE (moved 2026-10-06 as T01). Reviewed in `docs/designs/t01-chime-control-ceo-review.md` (D1 to D6); the DESIGN.md entry is "Chime toggle" under Components. Code: monochrome SVG glyph, no `aria-pressed`, `webkitAudioContext` fallback, cross-tab `storage` sync, `flex-shrink: 0`. Verification is in the task reports (`.claude/scratch/t01-chime-control/reports/`).
+
+### T10 Compensate for a dropped oversized tool_result line
+
+**Area:** Feed hardening
+
+**What:** A tool_result line over READ_CAP_BYTES is dropped, so its tool end and handoff never arrive.
+
+**Why:** The agent keeps showing a running tool or an open handoff.
+
+**Context:** Needs a compensating event or size data from real transcripts. Found in the Phase 2-3 /ship review.
+
+**Evidence (2026-10-06, T03 census of the real transcript root):** the longest line is 890298 bytes against the 4 MiB read cap (4194304 bytes), and 0 lines are over the cap. The owner may close this.
+
+**Effort:** S (human ~2h / CC ~15min)
+**Priority:** P2
+**Depends on:** None
+
+**Status:** DONE (closed 2026-10-07 as T10, no production code change). The T03 census on the maintainer's transcript root on 2026-10-06 found 0 lines over the 4 MiB cap (longest 890298 bytes); this is one host, not a guarantee for other users or Claude Code versions. If a result line were dropped, the stuck state is limited but visible: the tool stays in `openTools` until the next top-level `done` (`src/office/machine.ts:393-394`), and the 10 s tool timer (`machine.ts:470-483`) moves the agent to "attention", a false permission-wait signal, which `attentionStaleMs` (4 h) ends if no `done` ever arrives. An unresolved handoff with no child agent expires after `staleMs` (`machine.ts:420-430`); with a live child it waits for that child to leave, and a dropped sync Task result can hold the parent through `waitingOn` (`machine.ts:459`) until `done`. The no-result open tool (with the attention state) and the no-child handoff expiry are pinned by tests in `src/office/machine.test.ts` ("dropped tool_result (T10): bounded-stuck outcome"); the live-child handoff and `waitingOn` cases are not tested. The `oversize_line` drift counter stays the signal if a real line ever exceeds the cap. Verified by code read and a refuter mutation run.

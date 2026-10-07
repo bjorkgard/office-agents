@@ -1308,3 +1308,24 @@ describe("kinds", () => {
     expect(replay.kinds).toEqual(live.kinds);
   });
 });
+
+describe("dropped tool_result (T10): bounded-stuck outcome", () => {
+  it("an open tool with no result stays open until a top-level done clears it", () => {
+    let s = applyEvent(working0(), working(null, { phase: "start", id: "t1" }), 0);
+    s = tick(s, TUNING.toolTimerMs + 1000);
+    expect(Object.keys(get(s)!.openTools)).toEqual(["t1"]);
+    expect(get(s)!.state).toBe("attention");
+    s = applyEvent(s, done(false), TUNING.toolTimerMs + 2000);
+    expect(get(s)!.openTools).toEqual({});
+    expect(get(s)!.state).toBe("idle");
+  });
+
+  it("an unresolved handoff with no child is removed by tick once staleMs elapses", () => {
+    let s = applyEvent(working0(), handoff("a", "out"), 0);
+    s = applyEvent(s, working(), STALE_MS - 1);
+    s = tick(s, STALE_MS - 1);
+    expect(Object.keys(get(s)!.unresolved)).toEqual(["a"]);
+    s = tick(s, STALE_MS);
+    expect(get(s)!.unresolved).toEqual({});
+  });
+});
