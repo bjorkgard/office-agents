@@ -94,6 +94,30 @@ describe("hookToEvents", () => {
     );
   });
 
+  it("Notification permission_prompt is redundant: PermissionRequest is the exact start", () => {
+    expect(
+      run({ ...base, hook_event_name: "Notification", notification_type: "permission_prompt" }),
+    ).toEqual([]);
+  });
+
+  it("a Bash PermissionRequest then its permission_prompt Notification 12s later is one event", () => {
+    const request = run({ ...base, hook_event_name: "PermissionRequest", tool_name: "Bash" }, NOW);
+    const notification = run(
+      { ...base, hook_event_name: "Notification", notification_type: "permission_prompt" },
+      NOW + 12_000,
+    );
+    expect([...request, ...notification]).toHaveLength(1);
+  });
+
+  it.each(["elicitation_dialog", "agent_needs_input"])(
+    "Notification %s still -> needs_attention",
+    (type) => {
+      expect(
+        run({ ...base, hook_event_name: "Notification", notification_type: type }),
+      ).toHaveLength(1);
+    },
+  );
+
   it.each(["idle_prompt", "agent_completed", "auth_success", "", 5, null])(
     "Notification type %j is ignored",
     (type) => {
@@ -332,7 +356,7 @@ describe("hookToEvents", () => {
         run({
           ...base,
           hook_event_name: name,
-          notification_type: "permission_prompt",
+          notification_type: "elicitation_dialog",
           agent_id: "ag1",
           message: canary,
           prompt: canary,
